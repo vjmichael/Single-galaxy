@@ -18,10 +18,37 @@ native_unload_test = (root.parent / "tests/PLAY_STATION_04C_UnloadPipeTests.py")
 action_hints = (root / "world/interaction_prompts.gd").read_text(encoding="utf-8")
 action_smoke = (root / "tests/interaction_prompt_smoke.gd").read_text(encoding="utf-8")
 boarding_smoke = (root / "tests/boarding_action_pipe_smoke.gd").read_text(encoding="utf-8")
+auto_start_smoke = (root / "tests/auto_station_connect_acceptance.gd").read_text(encoding="utf-8")
 player_controller = (root / "world/player_controller.gd").read_text(encoding="utf-8")
 
 checks = {
     "avatar-height-matches-capsule": "const AVATAR_CENTER_HEIGHT_M := 0.90" in main,
+    "no-H-in-normal-player-launch": (
+        'call_deferred("_open_saved_station_automatically")' in main
+        and "DisplayServer.get_name() != \"headless\"" in main
+        and 'not OS.get_cmdline_args().has("--script")' in main
+        and 'scope_label.text = "Connecting to original saved world..."' in main
+        and "func _retry_original_station()" in main
+        and 'retry_station_button.name = "RetryStationConnection"' in main
+        and 'retry_station_button.visible = false' in main
+        and 'native_station_session.stop("Station test session stopped"' not in main
+    ),
+    "original-boarding-auto-cockpit-one-sqlite-writer": (
+        "func _enter_cockpit_after_verified_board()" in main
+        and 'native_station_session.stop("Native boarding committed; transferring verified SQLite writer", true)' in main
+        and '_schedule_native_handoff("ship", exiting_pid)' in main
+        and "last_station_player_state == 0 and _player_session_autoconnect" in main
+        and "SG_FP3D_CI_AUTOSTART" in auto_start_smoke
+        and "12 admitted WALK" in auto_start_smoke
+        and "same SQLite saved-boarded restart" in auto_start_smoke
+    ),
+    "unexpected-host-exit-writes-bounded-diagnostic-not-world": (
+        "func _unexpected_native_exit()" in station_client
+        and 'user://sg_station_last_failure.json' in station_client
+        and "SG_FP3D_OPERATOR_CAPTURE_DIR" in station_client
+        and "native_error.substr(0, 300)" in station_client
+        and "stop(failure)" in station_client
+    ),
     "station-host-supervised-project-binary": "SGDX_LAUNCH.native_host_path(binary)" in station_client and 'SGDX_LAUNCH.supervised_command(save, "godot_station", exe,' in station_client and 'OS.execute_with_pipe(spec["path"], spec["args"], false)' in station_client,
     "cockpit-host-supervised-project-binary": "SGDX_LAUNCH.native_host_path(binary)" in cockpit_client and 'SGDX_LAUNCH.supervised_command(save, "godot_ship", path, PackedStringArray([save]))' in cockpit_client and 'OS.execute_with_pipe(spec["path"], spec["args"], false)' in cockpit_client,
     "refuse-unguarded-native-launch": "refusing unsupervised" in station_client and "refusing unsupervised" in cockpit_client,
@@ -89,7 +116,7 @@ checks = {
         "FP3D-UX-02 real Godot visual/input PASS" in action_smoke
         and "600" in action_smoke
         and "eligible_ship" in action_smoke
-        and "Press H" in action_smoke
+        and "Connecting to saved station" in action_smoke
     ),
     "separate-physics": "for body in station_space.get_children()" in main and "for body in ship_space.get_children()" in main,
     "no-invisible-collision": "body.collision_layer = 0 if in_station or exterior else 1" in main and "body.collision_layer = 1 if in_station else 0" in main and "body.collision_mask = 0 if in_station or exterior else 1" in main,
