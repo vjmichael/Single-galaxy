@@ -3,6 +3,7 @@
 #include "galaxy/WO4LocalAllocation.hpp"
 #include "galaxy/WO4ConsumptionProfiles.hpp"
 #include "galaxy/WO4RegionalDistribution.hpp"
+#include "galaxy/WO2IndustryWorkforce.hpp"
 #include "galaxy/Persistence.hpp"
 #include <algorithm>
 #include <chrono>
@@ -67,6 +68,8 @@ int main(){
     const auto ore=original.add_asteroid({2000,0},120);
     original.enable_individual_workforce();
     const auto starting_mass=original.total_material_kg();
+    const auto original_named_workers=original.npc_records().size();
+    CHECK(original_named_workers>0);
     PersistentWorld w(db,std::move(original));
     CHECK(!observe_owner_world(w.world(),8,ship));
     CHECK(!observe_owner_world(w.world(),7,999999));
@@ -88,6 +91,15 @@ int main(){
           w.world().life_support(ship)->oxygen_kg);
     CHECK(w.world().state_hash()==baseline_hash);
     CHECK(w.world().total_material_kg()==starting_mass);
+    // WO4 only observes ORIGINAL WO2 people, it never awards qualifications,
+    // hires staff or fabricates a second workforce to fill vital shortages.
+    CHECK(w.world().npc_records().size()==original_named_workers);
+    for(const auto& [npc,person]:w.world().npc_records()){
+        CHECK(person.home_ship==ship);
+        const auto shape=workforce02::inspect_trade_qualification(
+            w.world(),npc,WorkshopTrade::Shape);
+        CHECK(shape.npc==npc && shape.proven_units==0 && !shape.certified);
+    }
 
     // Real construction changes the authoritative world. Merely observing
     // it does not transfer any provisions from the ship to the habitat.
@@ -264,6 +276,13 @@ int main(){
         }
     }
     CHECK(recovered.world().total_material_kg()==starting_mass);
+    CHECK(recovered.world().npc_records().size()==original_named_workers);
+    for(const auto& [npc,person]:recovered.world().npc_records()){
+        CHECK(person.home_ship==ship);
+        const auto qualification=workforce02::inspect_trade_qualification(
+            recovered.world(),npc,WorkshopTrade::Shape);
+        CHECK(!qualification.certified && qualification.proven_units==0);
+    }
     const auto reloaded_cycles=observe_native_need_cycles(
         recovered.world(),*replay);
     CHECK(reloaded_cycles && reloaded_cycles->cycles.size()==cycles->cycles.size());
