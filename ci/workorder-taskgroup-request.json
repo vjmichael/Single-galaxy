@@ -2,6 +2,6 @@
   "schema": "SG-WORKORDER-GATE-01",
   "task_group": "STAGE6",
   "pr_number": 127,
-  "source_sha": "5b818a3c09a98a076af36acb628497ddbb3eea10",
-  "note": "ONE exact-head original Windows/Linux Stage6 full native gate at draft PR #127 HEAD 5b818a3. Prior real #42868538329 compiled all Stage6 C++ on Linux & Windows, then 18 CTests failed in genuine pre-existing/provenance fixtures (both OS). Correct only demonstrated defects on new head: require original named crew BEFORE enabling celestial snapshots in STAGE6-A and PGF live test; no fake NPCs; original WO5 pre-salvage genesis-only SQLite fixture now commits genuine STEP for checkpoint; canonical WO5 original thrust amount must equal zero with axis in thrust_x (6 test commands); historical GRSM verifier now classifies kind=2 same-tick original administrative snapshots as non-STEP without removing receipts or tolerating regressive ticks; native WO3/WO5 downstream merges preserve strict v86 source issue #128 and owner transport authority. Compile all plus original freight v59 and 3D tile seams and real landing tests; state all passes/failures accurately. NO auto CI fanout."
+  "source_sha": "30c32980e02458139fc7255d72c670ce0af7494a",
+  "note": "One exact-head Windows/Linux Stage6 native matrix including WO3/WO4/WO5, full selected freight custody and Stage6 snapshots/landing. Diagnose historic SQLite and cargo action failures; preserve strict journal, genesis, physical-resource and ownership checks. Do not fan out duplicate workflows."
 }
