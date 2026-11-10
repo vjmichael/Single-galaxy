@@ -484,9 +484,10 @@ std::optional<Outcome> InteriorMovement::pilot(PlayerId owner,
         case PilotControl::Reverse:
             c.thrust_x=-forward_x;c.thrust_y=-forward_y;break;
         case PilotControl::StrafePort:
-            c.thrust_x=forward_y;c.thrust_y=-forward_x;break;
-        case PilotControl::StrafeStarboard:
+            // From the +X forward rear camera, native +Y is screen-left.
             c.thrust_x=-forward_y;c.thrust_y=forward_x;break;
+        case PilotControl::StrafeStarboard:
+            c.thrust_x=forward_y;c.thrust_y=-forward_x;break;
         case PilotControl::Counterthrust:
             // The original v119 Action::Thrust uses amount=+/-1 for Z and
             // cannot combine Z acceleration with X/Y in one command. Brake
