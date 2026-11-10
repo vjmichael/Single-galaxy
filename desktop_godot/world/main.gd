@@ -561,6 +561,8 @@ func _refresh_interaction_prompt() -> void:
 		station_connected, person, ship_connected, seated,
 		_last_native_dock, not _handoff_target.is_empty(),
 		INTERACTION_PROMPTS.action_key("fps_inspect", "E"))
+	if ship_connected and _colony_return_armed and _last_native_dock == 1 and not seated:
+		display = "Press E to Disembark  |  Return to colony departure dock"
 	if station_connected and _handoff_target.is_empty() and is_instance_valid(player) and not person.is_empty() and int(person.get("eligible_ship", 0)) > 0:
 		var key_to_hatch: String = INTERACTION_PROMPTS.hatch_direction_key(person, player.global_transform.basis)
 		if not key_to_hatch.is_empty():
