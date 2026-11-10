@@ -107,7 +107,7 @@ func _run() -> void:
 	if not PROMPTS.hint(false,{},true,false,1,false,"E").contains("Automatic pilot seating"):
 		_fail("a boarded player was incorrectly offered a cabin walk/seat toggle")
 		return
-	if not PROMPTS.hint(false,{},true,true,1,false,"E").contains("Press U to Undock"):
+	if not PROMPTS.hint(false,{},true,true,1,false,"E").contains("U undock"):
 		_fail("seated original docked ship not offered undock key")
 		return
 	if not PROMPTS.hint(false,{},true,true,0,false,"E").contains("THIRD-PERSON FLIGHT") or \
@@ -135,7 +135,8 @@ func _run() -> void:
 		_fail("no original native-action-only cockpit controller")
 		return
 	pilot.use_native_dock_state(0)
-	if pilot.native_dock_state != 0 or not PROMPTS.hint(false,{},true,true,0,false,"E").contains("Mouse/A,D turn") or \
+	if pilot.native_dock_state != 0 or not PROMPTS.hint(false,{},true,true,0,false,"E").contains("A/D turn") or \
+			not PROMPTS.hint(false,{},true,true,0,false,"E").contains("W/S ascend/descend") or \
 			not PROMPTS.hint(false,{},true,true,0,false,"E").contains("MINING LOCKED"):
 		_fail("native cockpit missing discoverable mouse steering or truthful not-fitted mining gate")
 		return
@@ -149,10 +150,19 @@ func _run() -> void:
 	Input.action_press("ship_thrust_forward")
 	Input.action_press("ship_yaw_left")
 	Input.action_press("ship_undock")
+	Input.action_press("ship_ascend")
 	var free_cursor_actions: PackedStringArray = pilot._collect_native_pilot_actions()
-	if not free_cursor_actions.has("FWD") or not free_cursor_actions.has("LEFT") or free_cursor_actions.has("UND"):
-		_fail("released mouse cursor suppressed native keyboard thrust/yaw or bypassed in-space undock gate")
+	if not free_cursor_actions.has("FWD") or not free_cursor_actions.has("LEFT") or \
+			not free_cursor_actions.has("ASC") or free_cursor_actions.has("UND"):
+		_fail("released mouse cursor suppressed native thrust/yaw/ascend or bypassed in-space undock gate")
 		return
+	Input.action_release("ship_ascend")
+	Input.action_press("ship_descend")
+	var down_actions: PackedStringArray = pilot._collect_native_pilot_actions()
+	if not down_actions.has("DES") or down_actions.has("ASC"):
+		_fail("W/S vertical intent collided or reversed under native cockpit")
+		return
+	Input.action_release("ship_descend")
 	pilot.use_native_dock_state(1)
 	Input.action_press("ship_dock")
 	var docked_actions: PackedStringArray = pilot._collect_native_pilot_actions()
