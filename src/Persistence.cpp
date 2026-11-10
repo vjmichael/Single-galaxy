@@ -186,7 +186,7 @@ Command decode_command(const std::string& record) {
                 throw std::runtime_error("recovery: malformed split rescue envelope");
         }
     }
-    if (in >> extra || action < 0 || action > static_cast<int>(Action::HostRegisterDependent) || c.id == 0 || c.issuer == 0)
+    if (in >> extra || action < 0 || action > static_cast<int>(Action::CancelWorkshopJob) || c.id == 0 || c.issuer == 0)
         throw std::runtime_error("recovery: invalid command journal values");
     c.action = static_cast<Action>(action);
     if (command_record(c) != record) throw std::runtime_error("recovery: noncanonical command journal");
@@ -3957,6 +3957,238 @@ public:
                     throw std::runtime_error("SQLite: duplicate/unknown command in operation journal");
             }
         }
+        // WO2-I: original SQLite accepted-command history proves the exact
+        // shop, owner, worker and bounded window of every surviving shift.
+        // The shift may expire without an extra command, but its source
+        // admission must never be faked or reassigned in a snapshot.
+        for(const auto& [site,shop]:restored.workshops()){
+            // A pending shift cancellation is evidence of a real owner
+            // cancellation command, never an arbitrary skipped appointment.
+            for(const auto canceled:shop.cancelled_pending_shifts){
+                const auto original=journal_commands.find(canceled);
+                bool cancellation_proven=false;
+                if(original!=journal_commands.end() &&
+                   original->second.action==Action::StartWorkshopShift &&
+                   original->second.target==site &&
+                   original->second.actor==shop.source_ship){
+                    for(const auto& [id,command]:journal_commands){
+                        const auto receipt=event_by_id.find(id);
+                        if(command.action==Action::CancelWorkshopShift &&
+                           command.actor==shop.source_ship &&
+                           command.target==site &&
+                           command.thrust_x==original->second.thrust_x &&
+                           command.amount==static_cast<std::int64_t>(canceled) &&
+                           receipt!=event_by_id.end() &&
+                           receipt->second.result==Outcome::Applied &&
+                           receipt->second.tick<original->second.execute_tick){
+                            cancellation_proven=true;break;
+                        }
+                    }
+                }
+                if(!cancellation_proven)
+                    throw std::runtime_error("SQLite: workshop pending cancellation lacks original owner receipt");
+            }
+            for(unsigned slot=0;slot<2;++slot){
+                const auto& shift=shop.shifts[slot];
+                if(!shift.command_id)continue;
+                const auto it=journal_commands.find(shift.command_id);
+                const auto ev=event_by_id.find(shift.command_id);
+                const auto* ship=restored.find(shop.source_ship);
+                if(it==journal_commands.end() || ev==event_by_id.end() ||
+                   it->second.action!=Action::StartWorkshopShift ||
+                   !ship || it->second.issuer!=ship->owner_id ||
+                   it->second.actor!=shop.source_ship ||
+                   it->second.target!=site ||
+                   it->second.thrust_x!=static_cast<int>(slot+1) ||
+                   it->second.execute_tick!=shift.start_tick ||
+                   it->second.thrust_y<1 ||
+                   shift.end_tick-shift.start_tick!=
+                     static_cast<std::uint64_t>(it->second.thrust_y) ||
+                   ev->second.tick!=shift.start_tick ||
+                   ev->second.result!=Outcome::Applied ||
+                   ev->second.transferred!=0)
+                    throw std::runtime_error("SQLite: original workshop shift proof mismatch");
+                // A newly relieved shift retains its first worker in the
+                // original Start command. The current worker must instead
+                // match the *latest* real applied, same-owner relief receipt.
+                std::uint64_t last_relief=0,last_relief_tick=0;
+                std::set<std::uint64_t> seen_relief_ticks;
+                std::uint64_t current_worker=static_cast<std::uint64_t>(it->second.amount);
+                for(const auto& [id,change]:journal_commands){
+                    if(change.action!=Action::RelieveWorkshopShift ||
+                       change.amount!=static_cast<std::int64_t>(shift.command_id) ||
+                       change.target!=site ||
+                       change.thrust_x!=static_cast<int>(slot+1))continue;
+                    const auto applied=event_by_id.find(id);
+                    if(applied==event_by_id.end() ||
+                       applied->second.result!=Outcome::Applied)continue;
+                    if(change.issuer!=ship->owner_id ||
+                       change.actor!=shop.source_ship ||
+                       change.thrust_y<1 || change.thrust_y>1000000 ||
+                       change.execute_tick<=shift.start_tick ||
+                       change.execute_tick>=shift.end_tick ||
+                       applied->second.tick!=change.execute_tick ||
+                       applied->second.transferred!=0 ||
+                       !seen_relief_ticks.insert(change.execute_tick).second)
+                        throw std::runtime_error("SQLite: workshop relief contradicted original owner or chronology");
+                    // Command IDs need not increase with tick order.
+                    // The event's applied tick, not its arbitrary ID, orders
+                    // the latest authoritative replacement.
+                    if(change.execute_tick>last_relief_tick){
+                        last_relief=id;
+                        last_relief_tick=change.execute_tick;
+                        current_worker=static_cast<std::uint64_t>(change.thrust_y);
+                    }
+                }
+                if(last_relief!=shift.relief_command_id ||
+                   current_worker!=shift.worker)
+                    throw std::runtime_error("SQLite: workshop current worker lacks latest relief proof");
+            }
+        }
+        // Latest real appointed manager is derived from immutable ORIGINAL
+        // journal + Applied ticks. A superseded or revoked manager's older
+        // receipt cannot be reused to forge an active mentor or job policy.
+        const auto latest_workshop_appointment=[&](
+            EntityId site,std::uint64_t until_tick,bool inclusive){
+            std::uint64_t last_id=0,last_tick=0;
+            for(const auto& [id,order]:journal_commands){
+                if(order.action!=Action::AppointWorkshopSupervisor ||
+                   order.target!=site)continue;
+                const auto effect=event_by_id.find(id);
+                if(effect==event_by_id.end() ||
+                   effect->second.result!=Outcome::Applied)continue;
+                const auto tick=effect->second.tick;
+                if(tick>until_tick || (!inclusive && tick==until_tick))continue;
+                if(tick==last_tick && last_id)
+                    throw std::runtime_error("SQLite: ambiguous same-tick workshop manager");
+                if(tick>last_tick){last_tick=tick;last_id=id;}
+            }
+            return last_id;
+        };
+        // WO2-J: the installed shop supervisor and bounded owner-approved
+        // batch program must point to original applied owner commands.
+        for(const auto& [site,shop]:restored.workshops()){
+            const auto* ship=restored.find(shop.source_ship);
+            if(shop.supervisor_npc_id){
+                const auto app=journal_commands.find(shop.supervisor_appointment_id);
+                const auto ev=event_by_id.find(shop.supervisor_appointment_id);
+                if(!ship || app==journal_commands.end() ||
+                   ev==event_by_id.end() ||
+                   app->second.action!=Action::AppointWorkshopSupervisor ||
+                   app->second.amount!=static_cast<std::int64_t>(shop.supervisor_npc_id) ||
+                   app->second.actor!=shop.source_ship ||
+                   app->second.target!=site ||
+                   app->second.issuer!=ship->owner_id ||
+                   app->second.thrust_x!=static_cast<int>(shop.supervisor_trade) ||
+                   ev->second.result!=Outcome::Applied ||
+                   ev->second.tick!=app->second.execute_tick ||
+                   ev->second.transferred!=0 ||
+                   latest_workshop_appointment(site,restored.tick(),true)!=
+                       shop.supervisor_appointment_id)
+                    throw std::runtime_error("SQLite: supervisor missing current original owner appointment");
+            }
+            for(unsigned slot=0;slot<2;++slot){
+                const auto& job=shop.approved_jobs[slot];
+                if(!job.command_id)continue;
+                const auto order=journal_commands.find(job.command_id);
+                const auto ev=event_by_id.find(job.command_id);
+                if(!ship || order==journal_commands.end() ||
+                   ev==event_by_id.end() ||
+                   order->second.action!=Action::ApproveWorkshopJob ||
+                   order->second.actor!=shop.source_ship ||
+                   order->second.target!=site ||
+                   order->second.issuer!=ship->owner_id ||
+                   order->second.thrust_x!=static_cast<int>(slot+1) ||
+                   order->second.amount!=static_cast<std::int64_t>(job.target_batches) ||
+                   (shop.supervisor_npc_id &&
+                    (job.supervisor_appointment_id!=shop.supervisor_appointment_id ||
+                     job.supervisor_npc_id!=shop.supervisor_npc_id)) ||
+                   ev->second.tick!=order->second.execute_tick ||
+                   ev->second.tick!=job.approved_tick ||
+                   ev->second.result!=Outcome::Applied ||
+                   ev->second.transferred!=0)
+                    throw std::runtime_error("SQLite: job missing original owner approval");
+                // Supervisor withdrawal does not erase the owner's quota.
+                // Independently prove the original prior appointment even
+                // when the active manager slot is empty/suspended.
+                const auto app=journal_commands.find(job.supervisor_appointment_id);
+                const auto appointment=event_by_id.find(job.supervisor_appointment_id);
+                if(app==journal_commands.end() || appointment==event_by_id.end() ||
+                   app->second.action!=Action::AppointWorkshopSupervisor ||
+                   app->second.actor!=shop.source_ship ||
+                   app->second.issuer!=ship->owner_id ||
+                   app->second.target!=site ||
+                   app->second.amount!=static_cast<std::int64_t>(job.supervisor_npc_id) ||
+                   app->second.thrust_x!=static_cast<int>(slot+1) ||
+                   appointment->second.result!=Outcome::Applied ||
+                   appointment->second.tick!=app->second.execute_tick ||
+                   appointment->second.tick>=job.approved_tick ||
+                   latest_workshop_appointment(site,job.approved_tick,false)!=
+                       job.supervisor_appointment_id)
+                    throw std::runtime_error("SQLite: suspended job has no genuine supervisor provenance");
+            }
+        }
+        // WO2-H/J: original SQLite accepted-command history proves the exact
+        // worker, trade, supervisor and site of each qualification. Matching any generic
+        // Applied event is NOT enough to fabricate a credential for another NPC.
+        std::set<std::uint64_t> verified_training;
+        const auto verify_training=[&](const NpcRecord& npc) {
+            for(const auto& credit:npc.industrial_training){
+                const auto command=journal_commands.find(credit.command_id);
+                const auto applied=event_by_id.find(credit.command_id);
+                if(!verified_training.insert(credit.command_id).second ||
+                   command==journal_commands.end() ||
+                   (command->second.action!=Action::TrainWorkshopTrade &&
+                    command->second.action!=Action::MentorWorkshopTrade) ||
+                   command->second.issuer==Simulation::kServerAuthority ||
+                   command->second.amount!=static_cast<std::int64_t>(npc.id) ||
+                   command->second.target!=credit.workshop_site ||
+                   command->second.thrust_x!=static_cast<int>(credit.trade) ||
+                   applied==event_by_id.end() ||
+                   applied->second.result!=Outcome::Applied ||
+                   applied->second.tick!=credit.tick ||
+                   applied->second.transferred!=1)
+                    throw std::runtime_error("SQLite: industrial certification contradicts original NPC command");
+                const bool mentored=command->second.action==Action::MentorWorkshopTrade;
+                if(mentored!=(credit.mentor_id!=0))
+                    throw std::runtime_error("SQLite: industrial mentorship receipt type mismatch");
+                if(mentored){
+                    const auto app=journal_commands.find(credit.supervisor_appointment_id);
+                    const auto appointment=event_by_id.find(credit.supervisor_appointment_id);
+                    if(!credit.mentor_id || !credit.supervisor_appointment_id ||
+                       app==journal_commands.end() || appointment==event_by_id.end() ||
+                       app->second.action!=Action::AppointWorkshopSupervisor ||
+                       app->second.actor!=command->second.actor ||
+                       app->second.issuer!=command->second.issuer ||
+                       app->second.target!=credit.workshop_site ||
+                       app->second.amount!=static_cast<std::int64_t>(credit.mentor_id) ||
+                       app->second.thrust_x!=static_cast<int>(credit.trade) ||
+                       appointment->second.result!=Outcome::Applied ||
+                       appointment->second.tick>=credit.tick ||
+                       appointment->second.tick!=app->second.execute_tick ||
+                       latest_workshop_appointment(credit.workshop_site,credit.tick,false)!=
+                           credit.supervisor_appointment_id)
+                        throw std::runtime_error("SQLite: forged, revoked or superseded workshop mentor appointment");
+                }else if(credit.supervisor_appointment_id)
+                    throw std::runtime_error("SQLite: solitary practice forged mentor evidence");
+            }
+        };
+        for(const auto& [id,npc]:restored.npc_records()){
+            (void)id;verify_training(npc);
+        }
+        for(const auto& [id,dead]:restored.npc_casualties()){
+            (void)id;verify_training(dead.identity);
+        }
+        for(const auto& [id,command]:journal_commands){
+            if(command.action!=Action::TrainWorkshopTrade &&
+               command.action!=Action::MentorWorkshopTrade)continue;
+            const auto event=event_by_id.find(id);
+            if(event!=event_by_id.end() && event->second.result==Outcome::Applied &&
+               !verified_training.count(id) &&
+               (restored.npc_records().count(static_cast<std::uint64_t>(command.amount)) ||
+                restored.npc_casualties().count(static_cast<std::uint64_t>(command.amount))))
+                throw std::runtime_error("SQLite: live NPC industrial qualification receipt missing");
+        }
         // GRSM-01 facts must agree with the independent transaction journal,
         // executed receipts and snapshot. A missing record is a hard error,
         // not a story the world is allowed to silently forget.
@@ -4048,7 +4280,7 @@ public:
         std::size_t refine_transfers=0, fabricate_transfers=0, build_transfers=0;
         std::size_t mineral_refine_transfers=0,material_fabricate_transfers=0;
         std::size_t life_transfers=0, farm_builds=0, farm_stock_transfers=0, habitat_builds=0, habitat_transfers=0,utility_builds=0,utility_repairs=0,utility_spare_transfers=0,community_builds=0,community_transfers=0,clinic_builds=0,clinic_transfers=0,reclaimer_builds=0,waterworks_builds=0,waterworks_transfers=0;
-        std::size_t workshop_builds=0,workshop_feeds=0,workshop_outputs=0,workshop_finisher_builds=0,workshop_final_outputs=0,workshop_stacks=0,storage_builds=0,storage_stacks=0,extra_storage_builds=0,extra_storage_stacks=0;
+        std::size_t workshop_builds=0,workshop_feeds=0,workshop_outputs=0,workshop_finisher_builds=0,workshop_final_outputs=0,workshop_stacks=0,workshop_practice=0,storage_builds=0,storage_stacks=0,extra_storage_builds=0,extra_storage_stacks=0;
         std::size_t auto_transfers = 0, auto_storage_transfers=0, storage_link_builds=0, conveyor_cells=0, world_escrows=0, world_returns=0;
         std::vector<ActivityEvent> recorded_auto, recorded_storage_auto;
         for (const auto& a : restored.activity_events()) {
@@ -4308,6 +4540,27 @@ public:
                 if(source!=reinterpret_cast<const char*>(sqlite3_column_text(ledger.get(),4)) ||
                    dest!=reinterpret_cast<const char*>(sqlite3_column_text(ledger.get(),5)))
                     throw std::runtime_error("SQLite: waterworks receipt endpoints mismatch");
+            } else if(reason=="industrial_training_practice_kg"){
+                ++workshop_practice;
+                const auto id=parse_u64(sqlite3_column_text(ledger.get(),0));
+                const auto ev=event_by_id.find(id);
+                const auto cmd=journal_commands.find(id);
+                if(ev==event_by_id.end() || cmd==journal_commands.end() ||
+                   (cmd->second.action!=Action::TrainWorkshopTrade &&
+                     cmd->second.action!=Action::MentorWorkshopTrade) ||
+                   (cmd->second.thrust_x!=1 && cmd->second.thrust_x!=2) ||
+                   cmd->second.amount<1 || cmd->second.amount>1000000 ||
+                   cmd->second.issuer==Simulation::kServerAuthority ||
+                   ev->second.result!=Outcome::Applied || ev->second.transferred!=1 ||
+                   amount!=1 ||
+                   ev->second.tick!=static_cast<std::uint64_t>(sqlite3_column_int64(ledger.get(),1)) ||
+                   sqlite3_column_type(ledger.get(),4)!=SQLITE_TEXT ||
+                   sqlite3_column_type(ledger.get(),5)!=SQLITE_TEXT ||
+                   sqlite_str(ledger.get(),4)!="workshop:"+std::to_string(cmd->second.target)+
+                       (cmd->second.thrust_x==1?":aluminum":":aluminum_panels") ||
+                   sqlite_str(ledger.get(),5)!="workshop:"+std::to_string(cmd->second.target)+
+                       ":aluminum_scrap")
+                    throw std::runtime_error("SQLite: invalid original industrial training practice receipt");
             } else if(reason=="workshop_construction_t" ||
                       reason=="workshop_feed_transfer_kg" ||
                       reason=="workshop_output_transfer_kg"){
@@ -4566,7 +4819,7 @@ public:
         std::size_t expected_mineral_refine=0,expected_material_fabricate=0;
         std::size_t expected_life_transfers=0,expected_farm_builds=0,expected_farm_stock_transfers=0;
         std::size_t expected_habitat_builds=0, expected_habitat_transfers=0;
-        std::size_t expected_utility_builds=0,expected_utility_repairs=0,expected_utility_spares=0,expected_community_builds=0,expected_community_transfers=0,expected_clinic_builds=0,expected_clinic_transfers=0,expected_reclaimer_builds=0,expected_waterworks_builds=0,expected_waterworks_transfers=0,expected_workshop_builds=0,expected_workshop_feeds=0,expected_workshop_outputs=0,expected_workshop_finisher_builds=0,expected_workshop_final_outputs=0,expected_workshop_stacks=0,expected_storage_builds=0,expected_storage_stacks=0,expected_extra_storage_builds=0,expected_extra_storage_stacks=0,expected_link_builds=0,expected_conveyor_cells=0, expected_world_escrows=0,expected_world_returns=0;
+        std::size_t expected_utility_builds=0,expected_utility_repairs=0,expected_utility_spares=0,expected_community_builds=0,expected_community_transfers=0,expected_clinic_builds=0,expected_clinic_transfers=0,expected_reclaimer_builds=0,expected_waterworks_builds=0,expected_waterworks_transfers=0,expected_workshop_builds=0,expected_workshop_feeds=0,expected_workshop_outputs=0,expected_workshop_finisher_builds=0,expected_workshop_final_outputs=0,expected_workshop_stacks=0,expected_workshop_practice=0,expected_storage_builds=0,expected_storage_stacks=0,expected_extra_storage_builds=0,expected_extra_storage_stacks=0,expected_link_builds=0,expected_conveyor_cells=0, expected_world_escrows=0,expected_world_returns=0;
 
         for (const auto& ev : restored.events()) {
             if (ev.result != Outcome::Applied || ev.transferred <= 0) continue;
@@ -4603,6 +4856,8 @@ public:
             else if (cmd->second.action==Action::ConstructWorkshopFinisher) ++expected_workshop_finisher_builds;
             else if (cmd->second.action==Action::TransferWorkshopFinalOutput) ++expected_workshop_final_outputs;
             else if (cmd->second.action==Action::TransferWorkshopStack) ++expected_workshop_stacks;
+            else if (cmd->second.action==Action::TrainWorkshopTrade ||
+                     cmd->second.action==Action::MentorWorkshopTrade) ++expected_workshop_practice;
             else if (cmd->second.action==Action::HostEscrowConstructedStock) ++expected_world_escrows;
             else if (cmd->second.action==Action::HostReturnConstructedStock) ++expected_world_returns;
             else if (cmd->second.action==Action::ConstructStorage) ++expected_storage_builds;
@@ -4649,6 +4904,7 @@ public:
             workshop_finisher_builds!=expected_workshop_finisher_builds ||
             workshop_final_outputs!=expected_workshop_final_outputs ||
             workshop_stacks!=expected_workshop_stacks ||
+             workshop_practice!=expected_workshop_practice ||
             storage_builds!=expected_storage_builds || storage_stacks!=expected_storage_stacks ||
             extra_storage_builds!=expected_extra_storage_builds ||
             extra_storage_stacks!=expected_extra_storage_stacks ||
@@ -6747,6 +7003,8 @@ public:
                          cmd->second.action!=Action::ConstructClinic &&
                          cmd->second.action!=Action::TransferClinicStock &&
                          cmd->second.action!=Action::ConstructWorkshop &&
+                         cmd->second.action!=Action::TrainWorkshopTrade &&
+                         cmd->second.action!=Action::MentorWorkshopTrade &&
                          cmd->second.action!=Action::TransferWorkshopFeed &&
                          cmd->second.action!=Action::TransferWorkshopOutput &&
                          cmd->second.action!=Action::ConstructWorkshopFinisher &&
@@ -6865,6 +7123,18 @@ public:
                             std::to_string(c.amount>0?c.target:c.actor)+":"+kind[c.thrust_x]);
                         ledger.i64(6,ev.transferred);
                         ledger.text(7,"workshop_stack_transfer_kg");
+                    } else if(cmd->second.action==Action::TrainWorkshopTrade ||
+                              cmd->second.action==Action::MentorWorkshopTrade){
+                        const auto& c=cmd->second;
+                        if(ev.transferred!=1 || c.amount<1 || c.amount>1000000 ||
+                           (c.thrust_x!=1 && c.thrust_x!=2) ||
+                           c.issuer==Simulation::kServerAuthority)
+                            throw std::runtime_error("invalid industrial training practice material");
+                        ledger.text(4,"workshop:"+std::to_string(c.target)+
+                            (c.thrust_x==1?":aluminum":":aluminum_panels"));
+                        ledger.text(5,"workshop:"+std::to_string(c.target)+":aluminum_scrap");
+                        ledger.i64(6,1);
+                        ledger.text(7,"industrial_training_practice_kg");
                     } else if(cmd->second.action==Action::ConstructWorkshop ||
                               cmd->second.action==Action::TransferWorkshopFeed ||
                               cmd->second.action==Action::TransferWorkshopOutput){

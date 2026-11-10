@@ -19,7 +19,7 @@ else()
 endif()
 add_library(galaxy_kernel STATIC src/PlanetaryAgriculture.cpp src/Simulation.cpp src/ColonyResilience.cpp
   src/ColonyRecovery.cpp src/ColonyPolicy.cpp src/PopulationCohorts.cpp
-    src/ColonyWaterSupply.cpp src/Persistence.cpp src/EconomyPrototype.cpp src/QuantifiedProduction.cpp src/Industry01Catalog.generated.cpp src/Inventory.cpp src/InventoryLogistics.cpp src/FactoryLayout.cpp src/BlueprintConstruction.cpp src/HostBlueprintRegistry.cpp src/ClientContract.cpp src/Galaxy.cpp src/Navigation.cpp src/GateTransit.cpp src/Region.cpp
+    src/ColonyWaterSupply.cpp src/Persistence.cpp src/EconomyPrototype.cpp src/QuantifiedProduction.cpp src/Industry01Catalog.generated.cpp src/WO2ProfessionCatalog.generated.cpp src/Inventory.cpp src/InventoryLogistics.cpp src/FactoryLayout.cpp src/BlueprintConstruction.cpp src/HostBlueprintRegistry.cpp src/ClientContract.cpp src/Galaxy.cpp src/Navigation.cpp src/GateTransit.cpp src/Region.cpp
   src/ColdColonyNeeds.cpp src/MacroNeeds.cpp src/ColonySafety.cpp src/ColonySafetyJournal.cpp src/ColonySafetyNotice.cpp src/ColonyDefense.cpp src/ColonyConflict.cpp src/TerritoryJournal.cpp src/CyberIncidentJournal.cpp src/ColonyEvacuation.cpp src/ColonyFamilyDeparture.cpp src/NpcAppearanceGenome.cpp src/MedicalSocietyBridge.cpp src/DependentIncidentAccounting.cpp src/DependentIncidentJournal.cpp src/DependentGuardianship.cpp src/SplitRescueIntent.cpp src/RegionalCheckpointStore.cpp src/RegionalPopulationAudit.cpp src/RegionalEventScheduler.cpp src/RegionalModeAuthority.cpp src/RegionalFactoryHandoff.cpp src/RegionalProductionNetwork.cpp src/RegionalShipmentReconciliation.cpp src/ShipmentManifest.cpp src/ThirdPartyShipment.cpp src/CanonicalShippingHost.cpp src/ShipmentStatusView.cpp
   src/RegionalHostCommands.cpp src/RegionalInterestManager.cpp src/RegionalCustodyLedger.cpp src/RegionalPersistentWorldBridge.cpp)
 target_include_directories(galaxy_kernel PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
@@ -1872,4 +1872,12 @@ if(BUILD_TESTING)
     add_executable(galaxy_industry01_native_tests tests/INDUSTRY01_NativeTests.cpp)
     target_link_libraries(galaxy_industry01_native_tests PRIVATE galaxy_kernel)
     add_test(NAME galaxy_industry01_native_binding COMMAND galaxy_industry01_native_tests)
+endif()
+
+# WO2: professions are a read-only generated mapping; real staffing uses the
+# ORIGINAL PersistentWorld worker commands and SQLite work receipts.
+if(BUILD_TESTING)
+  add_executable(galaxy_wo2_industry_workforce_tests tests/WO2IndustryWorkforceTests.cpp)
+  target_link_libraries(galaxy_wo2_industry_workforce_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_wo2_industry_workforce COMMAND galaxy_wo2_industry_workforce_tests)
 endif()

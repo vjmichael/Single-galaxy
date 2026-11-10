@@ -416,6 +416,38 @@ const OutpostWorkshop* Simulation::workshop(EntityId site) const {
     const auto it=workshops_.find(site);
     return it==workshops_.end()?nullptr:&it->second;
 }
+bool Simulation::pending_workshop_shift(EntityId site,bool finisher,
+                                        std::uint64_t command_id) const {
+    if(!command_id)return false;
+    const auto shop=workshops_.find(site);
+    if(shop==workshops_.end() ||
+       shop->second.cancelled_pending_shifts.count(command_id))return false;
+    for(const auto& [due,orders]:commands_){
+        if(due<=tick_ || due-tick_<=1)continue; // cancellation must commit first
+        for(const auto& c:orders)
+            if(c.id==command_id && c.target==site &&
+               c.actor==shop->second.source_ship &&
+               c.action==Action::StartWorkshopShift &&
+               c.thrust_x==(finisher?2:1))return true;
+    }
+    return false;
+}
+bool Simulation::pending_workshop_worker_duty(
+        std::uint64_t npc_id,std::uint64_t from_tick) const {
+    if(!npc_id)return false;
+    for(const auto& [due,orders]:commands_){
+        if(due<from_tick)continue;
+        for(const auto& c:orders){
+            if(c.action!=Action::StartWorkshopShift ||
+               c.amount!=static_cast<std::int64_t>(npc_id))continue;
+            const auto shop=workshops_.find(c.target);
+            if(shop==workshops_.end() || shop->second.source_ship!=c.actor ||
+               shop->second.cancelled_pending_shifts.count(c.id))continue;
+            return true;
+        }
+    }
+    return false;
+}
 const UtilityFacility* Simulation::utility(EntityId site) const {
     const auto it=utilities_.find(site);
     return it==utilities_.end()?nullptr:&it->second;
@@ -1827,6 +1859,163 @@ bool Simulation::submit(const Command& c) {
                 c.target==9 : c.action==Action::FabricateMaterialModule ?
                 (c.target!=1 && c.target!=2) : c.target!=0)) return false;
     }
+    // WO2-H: real NPC training is an explicit owner command on an installed
+    // original workshop, never a profession-catalogue license or worker spawn.
+    // c.amount = named trainee ID; thrust_x=1 cut or 2 shape.
+    if(c.action==Action::TrainWorkshopTrade) {
+        if(!c.id || !c.actor || !c.target || c.amount<1 ||
+           c.amount>1000000 || (c.thrust_x!=1 && c.thrust_x!=2) ||
+           c.thrust_y || c.transport_id || !c.passenger_ids.empty() ||
+           c.secondary_receiver || c.secondary_transport ||
+           !colony_ships_.count(c.actor) || !workshops_.count(c.target))
+            return false;
+        const auto* owned_ship=find(c.actor);
+        const auto* built_site=find(c.target);
+        if(!owned_ship || owned_ship->type!=EntityType::Ship ||
+           !built_site || built_site->type!=EntityType::Station ||
+           !c.issuer || c.issuer==kServerAuthority ||
+           owned_ship->owner_id!=c.issuer ||
+           built_site->owner_id!=c.issuer ||
+           workshops_.at(c.target).source_ship!=c.actor ||
+           !built_outposts_.count(c.target) ||
+           built_outposts_.at(c.target).source_colony_ship!=c.actor)
+            return false;
+    }
+    // WO2-I: shift commands are normal owner-authenticated original-world
+    // commands. Scheduling uses the original due tick as the shift start and
+    // thrust_y as duration; no transport, manifest or material side channel.
+    if(c.action==Action::StartWorkshopShift || c.action==Action::CancelWorkshopShift){
+        if(!c.actor || !c.target || (c.thrust_x!=1 && c.thrust_x!=2) ||
+           c.transport_id || !c.passenger_ids.empty() ||
+           c.secondary_receiver || c.secondary_transport ||
+           (c.action==Action::StartWorkshopShift ?
+             (c.amount<1 || c.amount>1000000 || c.thrust_y<1 ||
+              c.thrust_y>10000 || c.execute_tick>std::numeric_limits<std::uint64_t>::max()-
+                  static_cast<std::uint64_t>(c.thrust_y) ||
+              c.execute_tick-tick_>10000) :
+             (c.amount<1 || c.thrust_y!=0)) ||
+           !colony_ships_.count(c.actor) || !workshops_.count(c.target))
+            return false;
+        const auto* ship=find(c.actor);
+        const auto* site=find(c.target);
+        if(!ship || !site || ship->type!=EntityType::Ship ||
+           site->type!=EntityType::Station ||
+           ship->owner_id!=c.issuer || site->owner_id!=c.issuer ||
+           workshops_.at(c.target).source_ship!=c.actor ||
+           !built_outposts_.count(c.target) ||
+           built_outposts_.at(c.target).source_colony_ship!=c.actor)
+            return false;
+        if(c.action==Action::StartWorkshopShift){
+            const auto end=c.execute_tick+static_cast<std::uint64_t>(c.thrust_y);
+            const auto& shop=workshops_.at(c.target);
+            const auto& existing=shop.shifts[static_cast<std::size_t>(c.thrust_x-1)];
+            if((c.thrust_x==2 && !shop.finisher_installed) ||
+               (existing.command_id && c.execute_tick<existing.end_tick &&
+                existing.start_tick<end))
+                return false;
+            for(const auto& [other_site,other]:workshops_){
+                (void)other_site;
+                for(unsigned slot=0;slot<2;++slot){
+                    const auto& sh=other.shifts[slot];
+                    if(sh.command_id && sh.worker==static_cast<std::uint64_t>(c.amount) &&
+                       c.execute_tick<sh.end_tick && sh.start_tick<end)return false;
+                }
+            }
+            for(const auto& [due,orders]:commands_){
+                for(const auto& prior:orders){
+                    if(prior.action!=Action::StartWorkshopShift)continue;
+                    const auto prior_shop=workshops_.find(prior.target);
+                    if(prior_shop!=workshops_.end() &&
+                       prior_shop->second.cancelled_pending_shifts.count(prior.id))
+                        continue;
+                    const auto prior_end=due+static_cast<std::uint64_t>(prior.thrust_y);
+                    if(c.execute_tick<prior_end && due<end &&
+                       ((prior.target==c.target && prior.thrust_x==c.thrust_x) ||
+                        prior.amount==c.amount))return false;
+                }
+            }
+        }
+        snapshot_version_=std::max(snapshot_version_,106);
+    }
+    // WO2-I: atomic relief holds the original finite shift ID and end tick,
+    // changing only its named worker in one original, approved command.
+    // amount=original shift command ID; thrust_y=replacement NPC; x=slot.
+    if(c.action==Action::RelieveWorkshopShift){
+        if(!c.actor || !c.target || !c.id ||
+           (c.thrust_x!=1 && c.thrust_x!=2) ||
+           c.amount<1 || c.thrust_y<1 || c.thrust_y>1000000 ||
+           c.transport_id || !c.passenger_ids.empty() ||
+           c.secondary_receiver || c.secondary_transport ||
+           tick_==std::numeric_limits<std::uint64_t>::max() ||
+           c.execute_tick!=tick_+1)
+            return false;
+        const auto* ship=find(c.actor);
+        const auto* site=find(c.target);
+        const auto shop=workshops_.find(c.target);
+        if(!ship || !site || ship->type!=EntityType::Ship ||
+           site->type!=EntityType::Station || ship->owner_id!=c.issuer ||
+           site->owner_id!=c.issuer || shop==workshops_.end() ||
+           shop->second.source_ship!=c.actor ||
+           !colony_ships_.count(c.actor) ||
+           !built_outposts_.count(c.target) ||
+           built_outposts_.at(c.target).source_colony_ship!=c.actor)
+            return false;
+        const auto& shift=shop->second.shifts[static_cast<std::size_t>(c.thrust_x-1)];
+        if(!shift.in_effect(c.execute_tick) ||
+           shift.command_id!=static_cast<std::uint64_t>(c.amount) ||
+           shift.worker==static_cast<std::uint64_t>(c.thrust_y))
+            return false;
+        // A second already-queued handover for this slot at the same tick
+        // must not be able to undo/replay an earlier owner approval.
+        const auto pending=commands_.find(c.execute_tick);
+        if(pending!=commands_.end())
+            for(const auto& prior:pending->second)
+                if(prior.action==Action::RelieveWorkshopShift &&
+                   prior.target==c.target && prior.thrust_x==c.thrust_x)
+                    return false;
+        snapshot_version_=std::max(snapshot_version_,107);
+    }
+    // WO2-J: the authenticated colony owner alone admits management policy
+    // commands. A certified manager never gains owner-command authority.
+    if(c.action==Action::AppointWorkshopSupervisor ||
+       c.action==Action::MentorWorkshopTrade ||
+       c.action==Action::ApproveWorkshopJob ||
+       c.action==Action::CancelWorkshopJob){
+        if(!c.id || !c.actor || !c.target || c.thrust_x<1 || c.thrust_x>2 ||
+           c.thrust_y || c.transport_id || !c.passenger_ids.empty() ||
+           c.secondary_receiver || c.secondary_transport ||
+           c.issuer==kServerAuthority || !colony_ships_.count(c.actor) ||
+           !workshops_.count(c.target) ||
+           (c.action==Action::AppointWorkshopSupervisor ?
+               (c.amount<0 || c.amount>1000000) :
+            c.action==Action::MentorWorkshopTrade ?
+               (c.amount<1 || c.amount>1000000) :
+            c.action==Action::ApproveWorkshopJob ?
+               (c.amount<1 || c.amount>50 ||
+                c.id>static_cast<std::uint64_t>(
+                   std::numeric_limits<std::int64_t>::max())) :
+               (c.amount<1)))
+            return false;
+        const auto* ship=find(c.actor);
+        const auto* site=find(c.target);
+        if(!ship || !site || ship->type!=EntityType::Ship ||
+           site->type!=EntityType::Station || !c.issuer ||
+           ship->owner_id!=c.issuer || site->owner_id!=c.issuer ||
+           workshops_.at(c.target).source_ship!=c.actor ||
+           !built_outposts_.count(c.target) ||
+           built_outposts_.at(c.target).source_colony_ship!=c.actor)
+            return false;
+        if(c.action==Action::AppointWorkshopSupervisor){
+            // At most one appointment/revocation for this original workshop
+            // per future tick, independent of arbitrary command sequence.
+            const auto due=commands_.find(c.execute_tick);
+            if(due!=commands_.end())
+                for(const auto& prior:due->second)
+                    if(prior.action==Action::AppointWorkshopSupervisor &&
+                       prior.target==c.target)return false;
+        }
+        snapshot_version_=std::max(snapshot_version_,108);
+    }
     const bool workshop_command=c.action==Action::ConstructWorkshop ||
         c.action==Action::TransferWorkshopFeed ||
         c.action==Action::AssignWorkshopOperator ||
@@ -2005,6 +2194,23 @@ bool Simulation::submit(const Command& c) {
     if(incident_action)snapshot_version_=std::max(snapshot_version_,
         c.action==Action::HostResolveMixedFerryLoss?37:
         c.action==Action::HostDestroyPassengerFerry?36:35);
+    if(c.action==Action::TrainWorkshopTrade)
+        snapshot_version_=std::max(snapshot_version_,105);
+    // A valid original command can advance an old world directly to the
+    // WO2 v105-v108 snapshot format. Before committing its pending journal,
+    // derive ONLY existing ships' deterministic physical frame custody and
+    // physically registered celestial systems. Do not mutate a deserialized
+    // untrusted snapshot or remove the strict v71 restore-integrity gate.
+    if(snapshot_version_>=71) {
+        bool missing_physical_system=false;
+        for(const auto id:systems_)
+            if(!physical_celestial_systems_.count(id)) {
+                missing_physical_system=true;
+                break;
+            }
+        if(missing_physical_system)ensure_physical_celestial_systems();
+        ensure_ship_frame_registry();
+    }
     submitted_ids_.insert(c.id);
     commands_[c.execute_tick].push_back(c);
     return true;
@@ -2317,6 +2523,16 @@ Event Simulation::execute(const Command& c) {
                n->second.assigned_site!=c.actor || c.amount<1 || c.amount>10000 ||
                tick_>std::numeric_limits<std::uint64_t>::max()-static_cast<std::uint64_t>(c.amount)){
                 result.result=Outcome::InvalidArgument;return result;
+            }
+            // WO2: named medical and industrial jobs share ONE finite NPC.
+            // A hospital shift may not reuse a presently installed hands-on
+            // workshop operator/finisher; deny before any medical receipt.
+            for(const auto& [site,shop]:workshops_){(void)site;
+                if(shop.operator_npc_id==c.target ||
+                   shop.finisher_npc_id==c.target ||
+                   shop.supervisor_npc_id==c.target){
+                    result.result=Outcome::InvalidArgument;return result;
+                }
             }
             unsigned overlapping=0;
             for(const auto& [id,shift]:medic_shifts_){(void)id;
@@ -3759,6 +3975,14 @@ Event Simulation::execute(const Command& c) {
             actor.jump_ticks=kJumpTransitTicks;actor.pending_gate=c.target;
             snapshot_version_=std::max(snapshot_version_,5);result.result=Outcome::Applied;return result;
         }
+        case Action::TrainWorkshopTrade:
+        case Action::StartWorkshopShift:
+        case Action::CancelWorkshopShift:
+        case Action::RelieveWorkshopShift:
+        case Action::AppointWorkshopSupervisor:
+        case Action::MentorWorkshopTrade:
+        case Action::ApproveWorkshopJob:
+        case Action::CancelWorkshopJob:
         case Action::ConstructWorkshop:
         case Action::TransferWorkshopFeed:
         case Action::AssignWorkshopOperator:
@@ -4059,7 +4283,15 @@ Event Simulation::execute(const Command& c) {
                 result.transferred=2;
                 result.result=Outcome::Applied;return result;
             }
-            if(c.action==Action::TransferWorkshopFeed ||
+            if(c.action==Action::StartWorkshopShift ||
+               c.action==Action::CancelWorkshopShift ||
+               c.action==Action::RelieveWorkshopShift ||
+               c.action==Action::AppointWorkshopSupervisor ||
+               c.action==Action::MentorWorkshopTrade ||
+               c.action==Action::ApproveWorkshopJob ||
+               c.action==Action::CancelWorkshopJob ||
+               c.action==Action::TrainWorkshopTrade ||
+               c.action==Action::TransferWorkshopFeed ||
                c.action==Action::AssignWorkshopOperator ||
                c.action==Action::TransferWorkshopOutput ||
                c.action==Action::ConstructWorkshopFinisher ||
@@ -4071,6 +4303,457 @@ Event Simulation::execute(const Command& c) {
                     result.result=Outcome::InvalidTarget;return result;
                 }
                 auto& w=wi->second;
+                const auto occupied_native_shipyard=[&](std::uint64_t who){
+                    for(const auto& [id,yard]:shipyard_constructions_){
+                        (void)id;
+                        if(!yard.operational() &&
+                           (yard.workers[0]==who || yard.workers[1]==who))
+                            return true;
+                    }
+                    for(const auto& [id,build]:freighter_build_orders_){
+                        (void)id;
+                        if(build.finished())continue;
+                        const auto yard=shipyard_constructions_.find(build.yard_order);
+                        if(yard!=shipyard_constructions_.end() &&
+                           (yard->second.workers[0]==who ||
+                            yard->second.workers[1]==who))
+                            return true;
+                    }
+                    return false;
+                };
+                // WO2-J appointment, mentorship and job policy are original
+                // site-owned actions; they cannot bypass workshop execution.
+                if(c.action==Action::AppointWorkshopSupervisor){
+                    if(w.last_mentored_tick==tick_){
+                        result.result=Outcome::InvalidTarget;return result;
+                    }
+                    const auto trade=static_cast<WorkshopTrade>(c.thrust_x);
+                    const auto id=static_cast<std::uint64_t>(c.amount);
+                    if(!id){
+                        if(!w.supervisor_npc_id){
+                            result.result=Outcome::InvalidTarget;return result;
+                        }
+                        w.supervisor_npc_id=0;w.supervisor_appointment_id=0;
+                        w.approved_jobs={};
+                        result.result=Outcome::Applied;return result;
+                    }
+                    const auto n=npcs_.find(id);
+                    const auto h=habitats_.find(c.target);
+                    if((trade==WorkshopTrade::Shape && !w.finisher_installed) ||
+                       n==npcs_.end() || h==habitats_.end() ||
+                       h->second.source_ship!=c.actor || h->second.residents<=0 ||
+                       n->second.home_ship!=c.actor ||
+                       n->second.location!=c.target ||
+                       n->second.assigned_site!=c.target ||
+                       n->second.role!=NpcRole::Habitat ||
+                       n->second.mentor_id || n->second.transport_id ||
+                       !npc_available_for_duty(id) ||
+                       occupied_native_shipyard(id) ||
+                       pending_workshop_worker_duty(id,tick_) ||
+                       !workshop_trade_certified(id,trade)){
+                        result.result=Outcome::InvalidTarget;return result;
+                    }
+                    for(const auto& [site,shop]:workshops_){
+                        if(shop.supervisor_npc_id==id && site!=c.target){
+                            result.result=Outcome::InvalidTarget;return result;
+                        }
+                        if(shop.operator_npc_id==id || shop.finisher_npc_id==id){
+                            result.result=Outcome::InvalidTarget;return result;
+                        }
+                    }
+                    for(const auto& [rid,shift]:medic_shifts_){
+                        (void)rid;
+                        if(shift.medic_id==id && shift.end_tick>tick_){
+                            result.result=Outcome::InvalidTarget;return result;
+                        }
+                    }
+                    if(w.supervisor_npc_id==id && w.supervisor_trade==trade){
+                        result.result=Outcome::InvalidTarget;return result;
+                    }
+                    // Manager replacement invalidates prior owner-approved
+                    // board entries. Historical applied receipts remain.
+                    w.supervisor_npc_id=id;w.supervisor_trade=trade;
+                    w.supervisor_appointment_id=c.id;
+                    w.approved_jobs={};
+                    result.result=Outcome::Applied;return result;
+                }
+                if(c.action==Action::ApproveWorkshopJob ||
+                   c.action==Action::CancelWorkshopJob){
+                    const auto slot=static_cast<std::size_t>(c.thrust_x-1);
+                    auto& job=w.approved_jobs[slot];
+                    if(c.action==Action::CancelWorkshopJob){
+                        if(!job.command_id ||
+                           job.command_id!=static_cast<std::uint64_t>(c.amount)){
+                            result.result=Outcome::InvalidTarget;return result;
+                        }
+                        job={};
+                        result.result=Outcome::Applied;return result;
+                    }
+                    const auto supervisor=npcs_.find(w.supervisor_npc_id);
+                    // An appointment does not reserve a separate person:
+                    // other native duties may have changed since it was
+                    // issued. Recheck the same finite worker at job approval.
+                    bool supervisor_double_booked=false;
+                    for(const auto& [other_site,other]:workshops_){
+                        (void)other_site;
+                        if(other.operator_npc_id==w.supervisor_npc_id ||
+                           other.finisher_npc_id==w.supervisor_npc_id)
+                            supervisor_double_booked=true;
+                    }
+                    for(const auto& [shift_id,shift]:medic_shifts_){
+                        (void)shift_id;
+                        if(shift.medic_id==w.supervisor_npc_id &&
+                           shift.start_tick<=tick_ && tick_<shift.end_tick)
+                            supervisor_double_booked=true;
+                    }
+                    if(job.command_id || !w.supervisor_npc_id ||
+                       supervisor_double_booked ||
+                       !w.supervisor_appointment_id ||
+                       std::any_of(events_.begin(),events_.end(),
+                         [&](const Event& e){return e.command_id==w.supervisor_appointment_id &&
+                           e.tick==tick_ && e.result==Outcome::Applied;}) ||
+                       supervisor==npcs_.end() ||
+                       supervisor->second.home_ship!=c.actor ||
+                       supervisor->second.location!=c.target ||
+                       supervisor->second.assigned_site!=c.target ||
+                       supervisor->second.role!=NpcRole::Habitat ||
+                       !npc_available_for_duty(w.supervisor_npc_id) ||
+                       occupied_native_shipyard(w.supervisor_npc_id) ||
+                       w.supervisor_trade!=static_cast<WorkshopTrade>(c.thrust_x) ||
+                       (slot==1 && !w.finisher_installed)){
+                        result.result=Outcome::InvalidTarget;return result;
+                    }
+                    const auto current=slot==0?w.completed_batches:w.finisher_batches;
+                    job.command_id=c.id;
+                    job.supervisor_appointment_id=w.supervisor_appointment_id;
+                    job.supervisor_npc_id=w.supervisor_npc_id;
+                    job.approved_tick=tick_;
+                    job.target_batches=static_cast<std::uint32_t>(c.amount);
+                    job.baseline_batches=current;
+                    result.result=Outcome::Applied;return result;
+                }
+                if(c.action==Action::StartWorkshopShift ||
+                   c.action==Action::CancelWorkshopShift ||
+                   c.action==Action::RelieveWorkshopShift){
+                    const auto slot=static_cast<std::size_t>(c.thrust_x-1);
+                    auto& sh=w.shifts[slot];
+                    auto& assigned=slot==0?w.operator_npc_id:w.finisher_npc_id;
+                    if(c.action==Action::CancelWorkshopShift){
+                        if(sh.command_id==static_cast<std::uint64_t>(c.amount)){
+                            if(assigned==sh.worker)assigned=0;
+                            sh={};
+                            result.result=Outcome::Applied;return result;
+                        }
+                        // A future accepted start still exists in the original
+                        // pending queue. Cancel by original order ID, leaving
+                        // that order's eventual rejected receipt intact.
+                        if(w.cancelled_pending_shifts.size()>=256){
+                            result.result=Outcome::InvalidArgument;return result;
+                        }
+                        bool found=false;
+                        for(const auto& [due,orders]:commands_){
+                            if(due<=tick_)continue;
+                            for(const auto& pending:orders){
+                                if(pending.id==static_cast<std::uint64_t>(c.amount) &&
+                                   pending.action==Action::StartWorkshopShift &&
+                                   pending.target==c.target &&
+                                   pending.actor==c.actor &&
+                                   pending.thrust_x==c.thrust_x){
+                                    found=true;break;
+                                }
+                            }
+                            if(found)break;
+                        }
+                        if(!found ||
+                           !w.cancelled_pending_shifts.insert(
+                                static_cast<std::uint64_t>(c.amount)).second){
+                            result.result=Outcome::InvalidTarget;return result;
+                        }
+                        result.result=Outcome::Applied;return result;
+                    }
+                    if(c.action==Action::RelieveWorkshopShift){
+                        const auto replacement=static_cast<std::uint64_t>(c.thrust_y);
+                        const auto person=npcs_.find(replacement);
+                        const auto h=habitats_.find(c.target);
+                        if(sh.command_id!=static_cast<std::uint64_t>(c.amount) ||
+                           !sh.in_effect(tick_) || assigned!=sh.worker ||
+                           sh.worker==replacement || person==npcs_.end() ||
+                           h==habitats_.end() || h->second.source_ship!=c.actor ||
+                           h->second.residents<=0 ||
+                           person->second.home_ship!=c.actor ||
+                           person->second.location!=c.target ||
+                           person->second.assigned_site!=c.target ||
+                           person->second.role!=NpcRole::Habitat ||
+                           person->second.mentor_id || person->second.transport_id ||
+                           !npc_available_for_duty(replacement)){
+                            result.result=Outcome::InvalidTarget;return result;
+                        }
+                        // No two handovers in one committed tick, even when
+                        // the command IDs and both replacement workers differ.
+                        if(sh.relief_command_id &&
+                           std::any_of(events_.begin(),events_.end(),
+                              [&](const Event& e){return e.command_id==sh.relief_command_id &&
+                                  e.tick==tick_ && e.result==Outcome::Applied;})){
+                            result.result=Outcome::InvalidTarget;return result;
+                        }
+                        for(const auto& [id,shop]:workshops_){
+                            (void)id;
+                            if(shop.operator_npc_id==replacement ||
+                               shop.finisher_npc_id==replacement ||
+                               shop.supervisor_npc_id==replacement){
+                                result.result=Outcome::InvalidTarget;return result;
+                            }
+                            for(const auto& duty:shop.shifts)
+                                if(duty.command_id && duty.worker==replacement &&
+                                   tick_<duty.end_tick && duty.start_tick<sh.end_tick){
+                                    result.result=Outcome::InvalidTarget;return result;
+                                }
+                        }
+                        for(const auto& [id,shift]:medic_shifts_){
+                            (void)id;
+                            if(shift.medic_id==replacement &&
+                               tick_<shift.end_tick && shift.start_tick<sh.end_tick){
+                                result.result=Outcome::InvalidTarget;return result;
+                            }
+                        }
+                        for(const auto& [id,yard]:shipyard_constructions_){
+                            (void)id;
+                            if(!yard.operational() &&
+                               (yard.workers[0]==replacement ||
+                                yard.workers[1]==replacement)){
+                                result.result=Outcome::InvalidTarget;return result;
+                            }
+                        }
+                        for(const auto& [id,build]:freighter_build_orders_){
+                            (void)id;
+                            if(build.finished())continue;
+                            const auto yard=shipyard_constructions_.find(build.yard_order);
+                            if(yard!=shipyard_constructions_.end() &&
+                               (yard->second.workers[0]==replacement ||
+                                yard->second.workers[1]==replacement)){
+                                result.result=Outcome::InvalidTarget;return result;
+                            }
+                        }
+                        if(std::any_of(person->second.industrial_training.begin(),
+                                       person->second.industrial_training.end(),
+                           [&](const NpcTradeTraining& t){return t.tick==tick_;})){
+                            result.result=Outcome::InvalidTarget;return result;
+                        }
+                        for(const auto& [due,orders]:commands_){
+                            if(due<tick_)continue;
+                            for(const auto& pending:orders){
+                                if(pending.action!=Action::StartWorkshopShift ||
+                                   pending.amount!=static_cast<std::int64_t>(replacement))
+                                    continue;
+                                const auto ps=workshops_.find(pending.target);
+                                if(ps!=workshops_.end() &&
+                                   ps->second.cancelled_pending_shifts.count(pending.id))
+                                    continue;
+                                if(due<sh.end_tick &&
+                                   due+static_cast<std::uint64_t>(pending.thrust_y)>tick_){
+                                    result.result=Outcome::InvalidTarget;return result;
+                                }
+                            }
+                        }
+                        // One atomic change: leave physical WIP, original
+                        // duration, input and energy untouched.
+                        assigned=replacement;
+                        sh.worker=replacement;
+                        sh.relief_command_id=c.id;
+                        result.result=Outcome::Applied;return result;
+                    }
+                    if(w.cancelled_pending_shifts.erase(c.id)){
+                        result.result=Outcome::InvalidTarget;return result;
+                    }
+                    const auto worker=static_cast<std::uint64_t>(c.amount);
+                    const auto npc=npcs_.find(worker);
+                    const auto hab=habitats_.find(c.target);
+                    if(sh.command_id || assigned || (slot==1 && !w.finisher_installed) ||
+                       w.supervisor_npc_id==worker ||
+                       npc==npcs_.end() || hab==habitats_.end() ||
+                       hab->second.source_ship!=c.actor || hab->second.residents<=0 ||
+                       npc->second.home_ship!=c.actor ||
+                       npc->second.location!=c.target ||
+                       npc->second.assigned_site!=c.target ||
+                       npc->second.role!=NpcRole::Habitat ||
+                       npc->second.mentor_id || npc->second.transport_id ||
+                       !npc_available_for_duty(worker)){
+                        result.result=Outcome::InvalidTarget;return result;
+                    }
+                    for(const auto& [other_site,shop]:workshops_){
+                        (void)other_site;
+                        if(shop.operator_npc_id==worker || shop.finisher_npc_id==worker ||
+                           shop.supervisor_npc_id==worker){
+                            result.result=Outcome::InvalidTarget;return result;
+                        }
+                        for(const auto& other:shop.shifts)
+                            if(other.command_id && other.worker==worker){
+                                result.result=Outcome::InvalidTarget;return result;
+                            }
+                    }
+                    for(const auto& [id,shift]:medic_shifts_){
+                        (void)id;
+                        if(shift.medic_id==worker && tick_<shift.end_tick &&
+                           shift.start_tick<tick_+static_cast<std::uint64_t>(c.thrust_y)){
+                            result.result=Outcome::InvalidTarget;return result;
+                        }
+                    }
+                    // Native shipyard duties are physical work, not an
+                    // independent person pool. An active construction crew
+                    // cannot be scheduled onto the installed workshop.
+                    for(const auto& [id,yard]:shipyard_constructions_){
+                        (void)id;
+                        if(!yard.operational() &&
+                           (yard.workers[0]==worker || yard.workers[1]==worker)){
+                            result.result=Outcome::InvalidTarget;return result;
+                        }
+                    }
+                    for(const auto& [id,build]:freighter_build_orders_){
+                        (void)id;
+                        if(build.finished())continue;
+                        const auto yard=shipyard_constructions_.find(build.yard_order);
+                        if(yard!=shipyard_constructions_.end() &&
+                           (yard->second.workers[0]==worker ||
+                            yard->second.workers[1]==worker)){
+                            result.result=Outcome::InvalidTarget;return result;
+                        }
+                    }
+                    if(snapshot_version_>=105 &&
+                       std::any_of(npc->second.industrial_training.begin(),
+                                   npc->second.industrial_training.end(),
+                          [&](const NpcTradeTraining& t){return t.tick==tick_;})){
+                        result.result=Outcome::InvalidTarget;return result;
+                    }
+                    sh={c.id,worker,tick_,
+                        tick_+static_cast<std::uint64_t>(c.thrust_y)};
+                    assigned=worker;
+                    result.result=Outcome::Applied;return result;
+                }
+                if(c.action==Action::TrainWorkshopTrade ||
+                   c.action==Action::MentorWorkshopTrade){
+                    // Authoritative execution rechecks the owner, custody,
+                    // installed station, real supply and duty. A queued order
+                    // may become invalid between approval and this tick.
+                    const auto trade=static_cast<WorkshopTrade>(c.thrust_x);
+                    const auto npc_id=static_cast<std::uint64_t>(c.amount);
+                    auto ni=npcs_.find(npc_id);
+                    const auto h=habitats_.find(c.target);
+                    if(ni==npcs_.end() || h==habitats_.end() ||
+                       h->second.source_ship!=c.actor || h->second.residents<=0 ||
+                       ni->second.home_ship!=c.actor ||
+                       ni->second.location!=c.target ||
+                       ni->second.assigned_site!=c.target ||
+                       ni->second.role!=NpcRole::Habitat ||
+                       ni->second.mentor_id || ni->second.transport_id ||
+                       (trade==WorkshopTrade::Shape && !w.finisher_installed) ||
+                       !npc_available_for_duty(npc_id)){
+                        result.result=Outcome::InvalidTarget;return result;
+                    }
+                    const bool mentoring=c.action==Action::MentorWorkshopTrade;
+                    std::uint64_t mentor_id=0,mentor_appointment=0;
+                    if(mentoring){
+                        mentor_id=w.supervisor_npc_id;
+                        mentor_appointment=w.supervisor_appointment_id;
+                        const auto mentor=npcs_.find(mentor_id);
+                        if(!mentor_id || !mentor_appointment || mentor_id==npc_id ||
+                           w.supervisor_trade!=trade || mentor==npcs_.end() ||
+                           w.last_mentored_tick==tick_ ||
+                           std::any_of(events_.begin(),events_.end(),
+                             [&](const Event& e){
+                               return e.command_id==mentor_appointment &&
+                                      e.tick==tick_ && e.result==Outcome::Applied;}) ||
+                           !workshop_trade_certified(mentor_id,trade) ||
+                           mentor->second.home_ship!=c.actor ||
+                           mentor->second.location!=c.target ||
+                           mentor->second.assigned_site!=c.target ||
+                           mentor->second.role!=NpcRole::Habitat ||
+                           mentor->second.transport_id || mentor->second.mentor_id ||
+                           !npc_available_for_duty(mentor_id) ||
+                           occupied_native_shipyard(mentor_id)){
+                            result.result=Outcome::InvalidTarget;return result;
+                        }
+                        for(const auto& [site,shop]:workshops_){
+                            (void)site;
+                            if(shop.operator_npc_id==mentor_id ||
+                               shop.finisher_npc_id==mentor_id){
+                                result.result=Outcome::InvalidTarget;return result;
+                            }
+                        }
+                        for(const auto& [id,shift]:medic_shifts_){
+                            (void)id;
+                            if(shift.medic_id==mentor_id && shift.end_tick>tick_){
+                                result.result=Outcome::InvalidTarget;return result;
+                            }
+                        }
+                    }
+                    unsigned trained=0;
+                    for(const auto& credit:ni->second.industrial_training){
+                        // Original NPC cannot perform two separate training
+                        // sessions in the same logical tick, even for
+                        // different trades or distinct command IDs.
+                        if(credit.tick==tick_){
+                            result.result=Outcome::InvalidTarget;return result;
+                        }
+                        if(credit.trade==trade)++trained;
+                    }
+                    if(trained>=3 || ni->second.industrial_training.size()>=6){
+                        result.result=Outcome::InvalidArgument;return result;
+                    }
+                    for(const auto& [other_site,shop]:workshops_){
+                        (void)other_site;
+                        if(shop.operator_npc_id==npc_id ||
+                           shop.finisher_npc_id==npc_id ||
+                           shop.supervisor_npc_id==npc_id){
+                            result.result=Outcome::InvalidTarget;return result;
+                        }
+                    }
+                    for(const auto& [id,shift]:medic_shifts_){
+                        (void)id;
+                        if(shift.medic_id==npc_id && shift.end_tick>tick_){
+                            result.result=Outcome::InvalidTarget;return result;
+                        }
+                    }
+                    for(const auto& [id,yard]:shipyard_constructions_){
+                        (void)id;
+                        if(!yard.operational() &&
+                           (yard.workers[0]==npc_id || yard.workers[1]==npc_id)){
+                            result.result=Outcome::InvalidTarget;return result;
+                        }
+                    }
+                    for(const auto& [id,build]:freighter_build_orders_){
+                        (void)id;
+                        if(build.finished())continue;
+                        const auto yard=shipyard_constructions_.find(build.yard_order);
+                        if(yard!=shipyard_constructions_.end() &&
+                           (yard->second.workers[0]==npc_id ||
+                            yard->second.workers[1]==npc_id)){
+                            result.result=Outcome::InvalidTarget;return result;
+                        }
+                    }
+                    auto utility=utilities_.find(c.target);
+                    if(utility==utilities_.end() || !utility->second.powered ||
+                       utility->second.condition<=0 ||
+                       utility->second.stored_energy<1 ||
+                       utility->second.consumed_energy==std::numeric_limits<std::int64_t>::max()){
+                        result.result=Outcome::NoResources;return result;
+                    }
+                    auto& feed=trade==WorkshopTrade::Cut?w.aluminum_kg:w.panels_kg;
+                    // One kg of physical stock becomes one kg of recoverable
+                    // machining practice scrap. No matter disappears, and
+                    // training can't bypass native workshop inventory limits.
+                    if(feed<1 || w.scrap_kg>=1000){
+                        result.result=Outcome::NoResources;return result;
+                    }
+                    --feed;++w.scrap_kg;
+                    --utility->second.stored_energy;
+                    ++utility->second.consumed_energy;
+                    ni->second.industrial_training.push_back(
+                        NpcTradeTraining{c.id,tick_,c.target,trade,
+                                         mentor_id,mentor_appointment});
+                    if(mentoring)w.last_mentored_tick=tick_;
+                    result.transferred=1;
+                    result.result=Outcome::Applied;return result;
+                }
                 if(c.action==Action::ConstructWorkshopFinisher){
                     if(w.finisher_installed){result.result=Outcome::InvalidTarget;return result;}
                     if(cship.modules<1){result.result=Outcome::NoResources;return result;}
@@ -4087,12 +4770,52 @@ Event Simulation::execute(const Command& c) {
                     if(second && !w.finisher_installed){
                         result.result=Outcome::InvalidTarget;return result;
                     }
+                    if(w.shifts[second?1:0].command_id){
+                        // A finite approved shift, not a legacy permanent
+                        // worker slot. Relief requires explicit cancellation.
+                        result.result=Outcome::InvalidTarget;return result;
+                    }
                     if(c.amount){
                         auto npc=npcs_.find(static_cast<std::uint64_t>(c.amount));
                         if(npc==npcs_.end() || npc->second.home_ship!=c.actor ||
                            npc->second.location!=c.target || npc->second.role!=NpcRole::Habitat ||
                            !habitats_.count(c.target)){
                             result.result=Outcome::InvalidTarget;return result;
+                        }
+                        // WO2 enforce this at the ORIGINAL execution boundary,
+                        // not only in a host planning screen. A stale scheduled
+                        // order must not duplicate a traveling, injured, or
+                        // medically committed physical worker.
+                        const auto worker=static_cast<std::uint64_t>(c.amount);
+                        if(snapshot_version_>=40 && !npc_available_for_duty(worker)){
+                            result.result=Outcome::InvalidTarget;return result;
+                        }
+                        // WO2-H: practice consumes this named NPC's hands for
+                        // the entire current tick. A later command on the same
+                        // committed tick cannot double-book them as an operator.
+                        if(snapshot_version_>=105 &&
+                           std::any_of(npc->second.industrial_training.begin(),
+                                       npc->second.industrial_training.end(),
+                              [&](const NpcTradeTraining& t){return t.tick==tick_;})){
+                            result.result=Outcome::InvalidTarget;return result;
+                        }
+                        for(const auto& [id,existing]:workshops_){
+                            // Preserve the original harmless same-slot
+                            // idempotent assignment; reject ONLY a second
+                            // distinct simultaneous physical duty.
+                            const bool other_operator=existing.operator_npc_id==worker &&
+                                !(id==c.target && !second);
+                            const bool other_finisher=existing.finisher_npc_id==worker &&
+                                !(id==c.target && second);
+                            if(other_operator || other_finisher ||
+                               existing.supervisor_npc_id==worker){
+                                result.result=Outcome::InvalidTarget;return result;
+                            }
+                        }
+                        for(const auto& [id,shift]:medic_shifts_){(void)id;
+                            if(shift.medic_id==worker && shift.end_tick>tick_){
+                                result.result=Outcome::InvalidTarget;return result;
+                            }
                         }
                     }
                     // Tier 1 devices require exclusive hands-on NPC labor.
@@ -5111,13 +5834,95 @@ void Simulation::process_workshops(){
     // The same QuantifiedLine kernel powers visible and remote work: we do
     // not animate conveyor items when the colony owner is far away.
     for(auto& [site,w]:workshops_){
+        // WO2-J: losing a supervisor suspends the owner's approved quota
+        // in place. Never delete the quota and thereby resume unrestricted
+        // legacy manufacturing without a new explicit owner decision.
+        if(w.supervisor_npc_id){
+            const auto n=npcs_.find(w.supervisor_npc_id);
+            // A later medical/shipyard assignment or legacy machine command
+            // must never let one named NPC provide two kinds of physical labor.
+            // Fail closed here even if another subsystem admitted that duty;
+            // preserve any owner-approved unfinished job as suspended.
+            bool duty_conflict=false;
+            for(const auto& [other_site,other]:workshops_){
+                (void)other_site;
+                if(other.operator_npc_id==w.supervisor_npc_id ||
+                   other.finisher_npc_id==w.supervisor_npc_id)
+                    duty_conflict=true;
+            }
+            for(const auto& [shift_id,shift]:medic_shifts_){
+                (void)shift_id;
+                if(shift.medic_id==w.supervisor_npc_id &&
+                   shift.start_tick<=tick_ && tick_<shift.end_tick)
+                    duty_conflict=true;
+            }
+            for(const auto& [yard_id,yard]:shipyard_constructions_){
+                (void)yard_id;
+                if(!yard.operational() &&
+                   (yard.workers[0]==w.supervisor_npc_id ||
+                    yard.workers[1]==w.supervisor_npc_id))
+                    duty_conflict=true;
+            }
+            for(const auto& [build_id,build]:freighter_build_orders_){
+                (void)build_id;
+                if(build.finished())continue;
+                const auto yard=shipyard_constructions_.find(build.yard_order);
+                if(yard!=shipyard_constructions_.end() &&
+                   (yard->second.workers[0]==w.supervisor_npc_id ||
+                    yard->second.workers[1]==w.supervisor_npc_id))
+                    duty_conflict=true;
+            }
+            const bool present=!duty_conflict && n!=npcs_.end() &&
+                n->second.home_ship==w.source_ship &&
+                n->second.location==site && n->second.assigned_site==site &&
+                n->second.role==NpcRole::Habitat &&
+                !n->second.transport_id && !n->second.mentor_id &&
+                npc_available_for_duty(w.supervisor_npc_id);
+            if(!present){
+                w.supervisor_npc_id=0;
+                w.supervisor_appointment_id=0;
+                // Existing jobs retain their original supervisor and
+                // approval command for accountable owner cancellation.
+            }
+        }
+        // WO2-I: expiry is authoritative and deterministic even when a line
+        // has unfinished reserved input; it pauses until real relief arrives.
+        for(unsigned slot=0;slot<2;++slot){
+            auto& sh=w.shifts[slot];
+            if(!sh.command_id)continue;
+            auto& assigned=slot==0?w.operator_npc_id:w.finisher_npc_id;
+            const auto person=npcs_.find(sh.worker);
+            // Expiry or lost physical custody invalidates an installed shift.
+            // Never strand a nonexistent person in the durable staff slot.
+            const bool lost=person==npcs_.end() ||
+                person->second.home_ship!=w.source_ship ||
+                person->second.location!=site ||
+                person->second.assigned_site!=site ||
+                person->second.role!=NpcRole::Habitat ||
+                person->second.mentor_id || person->second.transport_id ||
+                !npc_available_for_duty(sh.worker);
+            if(tick_>=sh.end_tick || lost){
+                if(assigned==sh.worker)assigned=0;
+                sh={};
+            }
+        }
         const auto u=utilities_.find(site);
         const auto n=npcs_.find(w.operator_npc_id);
-        const bool staff=w.operator_npc_id && n!=npcs_.end() &&
+        const auto& cut_job=w.approved_jobs[0];
+        const bool cut_quota_available=!cut_job.command_id ||
+            (w.supervisor_npc_id==cut_job.supervisor_npc_id &&
+             w.supervisor_appointment_id==cut_job.supervisor_appointment_id &&
+             cut_job.achieved(w.completed_batches)<cut_job.target_batches);
+        const bool staff=cut_quota_available &&
+            w.operator_npc_id && n!=npcs_.end() &&
             n->second.home_ship==w.source_ship &&
             n->second.location==site && n->second.role==NpcRole::Habitat &&
             habitats_.count(site) && habitats_.at(site).residents>0 &&
-            (snapshot_version_<40 || npc_available_for_duty(w.operator_npc_id));
+            (snapshot_version_<40 || npc_available_for_duty(w.operator_npc_id)) &&
+            (snapshot_version_<105 ||
+             std::none_of(n->second.industrial_training.begin(),
+                          n->second.industrial_training.end(),
+                 [&](const NpcTradeTraining& t){return t.tick==tick_;}));
         const bool power=u!=utilities_.end() && u->second.powered;
         const bool working=u!=utilities_.end() && u->second.condition>0;
         industry::Recipe recipe=industry01::original_workshop_recipe("native_cut_aluminum_panel");
@@ -5150,12 +5955,22 @@ void Simulation::process_workshops(){
             // Shared finite panel buffer and scrap container create real
             // downstream/upstream backpressure with no virtual delivery.
             const auto fn=npcs_.find(w.finisher_npc_id);
-            const bool fn_staff=w.finisher_npc_id && fn!=npcs_.end() &&
+            const auto& shape_job=w.approved_jobs[1];
+            const bool shape_quota_available=!shape_job.command_id ||
+                (w.supervisor_npc_id==shape_job.supervisor_npc_id &&
+                 w.supervisor_appointment_id==shape_job.supervisor_appointment_id &&
+                 shape_job.achieved(w.finisher_batches)<shape_job.target_batches);
+            const bool fn_staff=shape_quota_available &&
+                w.finisher_npc_id && fn!=npcs_.end() &&
                 fn->second.home_ship==w.source_ship && fn->second.location==site &&
                 fn->second.role==NpcRole::Habitat &&
                 habitats_.count(site) && habitats_.at(site).residents>0 &&
                 w.finisher_npc_id!=w.operator_npc_id &&
-                (snapshot_version_<40 || npc_available_for_duty(w.finisher_npc_id));
+                (snapshot_version_<40 || npc_available_for_duty(w.finisher_npc_id)) &&
+                (snapshot_version_<105 ||
+                 std::none_of(fn->second.industrial_training.begin(),
+                              fn->second.industrial_training.end(),
+                     [&](const NpcTradeTraining& t){return t.tick==tick_;}));
             industry::Recipe fr=industry01::original_workshop_recipe("native_shape_aluminum_frame");
             industry::Machine fm{1,"shape",power,fn_staff,working};
             industry::State fs;
@@ -5745,7 +6560,7 @@ EntityId surface_custody_id(const PlanetarySiteKey& key) {
          (std::uint64_t(lon)<<16) ^ revision ^
          0x5355524641434543ULL) | (1ULL<<63);
 }
-// Declared before native manifest read; definition stays at shuttle-launch layer.
+// Original native manifest references this helper before its definition.
 EntityId shuttle_transit_custody_id(const PlanetarySiteKey& key);
 }
 bool Simulation::build_planetary_site(PlayerId owner,EntityId ship,
@@ -8566,6 +9381,19 @@ bool Simulation::install_testing_confusion(EntityId source,EntityId target,
 void Simulation::step() {
     if (tick_ == std::numeric_limits<std::uint64_t>::max()) throw std::overflow_error("tick counter exhausted");
     ++tick_;
+    // WO2-I: end-exclusive releases precede this tick's ordered commands.
+    // Another preapproved shift can start at the exact former end without
+    // double-booking, a phantom interim worker or an extra production tick.
+    for(auto& [id,shop]:workshops_){
+        (void)id;
+        for(unsigned slot=0;slot<2;++slot){
+            auto& sh=shop.shifts[slot];
+            if(!sh.command_id || tick_<sh.end_tick)continue;
+            auto& assigned=slot==0?shop.operator_npc_id:shop.finisher_npc_id;
+            if(assigned==sh.worker)assigned=0;
+            sh={};
+        }
+    }
     // A newly authorized transition begins on the command tick; completion is
     // automatic after two further committed ticks, without another command.
     process_station_transitions();
@@ -8767,7 +9595,7 @@ void Simulation::steps(std::uint64_t count) {
 
 std::string Simulation::canonical_state() const {
     std::ostringstream out;
-    out << ( snapshot_version_ >= 104 ? "galaxy-kernel-v104|" : snapshot_version_ >= 103 ? "galaxy-kernel-v103|" : snapshot_version_ >= 102 ? "galaxy-kernel-v102|" : snapshot_version_ >= 101 ? "galaxy-kernel-v101|" : snapshot_version_ >= 100 ? "galaxy-kernel-v100|" : snapshot_version_ >= 99 ? "galaxy-kernel-v99|" : snapshot_version_ >= 98 ? "galaxy-kernel-v98|" : snapshot_version_ >= 97 ? "galaxy-kernel-v97|" : snapshot_version_ >= 96 ? "galaxy-kernel-v96|" : snapshot_version_ >= 95 ? "galaxy-kernel-v95|" : snapshot_version_ >= 94 ? "galaxy-kernel-v94|" : snapshot_version_ >= 93 ? "galaxy-kernel-v93|" : snapshot_version_ >= 92 ? "galaxy-kernel-v92|" : snapshot_version_ >= 91 ? "galaxy-kernel-v91|" : snapshot_version_ >= 90 ? "galaxy-kernel-v90|" : snapshot_version_ >= 89 ? "galaxy-kernel-v89|" : snapshot_version_ >= 88 ? "galaxy-kernel-v88|" : snapshot_version_ >= 87 ? "galaxy-kernel-v87|" : snapshot_version_ >= 86 ? "galaxy-kernel-v86|" : snapshot_version_ >= 85 ? "galaxy-kernel-v85|" : snapshot_version_ >= 84 ? "galaxy-kernel-v84|" : snapshot_version_ >= 83 ? "galaxy-kernel-v83|" : snapshot_version_ >= 82 ? "galaxy-kernel-v82|" : snapshot_version_ >= 81 ? "galaxy-kernel-v81|" : snapshot_version_ >= 80 ? "galaxy-kernel-v80|" : snapshot_version_ >= 79 ? "galaxy-kernel-v79|" : snapshot_version_ >= 78 ? "galaxy-kernel-v78|" : snapshot_version_ >= 77 ? "galaxy-kernel-v77|" : snapshot_version_ >= 76 ? "galaxy-kernel-v76|" : snapshot_version_ >= 75 ? "galaxy-kernel-v75|" : snapshot_version_ >= 74 ? "galaxy-kernel-v74|" : snapshot_version_ >= 73 ? "galaxy-kernel-v73|" : snapshot_version_ >= 72 ? "galaxy-kernel-v72|" : snapshot_version_ >= 71 ? "galaxy-kernel-v71|" : snapshot_version_ >= 70 ? "galaxy-kernel-v70|" : snapshot_version_ >= 69 ? "galaxy-kernel-v69|" : snapshot_version_ >= 68 ? "galaxy-kernel-v68|" : snapshot_version_ >= 67 ? "galaxy-kernel-v67|" : snapshot_version_ >= 66 ? "galaxy-kernel-v66|" : snapshot_version_ >= 65 ? "galaxy-kernel-v65|" : snapshot_version_ >= 64 ? "galaxy-kernel-v64|" : snapshot_version_ >= 63 ? "galaxy-kernel-v63|" : snapshot_version_ >= 62 ? "galaxy-kernel-v62|" : snapshot_version_ >= 61 ? "galaxy-kernel-v61|" : snapshot_version_ >= 60 ? "galaxy-kernel-v60|" : snapshot_version_ >= 59 ? "galaxy-kernel-v59|" : snapshot_version_ >= 58 ? "galaxy-kernel-v58|" : snapshot_version_ >= 57 ? "galaxy-kernel-v57|" : snapshot_version_ >= 53 ? "galaxy-kernel-v53|" : snapshot_version_ >= 52 ? "galaxy-kernel-v52|" : snapshot_version_ >= 49 ? "galaxy-kernel-v49|" : snapshot_version_ >= 48 ? "galaxy-kernel-v48|" : snapshot_version_ >= 44 ? "galaxy-kernel-v44|" : snapshot_version_ >= 41 ? "galaxy-kernel-v41|" : snapshot_version_ >= 40 ? "galaxy-kernel-v40|" : snapshot_version_ >= 39 ? "galaxy-kernel-v39|" : snapshot_version_ >= 38 ? "galaxy-kernel-v38|" : snapshot_version_ >= 37 ? "galaxy-kernel-v37|" : snapshot_version_ >= 36 ? "galaxy-kernel-v36|" : snapshot_version_ >= 35 ? "galaxy-kernel-v35|" : snapshot_version_ >= 34 ? "galaxy-kernel-v34|" : snapshot_version_ >= 33 ? "galaxy-kernel-v33|" : snapshot_version_ >= 32 ? "galaxy-kernel-v32|" : snapshot_version_ >= 31 ? "galaxy-kernel-v31|" : snapshot_version_ >= 30 ? "galaxy-kernel-v30|" : snapshot_version_ >= 29 ? "galaxy-kernel-v29|" : snapshot_version_ >= 28 ? "galaxy-kernel-v28|" : snapshot_version_ >= 27 ? "galaxy-kernel-v27|" : snapshot_version_ >= 26 ? "galaxy-kernel-v26|" : snapshot_version_ >= 25 ? "galaxy-kernel-v25|" : snapshot_version_ >= 24 ? "galaxy-kernel-v24|" : snapshot_version_ >= 23 ? "galaxy-kernel-v23|" : snapshot_version_ >= 22 ? "galaxy-kernel-v22|" : snapshot_version_ >= 21 ? "galaxy-kernel-v21|" : snapshot_version_ >= 20 ? "galaxy-kernel-v20|" : snapshot_version_ >= 19 ? "galaxy-kernel-v19|" : snapshot_version_ >= 18 ? "galaxy-kernel-v18|" : snapshot_version_ >= 17 ? "galaxy-kernel-v17|" : snapshot_version_ >= 16 ? "galaxy-kernel-v16|" : snapshot_version_ >= 15 ? "galaxy-kernel-v15|" : snapshot_version_ >= 14 ? "galaxy-kernel-v14|" : snapshot_version_ >= 13 ? "galaxy-kernel-v13|" : snapshot_version_ >= 12 ? "galaxy-kernel-v12|" : snapshot_version_ >= 11 ? "galaxy-kernel-v11|" : snapshot_version_ >= 10 ? "galaxy-kernel-v10|" : snapshot_version_ >= 9 ? "galaxy-kernel-v9|" : snapshot_version_ >= 8 ? "galaxy-kernel-v8|" : snapshot_version_ >= 7 ? "galaxy-kernel-v7|" : snapshot_version_ >= 6 ? "galaxy-kernel-v6|" : snapshot_version_ >= 5 ? "galaxy-kernel-v5|" : snapshot_version_ >= 4 ? "galaxy-kernel-v4|" : snapshot_version_ == 3 ? "galaxy-kernel-v3|" : snapshot_version_ == 2 ? "galaxy-kernel-v2|" : "galaxy-kernel-v1|") << system_id_ << '|' << tick_ << '|' << next_entity_id_
+    out << ( snapshot_version_ >= 108 ? "galaxy-kernel-v108|" : snapshot_version_ >= 107 ? "galaxy-kernel-v107|" : snapshot_version_ >= 106 ? "galaxy-kernel-v106|" : snapshot_version_ >= 105 ? "galaxy-kernel-v105|" : snapshot_version_ >= 104 ? "galaxy-kernel-v104|" : snapshot_version_ >= 103 ? "galaxy-kernel-v103|" : snapshot_version_ >= 102 ? "galaxy-kernel-v102|" : snapshot_version_ >= 101 ? "galaxy-kernel-v101|" : snapshot_version_ >= 100 ? "galaxy-kernel-v100|" : snapshot_version_ >= 99 ? "galaxy-kernel-v99|" : snapshot_version_ >= 98 ? "galaxy-kernel-v98|" : snapshot_version_ >= 97 ? "galaxy-kernel-v97|" : snapshot_version_ >= 96 ? "galaxy-kernel-v96|" : snapshot_version_ >= 95 ? "galaxy-kernel-v95|" : snapshot_version_ >= 94 ? "galaxy-kernel-v94|" : snapshot_version_ >= 93 ? "galaxy-kernel-v93|" : snapshot_version_ >= 92 ? "galaxy-kernel-v92|" : snapshot_version_ >= 91 ? "galaxy-kernel-v91|" : snapshot_version_ >= 90 ? "galaxy-kernel-v90|" : snapshot_version_ >= 89 ? "galaxy-kernel-v89|" : snapshot_version_ >= 88 ? "galaxy-kernel-v88|" : snapshot_version_ >= 87 ? "galaxy-kernel-v87|" : snapshot_version_ >= 86 ? "galaxy-kernel-v86|" : snapshot_version_ >= 85 ? "galaxy-kernel-v85|" : snapshot_version_ >= 84 ? "galaxy-kernel-v84|" : snapshot_version_ >= 83 ? "galaxy-kernel-v83|" : snapshot_version_ >= 82 ? "galaxy-kernel-v82|" : snapshot_version_ >= 81 ? "galaxy-kernel-v81|" : snapshot_version_ >= 80 ? "galaxy-kernel-v80|" : snapshot_version_ >= 79 ? "galaxy-kernel-v79|" : snapshot_version_ >= 78 ? "galaxy-kernel-v78|" : snapshot_version_ >= 77 ? "galaxy-kernel-v77|" : snapshot_version_ >= 76 ? "galaxy-kernel-v76|" : snapshot_version_ >= 75 ? "galaxy-kernel-v75|" : snapshot_version_ >= 74 ? "galaxy-kernel-v74|" : snapshot_version_ >= 73 ? "galaxy-kernel-v73|" : snapshot_version_ >= 72 ? "galaxy-kernel-v72|" : snapshot_version_ >= 71 ? "galaxy-kernel-v71|" : snapshot_version_ >= 70 ? "galaxy-kernel-v70|" : snapshot_version_ >= 69 ? "galaxy-kernel-v69|" : snapshot_version_ >= 68 ? "galaxy-kernel-v68|" : snapshot_version_ >= 67 ? "galaxy-kernel-v67|" : snapshot_version_ >= 66 ? "galaxy-kernel-v66|" : snapshot_version_ >= 65 ? "galaxy-kernel-v65|" : snapshot_version_ >= 64 ? "galaxy-kernel-v64|" : snapshot_version_ >= 63 ? "galaxy-kernel-v63|" : snapshot_version_ >= 62 ? "galaxy-kernel-v62|" : snapshot_version_ >= 61 ? "galaxy-kernel-v61|" : snapshot_version_ >= 60 ? "galaxy-kernel-v60|" : snapshot_version_ >= 59 ? "galaxy-kernel-v59|" : snapshot_version_ >= 58 ? "galaxy-kernel-v58|" : snapshot_version_ >= 57 ? "galaxy-kernel-v57|" : snapshot_version_ >= 53 ? "galaxy-kernel-v53|" : snapshot_version_ >= 52 ? "galaxy-kernel-v52|" : snapshot_version_ >= 49 ? "galaxy-kernel-v49|" : snapshot_version_ >= 48 ? "galaxy-kernel-v48|" : snapshot_version_ >= 44 ? "galaxy-kernel-v44|" : snapshot_version_ >= 41 ? "galaxy-kernel-v41|" : snapshot_version_ >= 40 ? "galaxy-kernel-v40|" : snapshot_version_ >= 39 ? "galaxy-kernel-v39|" : snapshot_version_ >= 38 ? "galaxy-kernel-v38|" : snapshot_version_ >= 37 ? "galaxy-kernel-v37|" : snapshot_version_ >= 36 ? "galaxy-kernel-v36|" : snapshot_version_ >= 35 ? "galaxy-kernel-v35|" : snapshot_version_ >= 34 ? "galaxy-kernel-v34|" : snapshot_version_ >= 33 ? "galaxy-kernel-v33|" : snapshot_version_ >= 32 ? "galaxy-kernel-v32|" : snapshot_version_ >= 31 ? "galaxy-kernel-v31|" : snapshot_version_ >= 30 ? "galaxy-kernel-v30|" : snapshot_version_ >= 29 ? "galaxy-kernel-v29|" : snapshot_version_ >= 28 ? "galaxy-kernel-v28|" : snapshot_version_ >= 27 ? "galaxy-kernel-v27|" : snapshot_version_ >= 26 ? "galaxy-kernel-v26|" : snapshot_version_ >= 25 ? "galaxy-kernel-v25|" : snapshot_version_ >= 24 ? "galaxy-kernel-v24|" : snapshot_version_ >= 23 ? "galaxy-kernel-v23|" : snapshot_version_ >= 22 ? "galaxy-kernel-v22|" : snapshot_version_ >= 21 ? "galaxy-kernel-v21|" : snapshot_version_ >= 20 ? "galaxy-kernel-v20|" : snapshot_version_ >= 19 ? "galaxy-kernel-v19|" : snapshot_version_ >= 18 ? "galaxy-kernel-v18|" : snapshot_version_ >= 17 ? "galaxy-kernel-v17|" : snapshot_version_ >= 16 ? "galaxy-kernel-v16|" : snapshot_version_ >= 15 ? "galaxy-kernel-v15|" : snapshot_version_ >= 14 ? "galaxy-kernel-v14|" : snapshot_version_ >= 13 ? "galaxy-kernel-v13|" : snapshot_version_ >= 12 ? "galaxy-kernel-v12|" : snapshot_version_ >= 11 ? "galaxy-kernel-v11|" : snapshot_version_ >= 10 ? "galaxy-kernel-v10|" : snapshot_version_ >= 9 ? "galaxy-kernel-v9|" : snapshot_version_ >= 8 ? "galaxy-kernel-v8|" : snapshot_version_ >= 7 ? "galaxy-kernel-v7|" : snapshot_version_ >= 6 ? "galaxy-kernel-v6|" : snapshot_version_ >= 5 ? "galaxy-kernel-v5|" : snapshot_version_ >= 4 ? "galaxy-kernel-v4|" : snapshot_version_ == 3 ? "galaxy-kernel-v3|" : snapshot_version_ == 2 ? "galaxy-kernel-v2|" : "galaxy-kernel-v1|") << system_id_ << '|' << tick_ << '|' << next_entity_id_
         << '|' << rng_state_ << '\n';
     if (snapshot_version_>=5) for(const auto system:systems_)out<<"system|"<<system<<'\n';
     if(snapshot_version_>=68)out<<"probelatency|"<<probe_report_delay_ticks_<<'\n';
@@ -9027,6 +9855,34 @@ std::string Simulation::canonical_state() const {
             <<'|'<<w.finisher_ticks_remaining<<'|'<<w.frames_kg
             <<'|'<<w.finisher_batches<<'|'<<w.finisher_elapsed_ticks;
         out<<'\n';
+        if(snapshot_version_>=106){
+            for(unsigned slot=0;slot<2;++slot){
+                const auto& sh=w.shifts[slot];
+                if(sh.command_id)
+                    out<<"workshopshift|"<<id<<'|'<<(slot+1)<<'|'
+                       <<sh.command_id<<'|'<<sh.worker<<'|'
+                       <<sh.start_tick<<'|'<<sh.end_tick
+                       <<(snapshot_version_>=107?"|"+std::to_string(sh.relief_command_id):"")
+                       <<'\n';
+            }
+            for(const auto pending:w.cancelled_pending_shifts)
+                out<<"workshopshiftcancel|"<<id<<'|'<<pending<<'\n';
+        }
+        if(snapshot_version_>=108){
+            if(w.supervisor_npc_id || w.last_mentored_tick)
+                out<<"workshopmanager|"<<id<<'|'<<w.supervisor_npc_id<<'|'
+                   <<w.supervisor_appointment_id<<'|'
+                   <<unsigned(w.supervisor_trade)<<'|'
+                   <<w.last_mentored_tick<<'\n';
+            for(unsigned slot=0;slot<2;++slot){
+                const auto& job=w.approved_jobs[slot];
+                if(job.command_id)
+                    out<<"workshopjob|"<<id<<'|'<<(slot+1)<<'|'
+                       <<job.command_id<<'|'<<job.supervisor_appointment_id
+                       <<'|'<<job.supervisor_npc_id<<'|'<<job.approved_tick
+                       <<'|'<<job.baseline_batches<<'|'<<job.target_batches<<'\n';
+            }
+        }
     }
     if(snapshot_version_>=25)for(const auto& [site,st]:storages_){
         out<<"storage|"<<site<<'|'<<st.source_ship<<'|'<<st.embodied_ore;
@@ -9293,6 +10149,21 @@ std::string Simulation::canonical_state() const {
         }
         out<<'\n';
     }
+    // WO2-H: durable training proof follows the original named-NPC identity,
+    // including casualties. No second workforce registry is introduced.
+    if(snapshot_version_>=105){
+        const auto emit=[&](const NpcRecord& n){
+            for(const auto& t:n.industrial_training){
+                out<<"npctraining|"<<n.id<<'|'<<t.command_id<<'|'<<t.tick
+                   <<'|'<<t.workshop_site<<'|'<<unsigned(t.trade);
+                if(snapshot_version_>=108)
+                    out<<'|'<<t.mentor_id<<'|'<<t.supervisor_appointment_id;
+                out<<'\n';
+            }
+        };
+        for(const auto& [id,n]:npcs_){(void)id;emit(n);}
+        for(const auto& [id,dead]:casualties_){(void)id;emit(dead.identity);}
+    }
     for (auto id : submitted_ids_) out << "accepted|" << id << '\n';
     for (const auto& ev : events_) {
         out << "event|" << ev.tick << '|' << ev.command_id << '|'
@@ -9391,12 +10262,12 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
     if (!std::getline(in, line)) throw std::runtime_error("snapshot: missing header");
     auto h = fields(line);
     require_fields(h, 5);
-    if (h[0] != "galaxy-kernel-v1" && h[0] != "galaxy-kernel-v2" && h[0] != "galaxy-kernel-v3" && h[0] != "galaxy-kernel-v4" && h[0] != "galaxy-kernel-v5" && h[0] != "galaxy-kernel-v6" && h[0] != "galaxy-kernel-v7" && h[0] != "galaxy-kernel-v8" && h[0] != "galaxy-kernel-v9" && h[0] != "galaxy-kernel-v10" && h[0] != "galaxy-kernel-v11" && h[0] != "galaxy-kernel-v12" && h[0] != "galaxy-kernel-v13" && h[0] != "galaxy-kernel-v14" && h[0] != "galaxy-kernel-v15" && h[0] != "galaxy-kernel-v16" && h[0] != "galaxy-kernel-v17" && h[0] != "galaxy-kernel-v18" && h[0] != "galaxy-kernel-v19" && h[0] != "galaxy-kernel-v20" && h[0] != "galaxy-kernel-v21" && h[0] != "galaxy-kernel-v22" && h[0] != "galaxy-kernel-v23" && h[0] != "galaxy-kernel-v24" && h[0] != "galaxy-kernel-v25" && h[0] != "galaxy-kernel-v26" && h[0] != "galaxy-kernel-v27" && h[0] != "galaxy-kernel-v28" && h[0] != "galaxy-kernel-v29" && h[0] != "galaxy-kernel-v30" && h[0] != "galaxy-kernel-v31" && h[0] != "galaxy-kernel-v32" && h[0] != "galaxy-kernel-v33" && h[0] != "galaxy-kernel-v34" && h[0] != "galaxy-kernel-v35" && h[0] != "galaxy-kernel-v36" && h[0] != "galaxy-kernel-v37" && h[0] != "galaxy-kernel-v38" && h[0] != "galaxy-kernel-v39" && h[0] != "galaxy-kernel-v40" && h[0] != "galaxy-kernel-v41" && h[0] != "galaxy-kernel-v44" && h[0] != "galaxy-kernel-v48" && h[0] != "galaxy-kernel-v49" && h[0] != "galaxy-kernel-v52" && h[0] != "galaxy-kernel-v53" && h[0] != "galaxy-kernel-v57" && h[0] != "galaxy-kernel-v58" && h[0] != "galaxy-kernel-v59" && h[0] != "galaxy-kernel-v60" && h[0] != "galaxy-kernel-v61" && h[0] != "galaxy-kernel-v62" && h[0] != "galaxy-kernel-v63" && h[0] != "galaxy-kernel-v64" && h[0] != "galaxy-kernel-v65" && h[0] != "galaxy-kernel-v66" && h[0] != "galaxy-kernel-v67" && h[0] != "galaxy-kernel-v68" && h[0] != "galaxy-kernel-v69" && h[0] != "galaxy-kernel-v70" && h[0] != "galaxy-kernel-v71" && h[0] != "galaxy-kernel-v72" && h[0] != "galaxy-kernel-v73" && h[0] != "galaxy-kernel-v74" && h[0] != "galaxy-kernel-v75" && h[0] != "galaxy-kernel-v76" && h[0] != "galaxy-kernel-v77" && h[0] != "galaxy-kernel-v78" && h[0] != "galaxy-kernel-v79" && h[0] != "galaxy-kernel-v80" && h[0] != "galaxy-kernel-v81" && h[0] != "galaxy-kernel-v82" && h[0] != "galaxy-kernel-v83" && h[0] != "galaxy-kernel-v84" && h[0] != "galaxy-kernel-v85" && h[0] != "galaxy-kernel-v86" && h[0] != "galaxy-kernel-v87" && h[0] != "galaxy-kernel-v88" && h[0] != "galaxy-kernel-v89" && h[0] != "galaxy-kernel-v90" && h[0] != "galaxy-kernel-v91" && h[0] != "galaxy-kernel-v92" && h[0] != "galaxy-kernel-v93" && h[0] != "galaxy-kernel-v94" && h[0] != "galaxy-kernel-v95" && h[0] != "galaxy-kernel-v96" && h[0] != "galaxy-kernel-v97" && h[0] != "galaxy-kernel-v98" && h[0] != "galaxy-kernel-v99" && h[0] != "galaxy-kernel-v100" && h[0] != "galaxy-kernel-v101" && h[0] != "galaxy-kernel-v102" && h[0] != "galaxy-kernel-v103" && h[0] != "galaxy-kernel-v104") throw std::runtime_error("snapshot: unsupported version");
+    if (h[0] != "galaxy-kernel-v108" && h[0] != "galaxy-kernel-v107" && h[0] != "galaxy-kernel-v106" && h[0] != "galaxy-kernel-v105" && h[0] != "galaxy-kernel-v1" && h[0] != "galaxy-kernel-v2" && h[0] != "galaxy-kernel-v3" && h[0] != "galaxy-kernel-v4" && h[0] != "galaxy-kernel-v5" && h[0] != "galaxy-kernel-v6" && h[0] != "galaxy-kernel-v7" && h[0] != "galaxy-kernel-v8" && h[0] != "galaxy-kernel-v9" && h[0] != "galaxy-kernel-v10" && h[0] != "galaxy-kernel-v11" && h[0] != "galaxy-kernel-v12" && h[0] != "galaxy-kernel-v13" && h[0] != "galaxy-kernel-v14" && h[0] != "galaxy-kernel-v15" && h[0] != "galaxy-kernel-v16" && h[0] != "galaxy-kernel-v17" && h[0] != "galaxy-kernel-v18" && h[0] != "galaxy-kernel-v19" && h[0] != "galaxy-kernel-v20" && h[0] != "galaxy-kernel-v21" && h[0] != "galaxy-kernel-v22" && h[0] != "galaxy-kernel-v23" && h[0] != "galaxy-kernel-v24" && h[0] != "galaxy-kernel-v25" && h[0] != "galaxy-kernel-v26" && h[0] != "galaxy-kernel-v27" && h[0] != "galaxy-kernel-v28" && h[0] != "galaxy-kernel-v29" && h[0] != "galaxy-kernel-v30" && h[0] != "galaxy-kernel-v31" && h[0] != "galaxy-kernel-v32" && h[0] != "galaxy-kernel-v33" && h[0] != "galaxy-kernel-v34" && h[0] != "galaxy-kernel-v35" && h[0] != "galaxy-kernel-v36" && h[0] != "galaxy-kernel-v37" && h[0] != "galaxy-kernel-v38" && h[0] != "galaxy-kernel-v39" && h[0] != "galaxy-kernel-v40" && h[0] != "galaxy-kernel-v41" && h[0] != "galaxy-kernel-v44" && h[0] != "galaxy-kernel-v48" && h[0] != "galaxy-kernel-v49" && h[0] != "galaxy-kernel-v52" && h[0] != "galaxy-kernel-v53" && h[0] != "galaxy-kernel-v57" && h[0] != "galaxy-kernel-v58" && h[0] != "galaxy-kernel-v59" && h[0] != "galaxy-kernel-v60" && h[0] != "galaxy-kernel-v61" && h[0] != "galaxy-kernel-v62" && h[0] != "galaxy-kernel-v63" && h[0] != "galaxy-kernel-v64" && h[0] != "galaxy-kernel-v65" && h[0] != "galaxy-kernel-v66" && h[0] != "galaxy-kernel-v67" && h[0] != "galaxy-kernel-v68" && h[0] != "galaxy-kernel-v69" && h[0] != "galaxy-kernel-v70" && h[0] != "galaxy-kernel-v71" && h[0] != "galaxy-kernel-v72" && h[0] != "galaxy-kernel-v73" && h[0] != "galaxy-kernel-v74" && h[0] != "galaxy-kernel-v75" && h[0] != "galaxy-kernel-v76" && h[0] != "galaxy-kernel-v77" && h[0] != "galaxy-kernel-v78" && h[0] != "galaxy-kernel-v79" && h[0] != "galaxy-kernel-v80" && h[0] != "galaxy-kernel-v81" && h[0] != "galaxy-kernel-v82" && h[0] != "galaxy-kernel-v83" && h[0] != "galaxy-kernel-v84" && h[0] != "galaxy-kernel-v85" && h[0] != "galaxy-kernel-v86" && h[0] != "galaxy-kernel-v87" && h[0] != "galaxy-kernel-v88" && h[0] != "galaxy-kernel-v89" && h[0] != "galaxy-kernel-v90" && h[0] != "galaxy-kernel-v91" && h[0] != "galaxy-kernel-v92" && h[0] != "galaxy-kernel-v93" && h[0] != "galaxy-kernel-v94" && h[0] != "galaxy-kernel-v95" && h[0] != "galaxy-kernel-v96" && h[0] != "galaxy-kernel-v97" && h[0] != "galaxy-kernel-v98" && h[0] != "galaxy-kernel-v99" && h[0] != "galaxy-kernel-v100" && h[0] != "galaxy-kernel-v101" && h[0] != "galaxy-kernel-v102" && h[0] != "galaxy-kernel-v103" && h[0] != "galaxy-kernel-v104") throw std::runtime_error("snapshot: unsupported version");
     const auto sys = u64(h[1]);
     if (sys == 0 || sys > std::numeric_limits<std::uint32_t>::max())
         throw std::runtime_error("snapshot: invalid system");
     Simulation result(u64(h[4]), static_cast<std::uint32_t>(sys));
-    result.snapshot_version_ = h[0] == "galaxy-kernel-v104" ? 104 : h[0] == "galaxy-kernel-v103" ? 103 : h[0] == "galaxy-kernel-v102" ? 102 : h[0] == "galaxy-kernel-v101" ? 101 : h[0] == "galaxy-kernel-v100" ? 100 : h[0] == "galaxy-kernel-v99" ? 99 : h[0] == "galaxy-kernel-v98" ? 98 : h[0] == "galaxy-kernel-v97" ? 97 : h[0] == "galaxy-kernel-v96" ? 96 : h[0] == "galaxy-kernel-v95" ? 95 : h[0] == "galaxy-kernel-v94" ? 94 : h[0] == "galaxy-kernel-v93" ? 93 : h[0] == "galaxy-kernel-v92" ? 92 : h[0] == "galaxy-kernel-v91" ? 91 : h[0] == "galaxy-kernel-v90" ? 90 : h[0] == "galaxy-kernel-v89" ? 89 : h[0] == "galaxy-kernel-v88" ? 88 : h[0] == "galaxy-kernel-v87" ? 87 : h[0] == "galaxy-kernel-v86" ? 86 : h[0] == "galaxy-kernel-v85" ? 85 : h[0] == "galaxy-kernel-v84" ? 84 : h[0] == "galaxy-kernel-v83" ? 83 : h[0] == "galaxy-kernel-v82" ? 82 : h[0] == "galaxy-kernel-v81" ? 81 : h[0] == "galaxy-kernel-v80" ? 80 : h[0] == "galaxy-kernel-v79" ? 79 : h[0] == "galaxy-kernel-v78" ? 78 : h[0] == "galaxy-kernel-v77" ? 77 : h[0] == "galaxy-kernel-v76" ? 76 : h[0] == "galaxy-kernel-v75" ? 75 : h[0] == "galaxy-kernel-v74" ? 74 : h[0] == "galaxy-kernel-v73" ? 73 : h[0] == "galaxy-kernel-v72" ? 72 : h[0] == "galaxy-kernel-v71" ? 71 : h[0] == "galaxy-kernel-v70" ? 70 : h[0] == "galaxy-kernel-v69" ? 69 : h[0] == "galaxy-kernel-v68" ? 68 : h[0] == "galaxy-kernel-v67" ? 67 : h[0] == "galaxy-kernel-v66" ? 66 : h[0] == "galaxy-kernel-v65" ? 65 : h[0] == "galaxy-kernel-v64" ? 64 : h[0] == "galaxy-kernel-v63" ? 63 : h[0] == "galaxy-kernel-v62" ? 62 : h[0] == "galaxy-kernel-v61" ? 61 : h[0] == "galaxy-kernel-v60" ? 60 : h[0] == "galaxy-kernel-v59" ? 59 : h[0] == "galaxy-kernel-v58" ? 58 : h[0] == "galaxy-kernel-v57" ? 57 : h[0] == "galaxy-kernel-v53" ? 53 : h[0] == "galaxy-kernel-v52" ? 52 : h[0] == "galaxy-kernel-v49" ? 49 : h[0] == "galaxy-kernel-v48" ? 48 : h[0] == "galaxy-kernel-v44" ? 44 : h[0] == "galaxy-kernel-v41" ? 41 : h[0] == "galaxy-kernel-v40" ? 40 : h[0] == "galaxy-kernel-v39" ? 39 : h[0] == "galaxy-kernel-v38" ? 38 : h[0] == "galaxy-kernel-v37" ? 37 : h[0] == "galaxy-kernel-v36" ? 36 : h[0] == "galaxy-kernel-v35" ? 35 : h[0] == "galaxy-kernel-v34" ? 34 : h[0] == "galaxy-kernel-v33" ? 33 : h[0] == "galaxy-kernel-v32" ? 32 : h[0] == "galaxy-kernel-v31" ? 31 : h[0] == "galaxy-kernel-v30" ? 30 : h[0] == "galaxy-kernel-v29" ? 29 : h[0] == "galaxy-kernel-v28" ? 28 : h[0] == "galaxy-kernel-v27" ? 27 : h[0] == "galaxy-kernel-v26" ? 26 : h[0] == "galaxy-kernel-v25" ? 25 : h[0] == "galaxy-kernel-v24" ? 24 : h[0] == "galaxy-kernel-v23" ? 23 : h[0] == "galaxy-kernel-v22" ? 22 : h[0] == "galaxy-kernel-v21" ? 21 : h[0] == "galaxy-kernel-v20" ? 20 : h[0] == "galaxy-kernel-v19" ? 19 : h[0] == "galaxy-kernel-v18" ? 18 : h[0] == "galaxy-kernel-v17" ? 17 : h[0] == "galaxy-kernel-v16" ? 16 : h[0] == "galaxy-kernel-v15" ? 15 : h[0] == "galaxy-kernel-v14" ? 14 : h[0] == "galaxy-kernel-v13" ? 13 : h[0] == "galaxy-kernel-v12" ? 12 : h[0] == "galaxy-kernel-v11" ? 11 : h[0] == "galaxy-kernel-v10" ? 10 : h[0] == "galaxy-kernel-v9" ? 9 : h[0] == "galaxy-kernel-v8" ? 8 : h[0] == "galaxy-kernel-v7" ? 7 : h[0] == "galaxy-kernel-v6" ? 6 : h[0] == "galaxy-kernel-v5" ? 5 : h[0] == "galaxy-kernel-v4" ? 4 : h[0] == "galaxy-kernel-v3" ? 3 : h[0] == "galaxy-kernel-v2" ? 2 : 1;
+    result.snapshot_version_ = h[0] == "galaxy-kernel-v108" ? 108 : h[0] == "galaxy-kernel-v107" ? 107 : h[0] == "galaxy-kernel-v106" ? 106 : h[0] == "galaxy-kernel-v105" ? 105 : h[0] == "galaxy-kernel-v104" ? 104 : h[0] == "galaxy-kernel-v103" ? 103 : h[0] == "galaxy-kernel-v102" ? 102 : h[0] == "galaxy-kernel-v101" ? 101 : h[0] == "galaxy-kernel-v100" ? 100 : h[0] == "galaxy-kernel-v99" ? 99 : h[0] == "galaxy-kernel-v98" ? 98 : h[0] == "galaxy-kernel-v97" ? 97 : h[0] == "galaxy-kernel-v96" ? 96 : h[0] == "galaxy-kernel-v95" ? 95 : h[0] == "galaxy-kernel-v94" ? 94 : h[0] == "galaxy-kernel-v93" ? 93 : h[0] == "galaxy-kernel-v92" ? 92 : h[0] == "galaxy-kernel-v91" ? 91 : h[0] == "galaxy-kernel-v90" ? 90 : h[0] == "galaxy-kernel-v89" ? 89 : h[0] == "galaxy-kernel-v88" ? 88 : h[0] == "galaxy-kernel-v87" ? 87 : h[0] == "galaxy-kernel-v86" ? 86 : h[0] == "galaxy-kernel-v85" ? 85 : h[0] == "galaxy-kernel-v84" ? 84 : h[0] == "galaxy-kernel-v83" ? 83 : h[0] == "galaxy-kernel-v82" ? 82 : h[0] == "galaxy-kernel-v81" ? 81 : h[0] == "galaxy-kernel-v80" ? 80 : h[0] == "galaxy-kernel-v79" ? 79 : h[0] == "galaxy-kernel-v78" ? 78 : h[0] == "galaxy-kernel-v77" ? 77 : h[0] == "galaxy-kernel-v76" ? 76 : h[0] == "galaxy-kernel-v75" ? 75 : h[0] == "galaxy-kernel-v74" ? 74 : h[0] == "galaxy-kernel-v73" ? 73 : h[0] == "galaxy-kernel-v72" ? 72 : h[0] == "galaxy-kernel-v71" ? 71 : h[0] == "galaxy-kernel-v70" ? 70 : h[0] == "galaxy-kernel-v69" ? 69 : h[0] == "galaxy-kernel-v68" ? 68 : h[0] == "galaxy-kernel-v67" ? 67 : h[0] == "galaxy-kernel-v66" ? 66 : h[0] == "galaxy-kernel-v65" ? 65 : h[0] == "galaxy-kernel-v64" ? 64 : h[0] == "galaxy-kernel-v63" ? 63 : h[0] == "galaxy-kernel-v62" ? 62 : h[0] == "galaxy-kernel-v61" ? 61 : h[0] == "galaxy-kernel-v60" ? 60 : h[0] == "galaxy-kernel-v59" ? 59 : h[0] == "galaxy-kernel-v58" ? 58 : h[0] == "galaxy-kernel-v57" ? 57 : h[0] == "galaxy-kernel-v53" ? 53 : h[0] == "galaxy-kernel-v52" ? 52 : h[0] == "galaxy-kernel-v49" ? 49 : h[0] == "galaxy-kernel-v48" ? 48 : h[0] == "galaxy-kernel-v44" ? 44 : h[0] == "galaxy-kernel-v41" ? 41 : h[0] == "galaxy-kernel-v40" ? 40 : h[0] == "galaxy-kernel-v39" ? 39 : h[0] == "galaxy-kernel-v38" ? 38 : h[0] == "galaxy-kernel-v37" ? 37 : h[0] == "galaxy-kernel-v36" ? 36 : h[0] == "galaxy-kernel-v35" ? 35 : h[0] == "galaxy-kernel-v34" ? 34 : h[0] == "galaxy-kernel-v33" ? 33 : h[0] == "galaxy-kernel-v32" ? 32 : h[0] == "galaxy-kernel-v31" ? 31 : h[0] == "galaxy-kernel-v30" ? 30 : h[0] == "galaxy-kernel-v29" ? 29 : h[0] == "galaxy-kernel-v28" ? 28 : h[0] == "galaxy-kernel-v27" ? 27 : h[0] == "galaxy-kernel-v26" ? 26 : h[0] == "galaxy-kernel-v25" ? 25 : h[0] == "galaxy-kernel-v24" ? 24 : h[0] == "galaxy-kernel-v23" ? 23 : h[0] == "galaxy-kernel-v22" ? 22 : h[0] == "galaxy-kernel-v21" ? 21 : h[0] == "galaxy-kernel-v20" ? 20 : h[0] == "galaxy-kernel-v19" ? 19 : h[0] == "galaxy-kernel-v18" ? 18 : h[0] == "galaxy-kernel-v17" ? 17 : h[0] == "galaxy-kernel-v16" ? 16 : h[0] == "galaxy-kernel-v15" ? 15 : h[0] == "galaxy-kernel-v14" ? 14 : h[0] == "galaxy-kernel-v13" ? 13 : h[0] == "galaxy-kernel-v12" ? 12 : h[0] == "galaxy-kernel-v11" ? 11 : h[0] == "galaxy-kernel-v10" ? 10 : h[0] == "galaxy-kernel-v9" ? 9 : h[0] == "galaxy-kernel-v8" ? 8 : h[0] == "galaxy-kernel-v7" ? 7 : h[0] == "galaxy-kernel-v6" ? 6 : h[0] == "galaxy-kernel-v5" ? 5 : h[0] == "galaxy-kernel-v4" ? 4 : h[0] == "galaxy-kernel-v3" ? 3 : h[0] == "galaxy-kernel-v2" ? 2 : 1;
     result.tick_ = u64(h[2]);
     result.next_entity_id_ = u64(h[3]);
     if (result.next_entity_id_ == 0) throw std::runtime_error("snapshot: invalid next entity ID");
@@ -10288,6 +11159,73 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                (w.finisher_npc_id && w.finisher_npc_id==w.operator_npc_id) ||
                !result.workshops_.emplace(id,w).second)
                 throw std::runtime_error("snapshot: invalid outpost workshop");
+        } else if(f[0]=="workshopshift" && result.snapshot_version_>=106){
+            require_fields(f,result.snapshot_version_>=107?8:7);
+            const auto site=u64(f[1]),slot=u64(f[2]);
+            WorkshopShift sh{};
+            sh.command_id=u64(f[3]);sh.worker=u64(f[4]);
+            sh.start_tick=u64(f[5]);sh.end_tick=u64(f[6]);
+            if(result.snapshot_version_>=107)sh.relief_command_id=u64(f[7]);
+            auto it=result.workshops_.find(site);
+            if(it==result.workshops_.end() || slot<1 || slot>2 ||
+               !sh.command_id || !sh.worker || sh.worker>1000000 ||
+               !sh.start_tick || sh.start_tick>result.tick_ ||
+               sh.end_tick<=result.tick_ || sh.end_tick<=sh.start_tick ||
+               sh.end_tick-sh.start_tick>10000 ||
+               (slot==2 && !it->second.finisher_installed) ||
+               it->second.shifts[slot-1].command_id)
+                throw std::runtime_error("snapshot: invalid workshop shift");
+            auto& assigned=slot==1?it->second.operator_npc_id:
+                                    it->second.finisher_npc_id;
+            if(assigned!=sh.worker)
+                throw std::runtime_error("snapshot: shift worker custody mismatch");
+            it->second.shifts[slot-1]=sh;
+        } else if(f[0]=="workshopshiftcancel" && result.snapshot_version_>=106){
+            require_fields(f,3);
+            const auto site=u64(f[1]),pending=u64(f[2]);
+            auto it=result.workshops_.find(site);
+            if(it==result.workshops_.end() || !pending ||
+               it->second.cancelled_pending_shifts.size()>=256 ||
+               !it->second.cancelled_pending_shifts.insert(pending).second)
+                throw std::runtime_error("snapshot: invalid cancelled workshop shift");
+        } else if(f[0]=="workshopmanager" && result.snapshot_version_>=108){
+            require_fields(f,6);
+            const auto site=u64(f[1]),worker=u64(f[2]),appointment=u64(f[3]);
+            const auto trade=u64(f[4]),when=u64(f[5]);
+            auto it=result.workshops_.find(site);
+            if(it==result.workshops_.end() ||
+               ((worker==0)!=(appointment==0)) ||
+               worker>1000000 || (trade!=1 && trade!=2) ||
+               when>result.tick_ ||
+               (it->second.supervisor_npc_id || it->second.last_mentored_tick))
+                throw std::runtime_error("snapshot: invalid workshop manager");
+            it->second.supervisor_npc_id=worker;
+            it->second.supervisor_appointment_id=appointment;
+            it->second.supervisor_trade=static_cast<WorkshopTrade>(trade);
+            it->second.last_mentored_tick=when;
+        } else if(f[0]=="workshopjob" && result.snapshot_version_>=108){
+            require_fields(f,9);
+            const auto site=u64(f[1]),slot=u64(f[2]),id=u64(f[3]);
+            WorkshopJobApproval job{};
+            job.command_id=id;
+            job.supervisor_appointment_id=u64(f[4]);
+            job.supervisor_npc_id=u64(f[5]);
+            job.approved_tick=u64(f[6]);
+            job.baseline_batches=u64(f[7]);
+            const auto target_batches=u64(f[8]);
+            if(!target_batches || target_batches>50)
+                throw std::runtime_error("snapshot: out-of-range owner-approved job quota");
+            job.target_batches=static_cast<std::uint32_t>(target_batches);
+            auto it=result.workshops_.find(site);
+            if(it==result.workshops_.end() || slot<1 || slot>2 ||
+               !id || !job.supervisor_appointment_id ||
+               !job.supervisor_npc_id || !job.approved_tick ||
+               job.approved_tick>result.tick_ || !job.target_batches ||
+               job.target_batches>50 ||
+               (slot==2 && !it->second.finisher_installed) ||
+               it->second.approved_jobs[slot-1].command_id)
+                throw std::runtime_error("snapshot: invalid workshop job");
+            it->second.approved_jobs[slot-1]=job;
         } else if(f[0]=="storage" && result.snapshot_version_>=25){
             require_fields(f,result.snapshot_version_>=52?9:8);
             const auto site=u64(f[1]);OutpostStorage st{};
@@ -10618,6 +11556,31 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                                             static_cast<NpcRole>(role),n.farm_xp,n.mentor_id,n.transport_id,n.assigned_site,
                                             n.residence_kind,n.residence_id}).second)
                 throw std::runtime_error("snapshot: invalid NPC identity");
+        } else if(f[0]=="npctraining" && result.snapshot_version_>=105){
+            require_fields(f,result.snapshot_version_>=108?8:6);
+            const auto id=u64(f[1]);
+            const auto command=u64(f[2]),when=u64(f[3]),site=u64(f[4]);
+            const auto trade=u64(f[5]);
+            if(!id || !command || !when || when>result.tick_ ||
+               !site || (trade!=1 && trade!=2))
+                throw std::runtime_error("snapshot: invalid industrial training record");
+            NpcRecord* person=nullptr;
+            auto live=result.npcs_.find(id);
+            if(live!=result.npcs_.end())person=&live->second;
+            else{
+                auto dead=result.casualties_.find(id);
+                if(dead!=result.casualties_.end())person=&dead->second.identity;
+            }
+            if(!person || person->industrial_training.size()>=6)
+                throw std::runtime_error("snapshot: orphan or excessive training proof");
+            const auto mentor=result.snapshot_version_>=108?u64(f[6]):0;
+            const auto appointment=result.snapshot_version_>=108?u64(f[7]):0;
+            if((mentor==0)!=(appointment==0) || mentor>1000000 ||
+               mentor==id)
+                throw std::runtime_error("snapshot: invalid industrial mentor proof");
+            person->industrial_training.push_back(
+                NpcTradeTraining{command,when,site,
+                                 static_cast<WorkshopTrade>(trade),mentor,appointment});
         } else if(f[0]=="teamxp" && result.snapshot_version_>=20){
             require_fields(f,3);
             const auto site=u64(f[1]),xp=u64(f[2]);
@@ -10841,7 +11804,7 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
             c.id = u64(f[1]); c.execute_tick = u64(f[2]); c.sequence = u64(f[3]);
             c.issuer = u64(f[4]); c.actor = u64(f[5]); c.target = u64(f[6]);
             auto action = u64(f[7]);
-            if (action > (result.snapshot_version_ >= 104 ? static_cast<unsigned>(Action::FireShipWeapon) : result.snapshot_version_ >= 101 ? static_cast<unsigned>(Action::HackConfuse) : result.snapshot_version_ >= 100 ? static_cast<unsigned>(Action::SetHardpointPower) : result.snapshot_version_ >= 69 ? static_cast<unsigned>(Action::CancelSurveyFocus) : result.snapshot_version_ >= 66 ? static_cast<unsigned>(Action::LaunchGeologicalDrone) : result.snapshot_version_ >= 65 ? static_cast<unsigned>(Action::RecoverSurveyProbe) : result.snapshot_version_ >= 64 ? static_cast<unsigned>(Action::ConfigureExplorationScanner) : result.snapshot_version_ >= 63 ? static_cast<unsigned>(Action::SurveyLocal) : result.snapshot_version_ >= 62 ? static_cast<unsigned>(Action::SalvageWreck) : result.snapshot_version_ >= 59 ? static_cast<unsigned>(Action::HostRegisterDependent) : result.snapshot_version_ >= 58 ? static_cast<unsigned>(Action::HostColonyDeparture) : result.snapshot_version_ >= 56 ? static_cast<unsigned>(Action::HostTransferConsignedStock) : result.snapshot_version_ >= 53 ? static_cast<unsigned>(Action::HostReturnConstructedStock) : result.snapshot_version_ >= 52 ? static_cast<unsigned>(Action::HostEscrowConstructedStock) : result.snapshot_version_ >= 48 ? static_cast<unsigned>(Action::HostSplitEvacuatePassengers) : result.snapshot_version_ >= 41 ? static_cast<unsigned>(Action::HostSettleMigrant) : result.snapshot_version_ >= 39 ? static_cast<unsigned>(Action::HostMobileStabilize) : result.snapshot_version_ >= 38 ? static_cast<unsigned>(Action::HostTreatInjuries) : result.snapshot_version_ >= 37 ? static_cast<unsigned>(Action::HostResolveMixedFerryLoss) : result.snapshot_version_ >= 36 ? static_cast<unsigned>(Action::HostDestroyPassengerFerry) : result.snapshot_version_ >= 35 ? static_cast<unsigned>(Action::HostEvacuatePassengers) : result.snapshot_version_ >= 32 ? static_cast<unsigned>(Action::HostDisembarkPassengers) : result.snapshot_version_ >= 30 ? static_cast<unsigned>(Action::CompleteConveyorRoute) : result.snapshot_version_ >= 29 ? static_cast<unsigned>(Action::PlaceFactoryEquipment) : result.snapshot_version_ >= 28 ? static_cast<unsigned>(Action::ConstructWorkshopLink) : result.snapshot_version_ >= 27 ? static_cast<unsigned>(Action::ConstructStorageLink) : result.snapshot_version_ >= 26 ? static_cast<unsigned>(Action::TransferStorageNodeStack) : result.snapshot_version_ >= 25 ? static_cast<unsigned>(Action::TransferStorageStack) : result.snapshot_version_ >= 24 ? static_cast<unsigned>(Action::TransferWorkshopStack) : result.snapshot_version_ >= 23 ? static_cast<unsigned>(Action::TransferWorkshopFinalOutput) : result.snapshot_version_ >= 22 ? static_cast<unsigned>(Action::TransferWorkshopOutput) : result.snapshot_version_ >= 21 ? static_cast<unsigned>(Action::HostCrewLoss) : result.snapshot_version_ >= 20 ? static_cast<unsigned>(Action::AssignFarmMentor) : result.snapshot_version_ >= 19 ? static_cast<unsigned>(Action::AssignPolicyInspectors) : result.snapshot_version_ >= 18 ? static_cast<unsigned>(Action::TransferWaterworksFeed) : result.snapshot_version_ >= 17 ? static_cast<unsigned>(Action::ConstructReclaimer) : result.snapshot_version_ >= 16 ? static_cast<unsigned>(Action::AssignClinicStaff) : result.snapshot_version_ >= 15 ? static_cast<unsigned>(Action::AssignCommunityStaff) : result.snapshot_version_ >= 14 ? static_cast<unsigned>(Action::SetUtilityMaintenance) : result.snapshot_version_ >= 13 ? static_cast<unsigned>(Action::RepairUtility) : result.snapshot_version_ >= 12 ? static_cast<unsigned>(Action::AssignHabitatResidents) : result.snapshot_version_ >= 11 ? static_cast<unsigned>(Action::AssignFarmWorkers) : result.snapshot_version_ >= 10 ? static_cast<unsigned>(Action::LoadLifeWater) : result.snapshot_version_ >= 9 ? static_cast<unsigned>(Action::FabricateMaterialModule) : result.snapshot_version_ >= 7 ? static_cast<unsigned>(Action::ConstructOutpost) : result.snapshot_version_ >= 6 ? static_cast<unsigned>(Action::DeliverGateSpares) : result.snapshot_version_ >= 5 ? static_cast<unsigned>(Action::SetGatePairOnline) : result.snapshot_version_ >= 4 ? static_cast<unsigned>(Action::SellOre) : static_cast<unsigned>(Action::UnloadOre))) throw std::runtime_error("snapshot: invalid action");
+            if (action > (result.snapshot_version_ >= 108 ? static_cast<unsigned>(Action::CancelWorkshopJob) : result.snapshot_version_ >= 107 ? static_cast<unsigned>(Action::RelieveWorkshopShift) : result.snapshot_version_ >= 106 ? static_cast<unsigned>(Action::CancelWorkshopShift) : result.snapshot_version_ >= 105 ? static_cast<unsigned>(Action::TrainWorkshopTrade) : result.snapshot_version_ >= 104 ? static_cast<unsigned>(Action::FireShipWeapon) : result.snapshot_version_ >= 101 ? static_cast<unsigned>(Action::HackConfuse) : result.snapshot_version_ >= 100 ? static_cast<unsigned>(Action::SetHardpointPower) : result.snapshot_version_ >= 69 ? static_cast<unsigned>(Action::CancelSurveyFocus) : result.snapshot_version_ >= 66 ? static_cast<unsigned>(Action::LaunchGeologicalDrone) : result.snapshot_version_ >= 65 ? static_cast<unsigned>(Action::RecoverSurveyProbe) : result.snapshot_version_ >= 64 ? static_cast<unsigned>(Action::ConfigureExplorationScanner) : result.snapshot_version_ >= 63 ? static_cast<unsigned>(Action::SurveyLocal) : result.snapshot_version_ >= 62 ? static_cast<unsigned>(Action::SalvageWreck) : result.snapshot_version_ >= 59 ? static_cast<unsigned>(Action::HostRegisterDependent) : result.snapshot_version_ >= 58 ? static_cast<unsigned>(Action::HostColonyDeparture) : result.snapshot_version_ >= 56 ? static_cast<unsigned>(Action::HostTransferConsignedStock) : result.snapshot_version_ >= 53 ? static_cast<unsigned>(Action::HostReturnConstructedStock) : result.snapshot_version_ >= 52 ? static_cast<unsigned>(Action::HostEscrowConstructedStock) : result.snapshot_version_ >= 48 ? static_cast<unsigned>(Action::HostSplitEvacuatePassengers) : result.snapshot_version_ >= 41 ? static_cast<unsigned>(Action::HostSettleMigrant) : result.snapshot_version_ >= 39 ? static_cast<unsigned>(Action::HostMobileStabilize) : result.snapshot_version_ >= 38 ? static_cast<unsigned>(Action::HostTreatInjuries) : result.snapshot_version_ >= 37 ? static_cast<unsigned>(Action::HostResolveMixedFerryLoss) : result.snapshot_version_ >= 36 ? static_cast<unsigned>(Action::HostDestroyPassengerFerry) : result.snapshot_version_ >= 35 ? static_cast<unsigned>(Action::HostEvacuatePassengers) : result.snapshot_version_ >= 32 ? static_cast<unsigned>(Action::HostDisembarkPassengers) : result.snapshot_version_ >= 30 ? static_cast<unsigned>(Action::CompleteConveyorRoute) : result.snapshot_version_ >= 29 ? static_cast<unsigned>(Action::PlaceFactoryEquipment) : result.snapshot_version_ >= 28 ? static_cast<unsigned>(Action::ConstructWorkshopLink) : result.snapshot_version_ >= 27 ? static_cast<unsigned>(Action::ConstructStorageLink) : result.snapshot_version_ >= 26 ? static_cast<unsigned>(Action::TransferStorageNodeStack) : result.snapshot_version_ >= 25 ? static_cast<unsigned>(Action::TransferStorageStack) : result.snapshot_version_ >= 24 ? static_cast<unsigned>(Action::TransferWorkshopStack) : result.snapshot_version_ >= 23 ? static_cast<unsigned>(Action::TransferWorkshopFinalOutput) : result.snapshot_version_ >= 22 ? static_cast<unsigned>(Action::TransferWorkshopOutput) : result.snapshot_version_ >= 21 ? static_cast<unsigned>(Action::HostCrewLoss) : result.snapshot_version_ >= 20 ? static_cast<unsigned>(Action::AssignFarmMentor) : result.snapshot_version_ >= 19 ? static_cast<unsigned>(Action::AssignPolicyInspectors) : result.snapshot_version_ >= 18 ? static_cast<unsigned>(Action::TransferWaterworksFeed) : result.snapshot_version_ >= 17 ? static_cast<unsigned>(Action::ConstructReclaimer) : result.snapshot_version_ >= 16 ? static_cast<unsigned>(Action::AssignClinicStaff) : result.snapshot_version_ >= 15 ? static_cast<unsigned>(Action::AssignCommunityStaff) : result.snapshot_version_ >= 14 ? static_cast<unsigned>(Action::SetUtilityMaintenance) : result.snapshot_version_ >= 13 ? static_cast<unsigned>(Action::RepairUtility) : result.snapshot_version_ >= 12 ? static_cast<unsigned>(Action::AssignHabitatResidents) : result.snapshot_version_ >= 11 ? static_cast<unsigned>(Action::AssignFarmWorkers) : result.snapshot_version_ >= 10 ? static_cast<unsigned>(Action::LoadLifeWater) : result.snapshot_version_ >= 9 ? static_cast<unsigned>(Action::FabricateMaterialModule) : result.snapshot_version_ >= 7 ? static_cast<unsigned>(Action::ConstructOutpost) : result.snapshot_version_ >= 6 ? static_cast<unsigned>(Action::DeliverGateSpares) : result.snapshot_version_ >= 5 ? static_cast<unsigned>(Action::SetGatePairOnline) : result.snapshot_version_ >= 4 ? static_cast<unsigned>(Action::SellOre) : static_cast<unsigned>(Action::UnloadOre))) throw std::runtime_error("snapshot: invalid action");
             c.action = static_cast<Action>(action);
             auto tx = i64(f[8]), ty = i64(f[9]);
             if (tx < std::numeric_limits<int>::min() || tx > std::numeric_limits<int>::max() ||
@@ -10922,6 +11885,52 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                     (result.snapshot_version_<39 || !count || c.transport_id!=c.target || c.amount)) ))
                     throw std::runtime_error("snapshot: invalid pending medical action");
             }
+            if((c.action==Action::AppointWorkshopSupervisor ||
+                c.action==Action::MentorWorkshopTrade ||
+                c.action==Action::ApproveWorkshopJob ||
+                c.action==Action::CancelWorkshopJob) &&
+               (result.snapshot_version_<108 || !c.actor || !c.target ||
+                c.issuer==Simulation::kServerAuthority ||
+                c.thrust_y || c.thrust_x<1 || c.thrust_x>2 ||
+                c.transport_id || !c.passenger_ids.empty() ||
+                c.secondary_receiver || c.secondary_transport ||
+                (c.action==Action::AppointWorkshopSupervisor ?
+                   (c.amount<0 || c.amount>1000000) :
+                 c.action==Action::MentorWorkshopTrade ?
+                   (c.amount<1 || c.amount>1000000) :
+                 c.action==Action::ApproveWorkshopJob ?
+                   (c.amount<1 || c.amount>50) : (c.amount<1))))
+                throw std::runtime_error("snapshot: invalid pending workshop management order");
+            if(c.action==Action::RelieveWorkshopShift &&
+               (result.snapshot_version_<107 || !c.actor || !c.target ||
+                c.issuer==Simulation::kServerAuthority ||
+                c.amount<1 || c.thrust_y<1 || c.thrust_y>1000000 ||
+                (c.thrust_x!=1 && c.thrust_x!=2) || c.transport_id ||
+                !c.passenger_ids.empty() || c.secondary_receiver ||
+                c.secondary_transport))
+                throw std::runtime_error("snapshot: invalid queued workshop relief");
+            if((c.action==Action::StartWorkshopShift ||
+                c.action==Action::CancelWorkshopShift) &&
+               (result.snapshot_version_<106 || !c.actor || !c.target ||
+                c.issuer==Simulation::kServerAuthority ||
+                (c.thrust_x!=1 && c.thrust_x!=2) ||
+                (c.action==Action::StartWorkshopShift ?
+                   (c.amount<1 || c.amount>1000000 ||
+                    c.thrust_y<1 || c.thrust_y>10000 ||
+                    c.execute_tick>std::numeric_limits<std::uint64_t>::max()-
+                        static_cast<std::uint64_t>(c.thrust_y)) :
+                   (c.amount<1 || c.thrust_y!=0)) ||
+                c.transport_id || !c.passenger_ids.empty() ||
+                c.secondary_receiver || c.secondary_transport))
+                throw std::runtime_error("snapshot: invalid queued workshop shift");
+            if(c.action==Action::TrainWorkshopTrade &&
+               (result.snapshot_version_<105 || !c.actor || !c.target ||
+                !c.issuer || c.issuer==Simulation::kServerAuthority ||
+                c.amount<1 || c.amount>1000000 ||
+                (c.thrust_x!=1 && c.thrust_x!=2) || c.thrust_y ||
+                c.transport_id || !c.passenger_ids.empty() ||
+                c.secondary_receiver || c.secondary_transport))
+                throw std::runtime_error("snapshot: invalid queued industrial training");
             if(c.action==Action::HostRegisterDependent &&
                (result.snapshot_version_<59 || c.issuer!=Simulation::kServerAuthority ||
                 c.actor!=c.target || c.transport_id<(1ULL<<62) ||
@@ -11150,6 +12159,58 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
             a.result = static_cast<Outcome>(outcome);
             result.activity_events_.push_back(a);
         } else throw std::runtime_error("snapshot: unknown record");
+    }
+    // WO2-H: each industrial certificate derives from three distinct Applied
+    // original-world commands, never invented qualifications or source totals.
+    if(result.snapshot_version_>=105){
+        std::set<std::uint64_t> credited_commands;
+        std::set<std::pair<EntityId,std::uint64_t>> mentored_site_ticks;
+        const auto verify=[&](const NpcRecord& n){
+            std::array<unsigned,2> per_trade{{0,0}};
+            std::uint64_t previous_practice_tick=0;
+            for(const auto& t:n.industrial_training){
+                const auto code=static_cast<unsigned>(t.trade);
+                // One named NPC cannot practice twice in one committed tick.
+                // Persisted credits also retain chronological command order.
+                if(code<1 || code>2 || !t.command_id || !t.tick ||
+                   t.tick<=previous_practice_tick ||
+                   t.tick>result.tick_ || !t.workshop_site ||
+                   !credited_commands.insert(t.command_id).second ||
+                   ++per_trade[code-1]>3 ||
+                   !result.submitted_ids_.count(t.command_id) ||
+                   !std::any_of(result.events_.begin(),result.events_.end(),
+                     [&](const Event& e){return e.command_id==t.command_id &&
+                         e.tick==t.tick && e.result==Outcome::Applied &&
+                         e.transferred==1;}))
+                    throw std::runtime_error("snapshot: invalid industrial training provenance");
+                if(result.snapshot_version_>=108 && t.mentor_id){
+                    const auto manager=result.npcs_.find(t.mentor_id);
+                    const auto deceased=result.casualties_.find(t.mentor_id);
+                    if(!t.supervisor_appointment_id || t.mentor_id==n.id ||
+                       (manager==result.npcs_.end() &&
+                        deceased==result.casualties_.end()) ||
+                       !result.submitted_ids_.count(t.supervisor_appointment_id) ||
+                       !std::any_of(result.events_.begin(),result.events_.end(),
+                          [&](const Event& ev){
+                              return ev.command_id==t.supervisor_appointment_id &&
+                                     ev.tick<=t.tick &&
+                                     ev.result==Outcome::Applied;}) ||
+                       !mentored_site_ticks.insert({t.workshop_site,t.tick}).second)
+                        throw std::runtime_error("snapshot: invalid original mentor identity or appointment receipt");
+                }
+                previous_practice_tick=t.tick;
+            }
+        };
+        for(const auto& [id,n]:result.npcs_){(void)id;verify(n);}
+        for(const auto& [id,dead]:result.casualties_){(void)id;verify(dead.identity);}
+        if(result.snapshot_version_>=108)
+            for(const auto& [site,shop]:result.workshops_){
+                std::uint64_t latest=0;
+                for(const auto& key:mentored_site_ticks)
+                    if(key.first==site)latest=std::max(latest,key.second);
+                if(shop.last_mentored_tick!=latest)
+                    throw std::runtime_error("snapshot: workshop mentored-tick evidence mismatch");
+            }
     }
     // v32 could persist active custody without recording the original manifest.
     // Never synthesize a voyage from incomplete evidence: its origin and
@@ -11540,6 +12601,87 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
             if(n==result.npcs_.end() || n->second.home_ship!=w.source_ship ||
                n->second.location!=id || n->second.role!=NpcRole::Habitat)
                 throw std::runtime_error("snapshot: invalid workshop operator");
+        }
+        if(result.snapshot_version_>=108){
+            if((w.supervisor_npc_id==0)!=(w.supervisor_appointment_id==0))
+                throw std::runtime_error("snapshot: partial workshop manager appointment");
+            if(w.supervisor_npc_id){
+                const auto n=result.npcs_.find(w.supervisor_npc_id);
+                const auto* home=result.find(w.source_ship);
+                if(n==result.npcs_.end() ||
+                   n->second.home_ship!=w.source_ship ||
+                   n->second.location!=id || n->second.assigned_site!=id ||
+                   n->second.role!=NpcRole::Habitat ||
+                   n->second.transport_id ||
+                   !home || !result.workshop_trade_certified(
+                       w.supervisor_npc_id,w.supervisor_trade) ||
+                   w.operator_npc_id==w.supervisor_npc_id ||
+                   w.finisher_npc_id==w.supervisor_npc_id ||
+                   !result.submitted_ids_.count(w.supervisor_appointment_id) ||
+                   !std::any_of(result.events_.begin(),result.events_.end(),
+                      [&](const Event& e){
+                          return e.command_id==w.supervisor_appointment_id &&
+                                 e.result==Outcome::Applied;}))
+                    throw std::runtime_error("snapshot: manager lacks real NPC or appointment");
+                for(const auto& [other_site,other_shop]:result.workshops_)
+                    if(other_site!=id &&
+                       other_shop.supervisor_npc_id==w.supervisor_npc_id)
+                        throw std::runtime_error("snapshot: manager assigned to multiple original shops");
+            }
+            for(unsigned slot=0;slot<2;++slot){
+                const auto& job=w.approved_jobs[slot];
+                if(!job.command_id)continue;
+                const auto actual=slot==0?w.completed_batches:w.finisher_batches;
+                if(!job.supervisor_npc_id ||
+                   !job.supervisor_appointment_id ||
+                   (w.supervisor_npc_id &&
+                    (job.supervisor_npc_id!=w.supervisor_npc_id ||
+                     job.supervisor_appointment_id!=w.supervisor_appointment_id ||
+                     w.supervisor_trade!=static_cast<WorkshopTrade>(slot+1))) ||
+                   job.baseline_batches>actual ||
+                   !result.submitted_ids_.count(job.command_id) ||
+                   !std::any_of(result.events_.begin(),result.events_.end(),
+                       [&](const Event& e){return e.command_id==job.command_id &&
+                          e.tick==job.approved_tick && e.result==Outcome::Applied &&
+                          e.transferred==0;}))
+                    throw std::runtime_error("snapshot: original workshop job lacked owner approval");
+            }
+        }
+        if(result.snapshot_version_>=106){
+            for(const auto cancelled:w.cancelled_pending_shifts){
+                bool pending_found=false;
+                for(const auto& [due,orders]:result.commands_){
+                    if(due<=result.tick_)continue;
+                    for(const auto& pending:orders)
+                        if(pending.id==cancelled &&
+                           pending.action==Action::StartWorkshopShift &&
+                           pending.target==id &&
+                           pending.actor==w.source_ship)
+                            pending_found=true;
+                }
+                if(!pending_found)
+                    throw std::runtime_error("snapshot: cancelled shift has no original pending order");
+            }
+            for(unsigned slot=0;slot<2;++slot){
+                const auto& sh=w.shifts[slot];
+                if(!sh.command_id)continue;
+                if(!result.submitted_ids_.count(sh.command_id) ||
+                   !std::any_of(result.events_.begin(),result.events_.end(),
+                     [&](const Event& ev){return ev.command_id==sh.command_id &&
+                         ev.tick==sh.start_tick && ev.result==Outcome::Applied &&
+                         ev.transferred==0;}))
+                    throw std::runtime_error("snapshot: shift missing original command proof");
+                if(sh.relief_command_id &&
+                   (result.snapshot_version_<107 ||
+                    sh.relief_command_id==sh.command_id ||
+                    !result.submitted_ids_.count(sh.relief_command_id) ||
+                    !std::any_of(result.events_.begin(),result.events_.end(),
+                       [&](const Event& ev){return ev.command_id==sh.relief_command_id &&
+                           ev.tick>sh.start_tick && ev.tick<=result.tick_ &&
+                           ev.tick<sh.end_tick && ev.result==Outcome::Applied &&
+                           ev.transferred==0;})))
+                    throw std::runtime_error("snapshot: relief lacks original applied command");
+            }
         }
     }
     for(const auto& [id,f]:result.farms_){

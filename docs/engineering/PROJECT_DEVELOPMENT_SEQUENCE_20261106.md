@@ -1,8 +1,11 @@
 # Single-Galaxy — Owner-directed 20-stage development sequence
 
-> **Stage 1 progress:** WO1 research, cataloguing, source-generated C++ registry and the two existing real-workshop bindings implemented on [draft PR #87](https://github.com/vjmichael/Single-galaxy/pull/87). [Exact source/verification gate ledger](INDUSTRY01_WO1_SOURCE_CLOSEOUT_20261106.md). Native CI is not yet green; **WO2 is next, not underway**.
-> **November 10, 2026 execution update:** The 20-stage order below remains binding. WO1 source implementation exists; later WO2, WO3, WO4, and WO5 source work was also begun in separate stacked draft branches, but they are **not equivalent to complete, integrated, native-accepted work orders**. Return to WO1 acceptance and move through WO2→WO3→WO4→WO5 closure in order before treating Stage 6 (Planet Generation) as the primary new feature group. Earlier player 3D demo and physical playtest defects are separately tracked, not a replacement roadmap. The WO1 November 9 native results exposed an obsolete 98-item C++ test expectation against the validated 100-item catalogue and Windows CRLF checkout drift in the generated C++ registry. Both have narrow branch fixes; acceptance must be demonstrated by fresh exact-head Windows/Linux execution, not by source edits alone. Do not start automatic CI fanout for each branch.
+> **WO1 reconciliation (2026-11-10):** Integrated original WO1 PR #87 catalogue-count/LF source fixes and current closeout ledger into this stacked branch without altering WO2's NPC workforce implementation. Native acceptance remains evidence-gated; preserve owner-directed WO1→WO2→WO3→WO4→WO5 sequence.
 
+
+> **Stage 2 now active (2026-11-06):** WO2 [draft PR #88](https://github.com/vjmichael/Single-galaxy/pull/88) records native worker/staffing and industry profession mapping; [engineering ledger](WO2_NPC_WORK_MANAGEMENT_20261106.md). WO1 source is implemented on draft #87 but native acceptance still pending. WO2 is **in progress**; WO3 has not begun.
+
+> **Stage 1 progress:** WO1 source implementation is recorded on [draft PR #87](https://github.com/vjmichael/Single-galaxy/pull/87); its native CI acceptance is still pending. **Stage 2 has begun** on stacked draft PR #88, including native worker/profession source and WO2-G provisional coverage checks. Neither stage is merged/accepted as an installed release.
 **Recorded November 6, 2026.** This supersedes earlier suggestions to prioritize full player gameplay, native 3D production or multiplayer ahead of the world simulation. **This is the order in which major feature areas should receive concentrated development work.** Existing prototype implementations remain useful foundations, not evidence that an area is finished.
 
 ## Binding order

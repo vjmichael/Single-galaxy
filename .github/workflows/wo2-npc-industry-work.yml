@@ -1,0 +1,69 @@
+name: WO2 original NPC industry roles and work-management acceptance
+on:
+  pull_request:
+    paths:
+      - 'data/industry/wo2_professions.json'
+      - 'include/galaxy/WO2ProfessionCatalog.hpp'
+      - 'include/galaxy/WO2IndustryWorkforce.hpp'
+      - 'src/WO2ProfessionCatalog.generated.cpp'
+      - 'scripts/validate_wo2_professions.js'
+      - 'scripts/generate_wo2_professions.js'
+      - 'tests/WO2_ProfessionCatalogTests.js'
+      - 'tests/WO2IndustryWorkforceTests.cpp'
+      - 'src/Simulation.cpp'
+      - 'include/galaxy/Simulation.hpp'
+      - 'src/Persistence.cpp'
+      - 'CMakeLists.txt'
+      - '.github/workflows/wo2-npc-industry-work.yml'
+  workflow_dispatch:
+concurrency:
+  group: sg-wo2-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+jobs:
+  original-npc-work:
+    name: Real NPC jobs, original inventory and SQLite (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Verify industry and NPC work role maps
+        run: |
+          node scripts/validate_industry01.js
+          node scripts/generate_industry01_cpp.js --check
+          node --test tests/INDUSTRY01_CatalogTests.js
+          node scripts/validate_wo2_professions.js
+          node scripts/generate_wo2_professions.js --check
+          node --test tests/WO2_ProfessionCatalogTests.js
+      - name: Install original native SQLite (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libsqlite3-dev
+      - name: Install original native SQLite (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $vcpkg = Join-Path $env:VCPKG_INSTALLATION_ROOT 'vcpkg.exe'
+          if (-not (Test-Path $vcpkg)) { throw 'Windows vcpkg SDK missing' }
+          & $vcpkg install sqlite3:x64-windows --clean-after-build
+          if ($LASTEXITCODE -ne 0) { throw 'SQLite native SDK install failed' }
+      - name: Configure original Linux game
+        if: runner.os == 'Linux'
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON -DBUILD_BENCHMARKS=OFF
+      - name: Configure original Windows game
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $tc = Join-Path $env:VCPKG_INSTALLATION_ROOT 'scripts/buildsystems/vcpkg.cmake'
+          cmake -S . -B build -G "Visual Studio 17 2022" -A x64 "-DCMAKE_TOOLCHAIN_FILE=$tc" -DBUILD_TESTING=ON -DBUILD_BENCHMARKS=OFF
+          if ($LASTEXITCODE -ne 0) { throw 'Original Windows configure failed' }
+      - name: Build original source and named-work tests
+        run: cmake --build build --config Release --parallel 2 --target galaxy_wo2_industry_workforce_tests galaxy_industry01_native_tests galaxy_econ02b1a_outpost_tests galaxy_econ02b1b_connected_tests galaxy_econ02b0_quantified_tests galaxy_work01b2_native_capacity_tests v59_medical_care v59_medical_recovery
+      - name: WO2 original NPC skills, training provenance, no-double-duty, material and SQLite restart
+        run: ctest --test-dir build -C Release --output-on-failure -R "^galaxy_(wo2_industry_workforce|industry01_native_binding|econ02b1a_outpost_tests|econ02b1b_connected_tests|econ02b0_quantified_tests|work01b2_native_capacity)$|^v59_medical_(care|recovery)$"
