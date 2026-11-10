@@ -207,9 +207,13 @@ func _run() -> void:
 		session.submit_flight(PackedStringArray(["DCK"]))
 		if not (await _await_condition(Callable(self, "_docked"))):
 			_fail("original C++ return docking near station failed")
-		elif _game._last_native_dock != 1 or not _game.ship_space.visible:
-			_fail("real docking did not restore visible cabin state")
+		elif _game._last_native_dock != 1 or not _game.space_preview.visible or \
+				_game.ship_space.visible or not _game.exterior_camera.current or \
+				_game.player.camera.current:
+			_fail("real docking exposed explorable cabin instead of fixed third-person pilot")
 		else:
+			# Retain artifact filename for downstream pinned-package scripts.
+			# Actual rendered content is now third-person at the dock.
 			await _capture_visible("01-docked-cabin", _ship_frames[-1])
 	if _error.is_empty():
 		await create_timer(0.13).timeout
@@ -217,11 +221,11 @@ func _run() -> void:
 		if not (await _await_condition(Callable(self, "_undocked"))):
 			_fail("second original launch after docking failed")
 	if _error.is_empty():
-		_game._external_requested = true
+		_game._external_requested = false # V is not required or effective now
 		_game._show_native_location(false)
-		if not _game.space_preview.visible or not _game.exterior_camera.current or \
-				_game.player.camera.current:
-			_fail("real exterior V view did not activate the original ship camera")
+		if not _game.space_preview.visible or _game.ship_space.visible or \
+				not _game.exterior_camera.current or _game.player.camera.current:
+			_fail("pilot-only exterior camera did not remain active without V toggle")
 		else:
 			await _capture_visible("02-exterior-flight", _ship_frames[-1], _rock_frames[-1])
 	var collided := false
@@ -349,7 +353,7 @@ func _run() -> void:
 					int(resumed_rock["impact_rock"]) != 0):
 				_fail("SQLite restart changed finite original asteroid/cargo or replayed collision")
 			if _error.is_empty():
-				_game._external_requested = true
+				_game._external_requested = false
 				_game._show_native_location(false)
 				if not _game.exterior_camera.current or not _game.native_asteroid_mesh.visible:
 					_fail("actual Godot camera/asteroid failed after native restart")
