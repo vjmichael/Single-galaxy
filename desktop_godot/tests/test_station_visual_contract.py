@@ -57,9 +57,11 @@ checks = {
     ),
     "focused-keyboard-flight-with-visible-mouse": (
         "func _collect_native_pilot_actions() -> PackedStringArray:" in player
-        and "if get_window().has_focus():\n\\t\\t\\tif native_seated and native_in_ship:".replace("\\t", chr(9)) in player
+        and 'if get_window().has_focus():' in player
+        and 'if native_seated and native_in_ship:' in player
+        and 'if Input.mouse_mode == Input.MOUSE_MODE_CAPTURED and get_window().has_focus():' not in player
         and 'elif not native_in_ship and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:' in player
-        and "if Input.mouse_mode == Input.MOUSE_MODE_CAPTURED and \\" in player
+        and 'if Input.mouse_mode == Input.MOUSE_MODE_CAPTURED and ' in player
         and 'pilot_actions.append("FWD")' in player
         and 'pilot_actions.append("LEFT")' in player
         and 'Input.mouse_mode = Input.MOUSE_MODE_VISIBLE' in action_smoke
