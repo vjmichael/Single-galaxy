@@ -1882,8 +1882,8 @@ if(BUILD_TESTING)
   add_test(NAME galaxy_wo2_industry_workforce COMMAND galaxy_wo2_industry_workforce_tests)
 endif()
 
-// WO3-A: proposal-only colony construction planning and original-world actual
-// facility, census, utility, immutable SQLite copies and material conservation.
+# WO3-A: proposal-only colony construction planning and original-world actual
+# facility, census, utility, immutable SQLite copies and material conservation.
 if(BUILD_TESTING)
   add_executable(galaxy_wo3_colony_operations_tests tests/WO3ColonyOperationsTests.cpp)
   target_link_libraries(galaxy_wo3_colony_operations_tests PRIVATE galaxy_kernel)
