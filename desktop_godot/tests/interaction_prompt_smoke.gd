@@ -32,7 +32,6 @@ func _run() -> void:
 	if retry == null or retry.visible or not retry.text.contains("Retry"):
 		_fail("safe explicit station retry must stay hidden until an actual native failure")
 		return
-		return
 	var hatch := stage.get_node_or_null("StationInterior_Prototype/Station_Hangar_Entry_At_Zero") as MeshInstance3D
 	if hatch == null:
 		_fail("original (0,0) hatch mesh not visible")
