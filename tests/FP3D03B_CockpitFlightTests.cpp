@@ -40,6 +40,10 @@ int main(int argc,char** argv){
        Action::Thrust,1,0,0}),"public API cannot bypass cockpit admission");
    const auto undock=cockpit.pilot(7,1,kFlightTag|4,PilotControl::Undock);
    need(undock && *undock==Outcome::Applied,"original undock executes");
+   need(!cockpit.pilot(7,1,kFlightTag|119,PilotControl::Ascend),
+        "legacy 2D SQLite must never silently upgrade for vertical input");
+   need(!world.world().has_pending_cockpit_flight(),
+        "unsupported vertical control leaves original journal untouched");
    auto f=cockpit.flight_state(7);
    need(f.ship==own_ship && f.dock==DockState::InSpace &&
         !world.world().has_pending_cockpit_flight(),"original docking transition completes");
