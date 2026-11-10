@@ -19,6 +19,8 @@ action_hints = (root / "world/interaction_prompts.gd").read_text(encoding="utf-8
 action_smoke = (root / "tests/interaction_prompt_smoke.gd").read_text(encoding="utf-8")
 boarding_smoke = (root / "tests/boarding_action_pipe_smoke.gd").read_text(encoding="utf-8")
 auto_start_smoke = (root / "tests/auto_station_connect_acceptance.gd").read_text(encoding="utf-8")
+colony_dock = (root / "world/colony_dock_layout.gd").read_text(encoding="utf-8")
+colony_smoke = (root / "tests/colony_dock_smoke.gd").read_text(encoding="utf-8")
 player_controller = (root / "world/player_controller.gd").read_text(encoding="utf-8")
 
 checks = {
@@ -52,6 +54,39 @@ checks = {
     "station-host-supervised-project-binary": "SGDX_LAUNCH.native_host_path(binary)" in station_client and 'SGDX_LAUNCH.supervised_command(save, "godot_station", exe,' in station_client and 'OS.execute_with_pipe(spec["path"], spec["args"], false)' in station_client,
     "cockpit-host-supervised-project-binary": "SGDX_LAUNCH.native_host_path(binary)" in cockpit_client and 'SGDX_LAUNCH.supervised_command(save, "godot_ship", path, PackedStringArray([save]))' in cockpit_client and 'OS.execute_with_pipe(spec["path"], spec["args"], false)' in cockpit_client,
     "refuse-unguarded-native-launch": "refusing unsupervised" in station_client and "refusing unsupervised" in cockpit_client,
+    "colony-origin-matches-original-person": (
+        "const COLONY_SPAWN := Vector3(1.6, 0.0, 0.0)" in colony_dock
+        and "const DOCK_GATE := Vector3(0.0, 0.0, 0.0)" in colony_dock
+        and "COLONY_DOCK_LAYOUT.build(station_space)" in main
+        and "original C++ PERSON genesis" in colony_smoke
+    ),
+    "colony-to-dock-transition-composition": (
+        'colony.name = "ColonyArrival"' in colony_dock
+        and 'corridor.name = "ColonyToDockWalkway"' in colony_dock
+        and 'dock.name = "SpacefaringDock"' in colony_dock
+        and '"Colony arrival wayfinding"' in colony_dock
+        and '"Ship embarkation ramp"' in colony_dock
+        and '"Departure dock label"' in colony_dock
+        and '"Owned ship dark cockpit canopy"' in colony_dock
+        and "FP3D-COLONY-01 REAL GODOT PASS" in colony_smoke
+    ),
+    "visual-regions-never-authorize-boarding": (
+        "VISUAL-ONLY" in colony_dock
+        and "CollisionShape3D" in colony_dock
+        and "create NO collision or boarding callback" in colony_dock
+        and 'find_children("*", "CollisionObject3D", true, false)' in colony_smoke
+        and "eligible_ship" in colony_smoke
+        and 'return "Press %s to Board' in action_hints
+        and 'return "COLONY → DOCK' in action_hints
+        and 'absf(person.global_position.x - 1.6)' in colony_smoke
+    ),
+    "docked-ship-near-authoritative-hatch": (
+        'Vector3(0, 1.34, -4.90)' in main
+        and 'Vector3(0.0, 0.084, -1.9)' in colony_dock
+        and 'const SHIP_BERTH := Vector3(0.0, 0.0, -4.9)' in colony_dock
+        and '"Station_Hangar_Entry_At_Zero"' in main
+        and '"Docked owned ship hull (visual)"' in colony_smoke
+    ),
     "station-room": '"StationInterior_Prototype"' in main,
     "cabin-room": '"ShipInterior_Prototype"' in main,
     "hatch": '"Station_Hangar_Entry_At_Zero"' in main,
