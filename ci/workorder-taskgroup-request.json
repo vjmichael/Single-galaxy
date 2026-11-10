@@ -2,6 +2,6 @@
   "schema": "SG-WORKORDER-GATE-01",
   "task_group": "WO2",
   "pr_number": 88,
-  "source_sha": "7bff13a25cc5df1b06ff387f1c9da5b978264445",
-  "note": "WO1 passed exact source 7ed9fad on Windows/Linux with 13 JS + 4 CTests (#42840388816). Now one grouped WO2 original named-NPC Windows/Linux acceptance: generated profile and item catalogue LF byte parity, industry base, finite named NPC training/shift/supervisor/exclusive duty and actual SQLite recover-copy; real C++ compiler on MSVC/GCC and exact 9 CTests. Reconciled parents WO1–WO2; do not fan out PR workflows."
+  "source_sha": "c40302e22c8743e12865c4d2f02f3aa23b3e8735",
+  "note": "ONE exact-head WO2 native rerun, after Windows+Linux #42841332717 compiled and passed 8/9 CTests but original WO2 dedicated test failed copied SQLite restore: snapshot: missing or wrong ship frame custody. Correct original trusted command v105 admission must initialize honest v70 physical systems/v71 shipframe for existing ship BEFORE submitted command snapshot, while still rejecting tampered snapshots at decode; new native regression checks shipframe and real physical system before recover_copy. Maintain original WO1 13 JS/4 CTests, WO2 6 JS/9 CTests, real C++ MSVC/GCC and SQLite. No unrelated workflows."
 }
