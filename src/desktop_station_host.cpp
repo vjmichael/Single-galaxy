@@ -1,4 +1,5 @@
 #include "galaxy/NativeWriterLease.hpp"
+#include "galaxy/NativeWindowsUtf8Argv.hpp"
 #include "galaxy/ServerBreadcrumb.hpp"
 // PLAY-STATION-02 development-native station spawn and boarding bridge.
 // Real person, original SQLite world and exact berth custody; fixture-only hull.
@@ -38,13 +39,17 @@ void send(std::uint64_t session,std::uint64_t request,const PersistentWorld& w){
  if(!std::cout)throw std::runtime_error("client station pipe disconnected");
 }
 }
-int main(int argc,char** argv){
+static int run_host(int argc,char** argv){
  if(argc!=3||std::string_view(argv[2])!="--explicit-test-station"){
   std::cerr<<"Usage: galaxy_desktop_station_host SQLITE_PATH --explicit-test-station\n";return 2;
  }
  try{
-  const fs::path save(argv[1]);
-  if(save.empty()||save.string().size()>1024||
+  const std::string save_utf8(argv[1]);
+   // sqlite3_open_v2 takes UTF-8; NativeWriterLease uses an accurately
+   // decoded Windows filesystem path. Never round-trip via path.string(),
+   // which may convert it back into a non-UTF8 active code page.
+   const fs::path save=fs::u8path(save_utf8);
+  if(save.empty()||save_utf8.size()>1024||
     (!save.parent_path().empty()&&!fs::exists(save.parent_path())))
     throw std::runtime_error("invalid native station save path");
   NativeWriterLease custody(save);
@@ -61,7 +66,7 @@ int main(int argc,char** argv){
   // Opt in ONLY the genesis of this explicit test station. Existing
   // SQLite worlds must load their own original rules and resources.
   seed.enable_native_swept_asteroid_collision();
-  PersistentWorld world(save.string(),std::move(seed));
+  PersistentWorld world(save_utf8,std::move(seed));
   if(fresh){
    if(!world.register_player_at_station(kOwner,test_station))
     throw std::runtime_error("native test station registration denied");
@@ -197,3 +202,18 @@ int main(int argc,char** argv){
   std::cerr<<"PLAY-STATION-02 native host failed: "<<e.what()<<'\n';return 1;
  }
 }
+
+#ifdef _WIN32
+int wmain(int argc,wchar_t** argv){
+    try {
+        auto utf8=galaxy::windows_utf8_argv::convert_all(argc,argv);
+        auto pointers=galaxy::windows_utf8_argv::views(utf8);
+        return run_host(argc,pointers.data());
+    }catch(const std::exception& error){
+        std::cerr<<"Windows native host UTF-8 startup error: "<<error.what()<<'\n';
+        return 2;
+    }
+}
+#else
+int main(int argc,char** argv){return run_host(argc,argv);}
+#endif
