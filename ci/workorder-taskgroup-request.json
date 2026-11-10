@@ -2,6 +2,6 @@
   "schema": "SG-WORKORDER-GATE-01",
   "task_group": "WO5",
   "pr_number": 92,
-  "source_sha": "cc58e4029881b617b7b53a070efb5e954efd97b1",
-  "note": "WO5 Task Group 1 exact-head follow-up after ten genuine initial failures in 42918449911. Promote the previously passing Stage6 producer-source fix to original native flight/custody receipts, same-tick checkpoint integrity, historical action parser, preserved household before/after snapshots, genuine PLAY13D oasis/staffing/cargo/ascent receipts, V59 owner custody and housing/utility assertions. Re-run all 33 existing Windows/Linux CTests; historical v86 authentic source remains mandatory and knowingly missing, so do not mark group complete from remaining passes."
+  "source_sha": "b7e8aa880dc6a9e2345d6546b158d4d1c5292e38",
+  "note": "WO3–WO5 Task Group 1 third exact-head acceptance: backported original source fixes from Stage6 to WO5 (native flight action provenance and verified same-tick recover_copy, valid PLAY13D original survey/genesis, immutable as-of ascent receipt; V59 transport), plus Windows SQLite object lifetime fixes for region and manufactured goods, and diagnostics for one actual remaining original shuttle ascent mismatch. Run all 33 real native CTests on Windows/Linux; historical archived v86 database/binary commit+SHA256 gate remains mandatory and must fail closed if absent. Preserve all error messages and artifacts."
 }
