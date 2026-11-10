@@ -46,7 +46,7 @@ int main(int argc,char** argv){
    need(cockpit.pilot(7,1,kFlightTag|5,PilotControl::YawLeft)==Outcome::Applied,
         "native original yaw left");
    f=cockpit.flight_state(7);
-   need(f.heading==345,"original yaw persisted in Entity");
+   need(f.heading==15,"visual-left yaw persists as native positive heading");
    need(cockpit.pilot(7,1,kFlightTag|6,PilotControl::YawRight)==Outcome::Applied,
         "native original yaw right");
    need(cockpit.flight_state(7).heading==0,"original yaw restored");
@@ -58,12 +58,12 @@ int main(int argc,char** argv){
    need(cockpit.pilot(7,1,kFlightTag|8,PilotControl::StrafePort)==Outcome::Applied,
         "original local port strafe");
    f=cockpit.flight_state(7);
-   need(f.vy<0,"ship strafe has native negative Y velocity");
+   need(f.vy>0,"port strafe is visual-left native positive Y velocity");
    const auto speed_x=f.vx,speed_y=f.vy;
    need(cockpit.pilot(7,1,kFlightTag|9,PilotControl::Counterthrust)==Outcome::Applied,
         "original opposite acceleration");
    f=cockpit.flight_state(7);
-   need(f.vx<speed_x&&f.vy>speed_y,"counterthrust damps original velocity");
+   need(f.vx<speed_x&&f.vy<speed_y,"counterthrust damps original velocity");
    need(!cockpit.pilot(7,1,kFlightTag|9,PilotControl::Forward),
         "same canonical command ID never replays");
    need(f.vx==0 && f.vy==0 && f.vz==0,
