@@ -620,7 +620,9 @@ int main(){
       "transport fixture backup incomplete");
     sqlite3_close(to);sqlite3_close(from);
   }
-  for(const auto& file:{path,copy,corrupt,badledger})std::filesystem::remove(file);
-  return 0;
+  // Windows cannot unlink an open SQLite database. World, regional
+  // checkpoint and authority objects leave scope before fixture cleanup.
  }catch(const std::exception& e){std::cerr<<"v58 alternate destination and production host FAIL: "<<e.what()<<'\n';return 1;}
+ for(const auto& file:{path,copy,corrupt,badledger})std::filesystem::remove(file);
+ return 0;
 }
