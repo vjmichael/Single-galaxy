@@ -80,7 +80,7 @@ checks = {
         and 'native_player_session.toggle_seat()' in main
         and '_pilot_auto_seat_attempted = true' in main
         and 'func use_native_ship_custody(aboard: bool)' in player
-        and 'elif not native_in_ship:' in player
+        and 'elif not native_in_ship and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:' in player
         and 'func _on_native_player_intent(heading: Vector3)' in main
         and 'native_player_session.submit_motion(heading)' not in main
         and 'Callable(self, "_seat_ready")' in auto_start_smoke
