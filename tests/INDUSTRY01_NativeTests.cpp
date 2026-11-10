@@ -32,7 +32,7 @@ static void applied(PersistentWorld& w,EntityId ship,std::uint64_t id,
 int main(){
  try {
     industry01::validate_against_original_inventory();
-    CHECK(industry01::items().size()==98);
+    CHECK(industry01::items().size()==100);
     CHECK(industry01::recipes().size()==71);
     CHECK(industry01::services().size()==8);
     CHECK(industry01::legacy_units().size()==28);

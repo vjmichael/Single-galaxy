@@ -1,5 +1,8 @@
 # Single-Galaxy — Owner-directed 20-stage development sequence
 
+> **WO1 reconciliation (2026-11-10):** Integrated original WO1 PR #87 catalogue-count/LF source fixes and current closeout ledger into this stacked branch without altering WO2's NPC workforce implementation. Native acceptance remains evidence-gated; preserve owner-directed WO1→WO2→WO3→WO4→WO5 sequence.
+
+
 > **Stage 2 now active (2026-11-06):** WO2 [draft PR #88](https://github.com/vjmichael/Single-galaxy/pull/88) records native worker/staffing and industry profession mapping; [engineering ledger](WO2_NPC_WORK_MANAGEMENT_20261106.md). WO1 source is implemented on draft #87 but native acceptance still pending. WO2 is **in progress**; WO3 has not begun.
 
 > **Stage 1 progress:** WO1 source implementation is recorded on [draft PR #87](https://github.com/vjmichael/Single-galaxy/pull/87); its native CI acceptance is still pending. **Stage 2 has begun** on stacked draft PR #88, including native worker/profession source and WO2-G provisional coverage checks. Neither stage is merged/accepted as an installed release.
