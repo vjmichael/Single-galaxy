@@ -20,6 +20,7 @@ var player # assigned CharacterBody3D with runtime PlayerController.gd; signals 
 var scope_label: Label
 var status_label: Label
 var interaction_label: Label
+var retry_station_button: Button
 var fps_label: Label
 var native_label: Label
 var ship_label: Label
@@ -128,6 +129,8 @@ func _retry_original_station() -> void:
 		return
 	_station_connection_failure = ""
 	_station_connect_attempted = true
+	if is_instance_valid(retry_station_button):
+		retry_station_button.visible = false
 	_on_native_player_status("Retrying your saved station without resetting the world...")
 	_schedule_native_handoff("station", native_station_session.process_id())
 
@@ -415,7 +418,7 @@ func _build_hud() -> void:
 	title.add_theme_font_size_override("font_size", 17)
 	contents.add_child(title)
 	scope_label = Label.new()
-	scope_label.text = "LOCAL WALKING — Press H for native station"
+	scope_label.text = "Connecting to original saved world..."
 	contents.add_child(scope_label)
 	native_label = Label.new()
 	native_label.text = "Connecting to your saved station automatically..."
@@ -429,6 +432,12 @@ func _build_hud() -> void:
 	contents.add_child(status_label)
 	for line in [scope_label, native_label, ship_label, status_label]:
 		line.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	retry_station_button = Button.new()
+	retry_station_button.name = "RetryStationConnection"
+	retry_station_button.text = "Retry connection to saved station"
+	retry_station_button.visible = false
+	retry_station_button.pressed.connect(_retry_original_station)
+	contents.add_child(retry_station_button)
 
 	flight_panel = PanelContainer.new()
 	flight_panel.name = "FlightTelemetryPanel"
@@ -517,6 +526,9 @@ func _refresh_interaction_prompt() -> void:
 	if ship_process_active and not ship_connected:
 		interaction_label.text = "Connecting cockpit — waiting for verified original C++ ship pose"
 		return
+	if _player_session_autoconnect and not _station_connect_attempted and not station_connected:
+		interaction_label.text = "Connecting to saved station..."
+		return
 	if _station_connect_attempted and not station_connected and not ship_process_active and _handoff_target.is_empty():
 		interaction_label.text = "Station unavailable — H to retry safely" if not _station_connection_failure.is_empty() else "Connecting to saved station..."
 		return
@@ -536,7 +548,13 @@ func _refresh_interaction_prompt() -> void:
 		interaction_label.text = display
 
 func _on_inspected(display_name: String) -> void:
-	status_label.text = "Inspected: " + display_name + " (prototype only; no native action)"
+	# An incidental object-inspection ray must never replace the real
+	# controls or the native startup/boarding error in the system HUD.
+	if display_name == "No object in interaction range":
+		return
+	if not _station_connection_failure.is_empty():
+		return
+	_on_native_player_status("Visual inspection only: " + display_name)
 
 func _schedule_native_handoff(target: String, outgoing_pid: int) -> void:
 	# Process shutdown is not proof that SQLite's WAL writer was released.
@@ -640,6 +658,8 @@ func _unhandled_input(event: InputEvent) -> void:
 func _on_native_station_connection(connected: bool) -> void:
 	if not connected:
 		_hide_refinery_terminal()
+	if is_instance_valid(retry_station_button) and connected:
+		retry_station_button.visible = false
 	if is_instance_valid(player):
 		# Keep local unjournaled walking disabled during a protected role
 		# handoff or while the native cockpit owns this saved world.
@@ -653,6 +673,8 @@ func _on_native_station_status(message: String) -> void:
 		_station_connection_failure = ""
 	elif message.contains("failed") or message.contains("exited") or message.contains("missing") or message.contains("timed out") or message.contains("still alive"):
 		_station_connection_failure = message
+	if is_instance_valid(retry_station_button):
+		retry_station_button.visible = not _station_connection_failure.is_empty() and not native_station_session.is_active()
 	_on_native_player_status(message)
 	# An original C++ DENY must leave the terminal in a visible refused state.
 	# Do not report success or synthesize a new lot while a host request fails.
@@ -763,6 +785,8 @@ func _on_native_station_person(person: Dictionary) -> void:
 	_record_native_projection("PERSON", person)
 	last_station_player_state = int(person["state"])
 	_station_connection_failure = ""
+	if is_instance_valid(retry_station_button):
+		retry_station_button.visible = false
 	if last_station_player_state != 4:
 		_hide_refinery_terminal()
 	_show_native_location(last_station_player_state == 4)
