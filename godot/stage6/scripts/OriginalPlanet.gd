@@ -5,6 +5,40 @@ extends Node3D
 const VISUAL_RADIUS: float = 1000.0
 var loaded_generation: String = ""
 var loaded_hash: String = ""
+# Client frame pacing only; does not infer physical R9700 performance or
+# GPU frame time on machines where that hardware is not actually installed.
+var _frame_ms: Array[float] = []
+var _completed_measurement: bool = false
+
+func _process(delta: float) -> void:
+    if loaded_generation.is_empty() or _completed_measurement:
+        return
+    if delta <= 0.0:
+        return
+    _frame_ms.append(delta * 1000.0)
+    if _frame_ms.size() < 300:
+        return
+    _frame_ms.sort()
+    var n := _frame_ms.size()
+    var data := {
+        "schema": "SG-STAGE6-FRAME-01",
+        "original_generation": loaded_generation,
+        "original_hash": loaded_hash,
+        "measured_frames": n,
+        "p50_ms": _frame_ms[int(floor(float(n - 1) * 0.50))],
+        "p95_ms": _frame_ms[int(floor(float(n - 1) * 0.95))],
+        "p99_ms": _frame_ms[int(floor(float(n - 1) * 0.99))],
+        "max_ms": _frame_ms[n - 1],
+        "engine": Engine.get_version_info().get("string", "unknown"),
+        "measurement": "Godot client frame deltas, not GPU execution time"
+    }
+    var result := FileAccess.open("user://stage6_frame_pacing.json", FileAccess.WRITE)
+    if result != null:
+        result.store_string(JSON.stringify(data, "  "))
+        result.flush()
+        print("Original Stage6 Godot frame pacing captured: user://stage6_frame_pacing.json")
+    _completed_measurement = true
+
 
 func _ready() -> void:
     var camera := Camera3D.new()
