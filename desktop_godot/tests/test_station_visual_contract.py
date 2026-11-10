@@ -214,6 +214,13 @@ checks = {
         and "native_player_session._sequence" in main
         and "prompt.mouse_filter = Control.MOUSE_FILTER_IGNORE" in main
     ),
+    "interaction-smoke-must-reach-flight-and-pilot-assertions": (
+        "\\t\\treturn\\n\\t\\treturn\\n" not in action_smoke
+        and '"the seated native ship did not advertise mandatory third-person view"' in action_smoke
+        and '"in-space ship camera failed permanent third-person rule"' in action_smoke
+        and '"FP3D-PILOT-01 REAL GODOT VISUAL PASS"' in action_smoke
+        and "quit(0)" in action_smoke
+    ),
     "live-engine-has-interaction-smoke": (
         "FP3D-UX-02 real Godot visual/input PASS" in action_smoke
         and "600" in action_smoke
