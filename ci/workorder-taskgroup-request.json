@@ -2,6 +2,6 @@
   "schema": "SG-WORKORDER-GATE-01",
   "task_group": "WO3",
   "pr_number": 89,
-  "source_sha": "05bb66dfe9c73b1619f97e850ecdb4083203b9ee",
-  "note": "ONE exact-head WO3 native rerun after actual run #42848745399 Windows+Linux both failed BEFORE CMake configuration at source CMakeLists.txt:1885: invalid // comments, NOT original-world compilation/test failure. WO3 feature commit 05bb66d replaces exactly two invalid CMake comments with # (no test-target changes). Compile genuine MSVC and GCC, run original WO1/WO2/WO3 native CTest, SQLite recover-copy/ledger, housing/shuttle/real named worker and surface utility/consumption/visitor custody as group. Original 3D Radeon GPU and mined ore remain separately unaccepted. No per-commit CI, no invented native pass."
+  "source_sha": "656c45d507008a7b512320d72253a7f19968700a",
+  "note": "ONE repaired exact-head WO3 original colony Windows/Linux gate after actual #42849076660 both real compilers passed CMake configure but GCC and MSVC C++ both rejected Simulation.cpp:12715 mixed signed and unsigned const auto snapshot declarations (GCC inconsistent auto deduction; MSVC C3538). Fix commit 656c45d separates u64 and i64 fields preserving original offsets, values and integrity rules; no bypass. Run genuine WO1/WO2/WO3 native compile, CTest and SQLite copied recovery, and repair only actual further failures. No per-commit fanout, no deployed Radeon gameplay or mining claim."
 }
