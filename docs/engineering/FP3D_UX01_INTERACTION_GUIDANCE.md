@@ -81,3 +81,68 @@ Afterward, deliver the new ZIP for the creator to confirm boarding,
 cockpit, physical undocking, actual asteroid collision, docking and saved
 world continuity on the physical Radeon. Manufactured ship mining equipment
 remains deferred until that 3D physical acceptance.
+
+## FP3D-UX-02 — creator's Level 1 boarding blocker (2026-11-09)
+
+The creator's actual Windows **Radeon AI Pro R9700** game launched but
+boarding was still difficult. Two demonstrated defects explain it:
+
+1. **Cyan hatch tile occluded by the floor.** The native (0,0) threshold
+   is covered by a `Hangar gangway` box whose top is at Y=0.030 m.
+   The old 15 mm hatch mesh at Y=0.020 m had a top at **0.0275 m**,
+   i.e. **2.5 mm below** the gangway. The tile appeared missing even
+   though the C++ 600mm square boarding rule was correct. The visual
+   marker is raised to Y=0.0775m (top 0.085m); a cyan floating
+   `Label3D` sign above the same coordinate says `BOARDING HATCH`.
+   These are **noncolliding presentation only** and do not teleport
+   the registered native PERSON or change the original hatch location.
+2. **E was silently discarded during a native WALK acknowledgement.**
+   The station bridge had `if ... _pending != 0: return` and would
+   drop E if a player pressed it while moving or immediately after
+   releasing a key. E was additionally gated on FPS mouse capture,
+   even if the actual standalone game window had focus. The bridge
+   now queues **at most one explicit E** only when the outstanding
+   command is WALK. After a fresh PERSON/SQLite-generation
+   acknowledgement it dispatches the native BOARD request (and the
+   original C++ server repeats owner, docked-ship and exact distance
+   verification). Rejection, crash, role change, timeout or shutdown
+   discards the pending E. E now works with the mouse released while
+   the window retains keyboard focus; native walking/thrust still
+   require focused, captured input.
+   Outside the exact ±600mm square the client explains how to reach
+   the hatch instead of silently ignoring E. **No client-side
+   interaction grants ownership or custody.**
+
+The true station-person genesis in original
+`PLAY_STATION_02_BoardingTests.cpp` is **(1600, 0) mm**. From the default
+forward-facing camera, pressing **A** toward the left for approximately
+1–2 seconds reaches the nearby native (0,0) floor hatch. Release A,
+then E. P after original BOARD moves to the protected cockpit, E
+requests the pilot seat and U undocks the original vessel.
+
+**Visual specification applied:** station geometry medium gray,
+original owned ship exterior/interior white, raised cyan boarding
+tile/sign; debug status in a compact top-left system panel; flight
+SHIP/ROCK telemetry separately at upper right only when a real
+original SHIP frame exists; FPS bottom-left; contextual action
+bottom-center. This avoids the observed top-left text collisions.
+No full materials/assets pipeline or manufacturing claims.
+
+**Tests:** `interaction_prompt_smoke.gd` now checks that the
+real Godot floor marker clears the gangway, sign is present,
+station/ship material colors differ, and the HUD panels do not
+overlap; `boarding_action_pipe_smoke.gd` tests the Godot bridge
+with a synthetic pipe and the accepted PERSON/BOARD protocol:
+a pending WALK+E produces exactly one request using the fresh
+SQLite generation, no request outside the 600mm C++ hatch, no
+replay on native DENY and no command while disconnected.
+These are in the grouped Linux/Windows real Godot tests and
+the extracted Windows alpha package smoke suite. They do
+not replace the independent native C++/SQLite boarding tests.
+
+**Acceptance still outstanding:** rebuild/test the complete
+new task-group source with ONE consolidated native Windows/Linux
+gate; publish an updated exact-source ZIP only after it passes;
+then the creator must actually board, sit, undock, collide, dock
+and restart on the physical R9700. PR #125 remains DRAFT and
+manufactured mining equipment remains deferred.
