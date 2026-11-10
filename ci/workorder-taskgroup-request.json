@@ -2,6 +2,6 @@
   "schema": "SG-WORKORDER-GATE-01",
   "task_group": "WO5",
   "pr_number": 92,
-  "source_sha": "b7e8aa880dc6a9e2345d6546b158d4d1c5292e38",
-  "note": "WO3–WO5 Task Group 1 third exact-head acceptance: backported original source fixes from Stage6 to WO5 (native flight action provenance and verified same-tick recover_copy, valid PLAY13D original survey/genesis, immutable as-of ascent receipt; V59 transport), plus Windows SQLite object lifetime fixes for region and manufactured goods, and diagnostics for one actual remaining original shuttle ascent mismatch. Run all 33 real native CTests on Windows/Linux; historical archived v86 database/binary commit+SHA256 gate remains mandatory and must fail closed if absent. Preserve all error messages and artifacts."
+  "source_sha": "94068a389ce926df42d87137b5b9bebcaa6202ba",
+  "note": "WO5 TG1 33 native test exact-head after latest demonstrated fixes: original Versioned SQLite journal, native travel/cargo, strict retry and loss prevention, Windows SQLite fixture-owner teardown and farm original ascent receipt capture (before restore). The mandatory archived v86 source/binary/commit/SHA256 gate must fail closed until authentic immutable historical source exists; 32 other selected tests must pass on Windows and Ubuntu without skipping checks."
 }
