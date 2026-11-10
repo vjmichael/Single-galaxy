@@ -55,6 +55,13 @@ var _colony_return_armed := false
 var _colony_return_pending := false
 var native_markers: Node3D
 var _fps_accumulator := 0.0
+# The Godot sidecar is diagnostics, NEVER an alternative SQLite world.
+# Buffer native-observed receipts; synchronous open/write/close for every
+# SHIP + ROCK ack caused unnecessary per-command desktop I/O jitter.
+var _native_visual_evidence_buffer := PackedStringArray()
+var _last_visual_evidence_flush_ms := 0
+const NATIVE_EVIDENCE_FLUSH_INTERVAL_MS := 500
+const NATIVE_EVIDENCE_BUFFER_LIMIT := 64
 # Former developer-only H toggle is no longer needed during normal play.
 # Standalone script tests keep native fixtures under explicit test control.
 var _player_session_autoconnect := false
@@ -342,6 +349,32 @@ func _build_native_space_preview() -> void:
 	native_asteroid_mesh.material_override = material
 	native_asteroid_mesh.visible = false
 	space_preview.add_child(native_asteroid_mesh)
+	# A sparse NON-COLLIDING inertial orientation reference makes real
+	# native yaw visible when no C++ asteroid exists inside the 30m sensor.
+	# These dots are NOT asteroid resources, pilot targets or world physics.
+	var orientation_guides := MultiMeshInstance3D.new()
+	orientation_guides.name = "VisualOnlyBearingDots_NOT_NativeContacts"
+	var guide_sphere := SphereMesh.new()
+	guide_sphere.radius = 0.66
+	guide_sphere.height = 1.32
+	guide_sphere.radial_segments = 8
+	guide_sphere.rings = 4
+	var guide_material := StandardMaterial3D.new()
+	guide_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	guide_material.albedo_color = Color(0.40, 0.69, 0.84, 1.0)
+	orientation_guides.material_override = guide_material
+	var dot_meshes := MultiMesh.new()
+	dot_meshes.transform_format = MultiMesh.TRANSFORM_3D
+	dot_meshes.mesh = guide_sphere
+	dot_meshes.instance_count = 20
+	for index in range(20):
+		var angle := TAU * float(index) / 20.0
+		var inertial_location := Vector3(cos(angle) * 67.0,
+			sin(angle * 3.0) * 11.0, sin(angle) * 67.0)
+		dot_meshes.set_instance_transform(index,
+			Transform3D(Basis.IDENTITY, inertial_location))
+	orientation_guides.multimesh = dot_meshes
+	space_preview.add_child(orientation_guides)
 	# Greybox ship hull is 8m long, 2.5m high, with visible wings spanning
 	# ~6m. The ORIGINAL C++ physics uses a conservative 5.2m bounding sphere.
 	# Neither these meshes nor the camera writes any collision or ship pose.
@@ -789,23 +822,37 @@ func _capture_operator_view() -> void:
 	_on_native_player_status("F11 original-world viewport captured: " + filename)
 
 func _record_native_projection(kind: String, evidence: Dictionary) -> void:
-	# CLIENT-OBSERVED evidence only; original SQLite journal remains authoritative.
-	# Bounded local file for Windows physical playtest diagnosis, never a second save.
+	# CLIENT-OBSERVED diagnostics only, not ship controls or a second save.
+	_native_visual_evidence_buffer.append(JSON.stringify({
+		"source":"godot-observed-native-frame",
+		"event":kind,"wall_unix":Time.get_unix_time_from_system(),"frame":evidence}))
+	if _native_visual_evidence_buffer.size() >= NATIVE_EVIDENCE_BUFFER_LIMIT:
+		_flush_native_visual_evidence()
+
+func _flush_native_visual_evidence() -> void:
+	if _native_visual_evidence_buffer.is_empty():
+		return
+	# One bounded synchronous disk write per group, not one per SHIP/ROCK
+	# callback. Losing a diagnostic must never create a gameplay authority.
 	var path := "user://sg_station_visual_acceptance.jsonl"
 	var f := FileAccess.open(path, FileAccess.READ_WRITE)
 	if f == null:
 		f = FileAccess.open(path, FileAccess.WRITE)
 	if f == null:
+		_native_visual_evidence_buffer.clear()
 		return
 	if f.get_length() > 1048576:
 		f.close()
 		f = FileAccess.open(path, FileAccess.WRITE)
 		if f == null:
+			_native_visual_evidence_buffer.clear()
 			return
 	f.seek_end()
-	f.store_line(JSON.stringify({"source":"godot-observed-native-frame",
-		"event":kind,"wall_unix":Time.get_unix_time_from_system(),"frame":evidence}))
+	for entry in _native_visual_evidence_buffer:
+		f.store_line(entry)
 	f.close()
+	_native_visual_evidence_buffer.clear()
+	_last_visual_evidence_flush_ms = Time.get_ticks_msec()
 
 func _on_native_station_person(person: Dictionary) -> void:
 	_record_native_projection("PERSON", person)
@@ -891,6 +938,8 @@ func _on_native_ship_state(ship: Dictionary) -> void:
 	if dock == 0:
 		_colony_return_armed = false
 	_last_native_dock = dock
+	if is_instance_valid(player):
+		player.use_native_dock_state(dock)
 	if is_instance_valid(exterior_ship_visual):
 		exterior_ship_visual.rotation.y = native_heading_to_godot_yaw(int(ship["heading"]))
 	if dock != 0:
@@ -1003,6 +1052,7 @@ func _on_native_snapshot(frame: Dictionary) -> void:
 		native_markers.add_child(marker)
 
 func _exit_tree() -> void:
+	_flush_native_visual_evidence()
 	if native_session != null:
 		native_session.stop("Native client closed")
 	if native_player_session != null:
@@ -1019,6 +1069,9 @@ func _process(delta: float) -> void:
 	if native_station_session != null:
 		native_station_session.poll()
 	_refresh_interaction_prompt()
+	if not _native_visual_evidence_buffer.is_empty() and \
+			Time.get_ticks_msec() - _last_visual_evidence_flush_ms >= NATIVE_EVIDENCE_FLUSH_INTERVAL_MS:
+		_flush_native_visual_evidence()
 
 	_fps_accumulator += delta
 	if _fps_accumulator >= 0.5 and is_instance_valid(fps_label):
