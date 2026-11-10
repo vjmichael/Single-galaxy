@@ -23,7 +23,13 @@ var status_label: Label
 var interaction_label: Label
 var retry_station_button: Button
 var fps_label: Label
+var primary_speed_label: Label
 var native_label: Label
+# F3 controls visual engineering details only; C++ observer, owner, native
+# receipts, SQLite and telemetry collection remain active when hidden.
+var _show_technical_details := false
+# Used only to smooth an already confirmed original WALK displacement.
+var _station_visual_pose_seen := false
 var ship_label: Label
 var station_space: Node3D
 var ship_space: Node3D
@@ -104,6 +110,7 @@ func _ready() -> void:
 	_show_native_location(true) # station first; only native PERSON/POSE chooses later
 	_build_player()
 	_build_hud()
+	_apply_technical_hud()
 	# Native world observations are optional. The local character is NOT synchronized.
 	native_markers = Node3D.new()
 	native_markers.name = "NativeReadOnlyContacts_NOT_COLLISIONS"
@@ -443,6 +450,33 @@ static func native_heading_to_godot_yaw(heading: int) -> float:
 	# Original yaw 0 = +X; 90 = +native Y = -Godot Z.
 	return deg_to_rad(float(heading % 360))
 
+func _toggle_technical_details() -> void:
+	_show_technical_details = not _show_technical_details
+	_apply_technical_hud()
+
+func _apply_technical_hud() -> void:
+	if is_instance_valid(scope_label):
+		scope_label.visible = _show_technical_details
+	if is_instance_valid(ship_label):
+		ship_label.visible = _show_technical_details
+	if is_instance_valid(native_label):
+		# Native authorization failures are important gameplay warnings.
+		var msg: String = native_label.text.to_lower()
+		var warning: bool = (msg.contains("denied") or msg.contains("refused")
+			or msg.contains("rejected") or msg.contains("failed")
+			or msg.contains("unavailable") or msg.contains("error"))
+		native_label.visible = _show_technical_details or warning
+	if is_instance_valid(fps_label):
+		fps_label.visible = _show_technical_details
+	if is_instance_valid(flight_panel):
+		flight_panel.visible = _show_technical_details and (
+			is_instance_valid(space_preview) and space_preview.visible
+			and not _verified_flight_ship.is_empty())
+	if is_instance_valid(primary_speed_label):
+		primary_speed_label.visible = not _show_technical_details and (
+			is_instance_valid(space_preview) and space_preview.visible
+			and not _verified_flight_ship.is_empty())
+
 func _show_native_location(in_station: bool) -> void:
 	# The only callers after genesis are verified native PERSON and POSE frames.
 	# This never relocates a real PlayerPerson or writes a second world.
@@ -464,7 +498,7 @@ func _show_native_location(in_station: bool) -> void:
 				body.collision_layer = 0 if in_station or exterior else 1
 				body.collision_mask = 0 if in_station or exterior else 1
 	if is_instance_valid(flight_panel):
-		flight_panel.visible = not in_station and not _verified_flight_ship.is_empty()
+		flight_panel.visible = not in_station and not _verified_flight_ship.is_empty() and _show_technical_details
 	if is_instance_valid(space_preview):
 		space_preview.visible = exterior
 		if exterior and is_instance_valid(player):
@@ -475,6 +509,7 @@ func _show_native_location(in_station: bool) -> void:
 	if is_instance_valid(exterior_camera) and is_instance_valid(player) and is_instance_valid(player.camera):
 		exterior_camera.current = exterior
 		player.camera.current = not exterior
+	_apply_technical_hud()
 
 func _build_player() -> void:
 	player = CharacterBody3D.new()
@@ -505,7 +540,7 @@ func _build_hud() -> void:
 	contents.add_theme_constant_override("separation", 4)
 	panel.add_child(contents)
 	var title := Label.new()
-	title.text = "SINGLE-GALAXY  |  COLONY / DEPARTURES"
+	title.text = "SINGLE-GALAXY  |  COLONY / DEPARTURES  |  F3 DETAILS"
 	title.add_theme_font_size_override("font_size", 17)
 	contents.add_child(title)
 	scope_label = Label.new()
@@ -521,6 +556,11 @@ func _build_hud() -> void:
 	status_label.text = "COLONY > DOCK > SPACE | WASD on foot | E board | auto pilot | 3rd-person ship"
 	status_label.add_theme_font_size_override("font_size", 12)
 	contents.add_child(status_label)
+	primary_speed_label = Label.new()
+	primary_speed_label.name = "PlayerSpeedReadout"
+	primary_speed_label.text = ""
+	primary_speed_label.visible = false
+	contents.add_child(primary_speed_label)
 	for line in [scope_label, native_label, ship_label, status_label]:
 		line.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	retry_station_button = Button.new()
@@ -713,6 +753,10 @@ func _advance_native_handoff() -> void:
 		player.use_native_authority(_player_session_autoconnect)
 
 func _unhandled_input(event: InputEvent) -> void:
+	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_F3:
+		_toggle_technical_details()
+		get_viewport().set_input_as_handled()
+		return
 	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_F11:
 		# A deliberate operator action: capture only the game's Godot viewport,
 		# never the Windows desktop or any other application.
@@ -919,6 +963,7 @@ func _flush_native_visual_evidence() -> void:
 
 func _on_native_station_person(person: Dictionary) -> void:
 	_record_native_projection("PERSON", person)
+	var was_on_foot := last_station_player_state == 4
 	last_station_player_state = int(person["state"])
 	_station_connection_failure = ""
 	if is_instance_valid(retry_station_button):
@@ -931,8 +976,13 @@ func _on_native_station_person(person: Dictionary) -> void:
 	if is_instance_valid(player):
 		player.use_native_ship_custody(last_station_player_state == 0)
 		player.use_native_seat(false)
-		player.global_position = Vector3(float(person["x_mm"]) / 1000.0, AVATAR_CENTER_HEIGHT_M,
-			float(person["z_mm"]) / 1000.0)
+		# Apply only ORIGINAL C++-acknowledged coordinates, no Godot prediction.
+		# The camera alone eases between successive small confirmed steps.
+		player.apply_native_station_pose(
+			Vector3(float(person["x_mm"]) / 1000.0, AVATAR_CENTER_HEIGHT_M,
+				float(person["z_mm"]) / 1000.0),
+			last_station_player_state == 4 and was_on_foot and _station_visual_pose_seen)
+		_station_visual_pose_seen = last_station_player_state == 4
 	if is_instance_valid(ship_label):
 		ship_label.text = "STATION #%d | %s | available owned ship #%d | position (%.2f, %.2f)m" % [
 			int(person["station"]), "ON FOOT" if int(person["state"]) == 4 else "ABOARD SHIP",
@@ -1021,6 +1071,12 @@ func _on_native_ship_state(ship: Dictionary) -> void:
 		int(ship["ship"]), states[dock], int(ship["heading"]),
 		float(ship["x_mm"]) / 1000.0, float(ship["y_mm"]) / 1000.0,
 		float(ship["z_mm"]) / 1000.0]
+	if is_instance_valid(primary_speed_label):
+		var speed: float = Vector3(float(ship["vx"]), float(ship["vy"]),
+			float(ship["vz"])).length()
+		primary_speed_label.text = "SPEED %.0f mm/tick  |  HEADING %d°" % [
+			speed, int(ship["heading"])]
+	_apply_technical_hud()
 
 func _on_native_asteroid_contact(contact: Dictionary) -> void:
 	# Real original ship snapshot, never a client-spawned resource.
