@@ -45,8 +45,15 @@ checks = {
         and '_schedule_native_handoff("ship", exiting_pid)' in main
         and "last_station_player_state == 0 and _player_session_autoconnect" in main
         and "SG_FP3D_CI_AUTOSTART" in auto_start_smoke
-        and "12 admitted WALK" in auto_start_smoke
-        and "same SQLite saved-boarded restart" in auto_start_smoke
+        and "for index in range(12):" in auto_start_smoke
+        and 'game.native_station_session.interact_hangar()' in auto_start_smoke
+        and 'Callable(self, "_ship_ready")' in auto_start_smoke
+        and 'Callable(self, "_colony_returned")' in auto_start_smoke
+        and 'PackedStringArray(["UND"])' in auto_start_smoke
+        and 'PackedStringArray(["DCK"])' in auto_start_smoke
+        and "func _exit_docked_ship_after_verified_station_person()" in main
+        and "_colony_return_pending" in main
+        and "_colony_return_armed" in main
     ),
     "unexpected-host-exit-writes-bounded-diagnostic-not-world": (
         "func _unexpected_native_exit()" in station_client
