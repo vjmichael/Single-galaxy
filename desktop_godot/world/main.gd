@@ -8,6 +8,7 @@ const NATIVE_PLAYER_SESSION := preload("res://world/native_player_session.gd")
 const NATIVE_STATION_SESSION := preload("res://world/native_station_session.gd")
 const REFINERY_TERMINAL_UI := preload("res://world/refinery_terminal_ui.gd")
 const FLIGHT_INSTRUMENTS := preload("res://world/native_flight_instruments.gd")
+const INTERACTION_PROMPTS := preload("res://world/interaction_prompts.gd")
 const MONOCHROME := Color(0.76, 0.76, 0.76, 1.0)
 # Visual capsule center for 1.75 m tall collider; original C++ X/Z unchanged.
 const AVATAR_CENTER_HEIGHT_M := 0.90
@@ -15,6 +16,7 @@ var material: StandardMaterial3D
 var player # assigned CharacterBody3D with runtime PlayerController.gd; signals are script-defined
 var scope_label: Label
 var status_label: Label
+var interaction_label: Label
 var fps_label: Label
 var native_label: Label
 var ship_label: Label
@@ -208,7 +210,12 @@ func _build_objects() -> void:
 	var tile := BoxMesh.new()
 	tile.size = Vector3(1.2, 0.015, 1.2)
 	hatch.mesh = tile
-	hatch.material_override = material
+	# Make the real native (0,0) boarding threshold visible against the
+	# monochrome ship hull. This mesh is NON-COLLIDING and cannot authorize E.
+	var hatch_color := StandardMaterial3D.new()
+	hatch_color.albedo_color = Color(0.08, 0.89, 0.96, 1.0)
+	hatch_color.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	hatch.material_override = hatch_color
 	hatch.position = Vector3(0.0, 0.02, 0.0)
 	_geometry_parent.add_child(hatch)
 
@@ -325,8 +332,10 @@ func _build_hud() -> void:
 	var panel := PanelContainer.new()
 	panel.position = Vector2(15, 15)
 	panel.custom_minimum_size = Vector2(680, 72)
+	panel.size = Vector2(680, 72)
 	hud.add_child(panel)
 	var contents := VBoxContainer.new()
+	contents.custom_minimum_size = Vector2(650, 0)
 	panel.add_child(contents)
 	var title := Label.new()
 	title.text = "SINGLE-GALAXY | STANDALONE GRAYBOX FPS 0.0.1"
@@ -336,10 +345,10 @@ func _build_hud() -> void:
 	scope_label.text = "LOCAL MOVEMENT TEST ONLY — NOT CONNECTED TO NATIVE GALAXY"
 	contents.add_child(scope_label)
 	status_label = Label.new()
-	status_label.text = "H station, E board/exit | R refinery | P cockpit, E sit | WASD walk | V exterior | B brake, G dock | F11 capture viewport"
+	status_label.text = "H native station | WASD walk | E interact | P cockpit | U undock | G dock | F11 screenshot"
 	contents.add_child(status_label)
 	native_label = Label.new()
-	native_label.text = "NATIVE: H enters station player test. Walk toward marked hatch (0,0), E boards. P switches to ship cockpit."
+	native_label.text = "NATIVE: Press H to connect. Board at the cyan hatch marker, not the white hull."
 	contents.add_child(native_label)
 	asteroid_label = Label.new()
 	asteroid_label.text = "ASTEROID: awaiting verified original ship contact"
@@ -353,6 +362,11 @@ func _build_hud() -> void:
 	ship_label = Label.new()
 	ship_label.text = "SHIP: native physical state not yet verified"
 	contents.add_child(ship_label)
+	# Long C++ status/flight frames must wrap into separate rows, rather
+	# than overwrite each other on smaller physical Windows displays.
+	for line in [scope_label, status_label, native_label, asteroid_label,
+			flight_instrument_label, ship_label]:
+		line.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	fps_label = Label.new()
 	fps_label.position = Vector2(16, 105)
 	fps_label.add_theme_font_size_override("font_size", 15)
@@ -362,8 +376,52 @@ func _build_hud() -> void:
 	reticle.add_theme_font_size_override("font_size", 25)
 	reticle.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
 	hud.add_child(reticle)
+	# Read-only world-state action guidance; separate from top-left diagnostics.
+	# Interaction never happens in this widget; E still flows through the
+	# protected native person/ship command path and C++ authorization.
+	var prompt := PanelContainer.new()
+	prompt.name = "InteractionPrompt"
+	prompt.set_anchors_preset(Control.PRESET_CENTER_BOTTOM)
+	prompt.offset_left = -320.0
+	prompt.offset_right = 320.0
+	prompt.offset_top = -100.0
+	prompt.offset_bottom = -42.0
+	prompt.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var prompt_style := StyleBoxFlat.new()
+	prompt_style.bg_color = Color(0.04, 0.09, 0.14, 0.94)
+	prompt_style.border_color = Color(0.08, 0.89, 0.96, 0.9)
+	prompt_style.set_border_width_all(2)
+	prompt_style.set_corner_radius_all(8)
+	prompt_style.set_content_margin_all(10.0)
+	prompt.add_theme_stylebox_override("panel", prompt_style)
+	hud.add_child(prompt)
+	interaction_label = Label.new()
+	interaction_label.name = "InteractionAction"
+	interaction_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	interaction_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	interaction_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	interaction_label.add_theme_font_size_override("font_size", 18)
+	interaction_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	interaction_label.text = "Press H — Connect to native station before boarding"
+	prompt.add_child(interaction_label)
 	refinery_terminal = REFINERY_TERMINAL_UI.new()
 	hud.add_child(refinery_terminal)
+
+func _refresh_interaction_prompt() -> void:
+	if not is_instance_valid(interaction_label):
+		return
+	var station_connected: bool = native_station_session != null and native_station_session.is_active()
+	var ship_connected: bool = native_player_session != null and native_player_session.is_active()
+	var person: Dictionary = {}
+	if station_connected:
+		person = native_station_session._person
+	var seated: bool = is_instance_valid(player) and bool(player.native_seated)
+	var display: String = INTERACTION_PROMPTS.hint(
+		station_connected, person, ship_connected, seated,
+		_last_native_dock, not _handoff_target.is_empty(),
+		INTERACTION_PROMPTS.action_key("fps_inspect", "E"))
+	if interaction_label.text != display:
+		interaction_label.text = display
 
 func _on_inspected(display_name: String) -> void:
 	status_label.text = "Inspected: " + display_name + " (prototype only; no native action)"
@@ -766,6 +824,7 @@ func _process(delta: float) -> void:
 		native_player_session.poll()
 	if native_station_session != null:
 		native_station_session.poll()
+	_refresh_interaction_prompt()
 
 	_fps_accumulator += delta
 	if _fps_accumulator >= 0.5 and is_instance_valid(fps_label):
