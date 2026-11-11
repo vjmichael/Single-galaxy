@@ -10143,6 +10143,8 @@ bool PersistentWorld::queue_npc_station_docking(
     PlayerId owner,EntityId ship,std::uint64_t pilot,
     EntityId station,std::uint64_t order_id,
     NpcFlightPurpose purpose,FailPoint fail){
+    if(has_named_crew_on_station(world_,ship) ||
+       world_.has_original_station_guest_ashore(ship))return false;
     auto next=world_;
     if(!next.queue_npc_station_docking(
         owner,ship,pilot,station,order_id,purpose))return false;
