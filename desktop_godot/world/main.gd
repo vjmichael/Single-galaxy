@@ -11,6 +11,7 @@ const FLIGHT_INSTRUMENTS := preload("res://world/native_flight_instruments.gd")
 const STATION_NAV := preload("res://world/native_station_navigation.gd")
 const INTERACTION_PROMPTS := preload("res://world/interaction_prompts.gd")
 const COLONY_DOCK_LAYOUT := preload("res://world/colony_dock_layout.gd")
+const COLONY_POPULATION_LOD := preload("res://world/dock_population_lod.gd")
 const PHYSICAL_TRACE := preload("res://world/physical_acceptance_diagnostics.gd")
 const WORLD_RESET := preload("res://world/world_reset_manager.gd")
 const INDUSTRIAL_SHIP := preload("res://world/industrial_ship_design.gd")
@@ -73,6 +74,9 @@ var native_session
 var native_player_session
 var native_station_session
 var refinery_terminal
+var _colony_population_visual: Node3D
+var _population_requested := false
+var _last_population_station := -1
 var station_test_save_selected := false
 var last_station_player_state := -1
 # One SQLite world has only one native writer. Wait for the old child to
@@ -134,6 +138,8 @@ func _ready() -> void:
 	# Procedural, visual-only colony -> dock -> berth transition. Native
 	# station-person coordinates, SQLite ownership and boarding are unchanged.
 	COLONY_DOCK_LAYOUT.build(station_space)
+	_colony_population_visual = COLONY_POPULATION_LOD.new()
+	station_space.add_child(_colony_population_visual)
 	INDUSTRIAL_SHIP.build_docked(station_space.get_node("SpacefaringDock") as Node3D)
 	ship_space = Node3D.new()
 	ship_space.name = "ShipInterior_Prototype"
@@ -174,6 +180,7 @@ func _ready() -> void:
 	native_station_session = NATIVE_STATION_SESSION.new()
 	native_station_session.person_received.connect(_on_native_station_person)
 	native_station_session.refinery_received.connect(_on_native_refinery_state)
+	native_station_session.colony_population_received.connect(_on_native_colony_population)
 	native_station_session.status_changed.connect(_on_native_station_status)
 	native_station_session.connection_changed.connect(_on_native_station_connection)
 	refinery_terminal.refine_requested.connect(_on_native_refine_requested)
@@ -1178,9 +1185,25 @@ func _unhandled_input(event: InputEvent) -> void:
 			native_session.start()
 		get_viewport().set_input_as_handled()
 
+func _on_native_colony_population(snapshot: Dictionary) -> void:
+	# The only census comes from original C++ named NPC custody; capped
+	# display batches do NOT create a second simulation of million residents.
+	if native_station_session == null or not native_station_session.is_active() or \
+			last_station_player_state != 4:
+		return
+	var station := int(native_station_session._person.get("station",-1))
+	if is_instance_valid(_colony_population_visual):
+		_colony_population_visual.show_source_counts(snapshot,station)
+	if is_instance_valid(refinery_terminal):
+		refinery_terminal.set_dock_staff_observation(snapshot)
+
 func _on_native_station_connection(connected: bool) -> void:
 	if not connected:
 		_hide_refinery_terminal()
+		_last_population_station = -1
+		_population_requested = false
+		if is_instance_valid(_colony_population_visual):
+			_colony_population_visual.clear()
 	if is_instance_valid(retry_station_button) and connected:
 		retry_station_button.visible = false
 	if is_instance_valid(player):
@@ -1362,6 +1385,12 @@ func _on_native_station_person(person: Dictionary) -> void:
 	_record_native_projection("PERSON", person)
 	var was_on_foot := last_station_player_state == 4
 	last_station_player_state = int(person["state"])
+	if last_station_player_state != 4 or \
+			int(person.get("station",-1)) != _last_population_station:
+		_population_requested = false
+		_last_population_station = -1
+		if is_instance_valid(_colony_population_visual):
+			_colony_population_visual.clear()
 	_station_connection_failure = ""
 	if is_instance_valid(retry_station_button):
 		retry_station_button.visible = false
@@ -1753,6 +1782,15 @@ func _process(delta: float) -> void:
 		native_player_session.poll()
 	if native_station_session != null:
 		native_station_session.poll()
+		# One requested census per visited colony, never one NPC allocation
+		# or full-population scan per frame. The host itself caps work at
+		# 4096 source records and Godot caps meshes to 24+8 proxies.
+		if last_station_player_state == 4 and not _population_requested and \
+				native_station_session.is_active() and \
+				int(native_station_session._person.get("station",-1)) > 0:
+			if native_station_session.request_colony_population():
+				_population_requested = true
+				_last_population_station = int(native_station_session._person["station"])
 	if not _world_reset_pending and not _world_reset_blocked:
 		_ensure_native_pilot_role()
 		_refresh_interaction_prompt()
