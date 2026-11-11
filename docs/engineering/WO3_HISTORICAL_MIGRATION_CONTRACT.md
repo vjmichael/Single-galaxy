@@ -6,7 +6,7 @@ Decision date: 2026-11-10. Applies to the original Single-Galaxy native
 ## Source-derived compatibility boundary
 
 The source-pinned, compiler-repaired pre-v109 kernel commit
-`19c58bca0b75a6899eb0a38cb79e0e0a77a37f3b` (2026-11-10) has the
+`23bad9be38936d61b8c29b5be5f3900bec87fa6d` (2026-11-10) has the
 following demonstrated behavior:
 
 - Its original native planetary test saves the actual SQLite command journal

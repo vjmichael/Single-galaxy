@@ -15,7 +15,7 @@ import os
 from pathlib import Path
 import subprocess
 
-SOURCE_COMMIT = "19c58bca0b75a6899eb0a38cb79e0e0a77a37f3b"
+SOURCE_COMMIT = "23bad9be38936d61b8c29b5be5f3900bec87fa6d"
 SOURCE_TEST_BLOB = "6add9dfbf4cbb0a19794abaadd7e699239923e08"
 SOURCE_TEST = "tests/PLAY13D_RegionalFacilitiesTests.cpp"
 CAPTURE_ENV = "SG_WO3_HISTORICAL_CAPTURE_OUTPUT"

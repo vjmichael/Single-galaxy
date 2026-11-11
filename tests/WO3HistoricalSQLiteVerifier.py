@@ -17,7 +17,7 @@ import sqlite3
 import subprocess
 import sys
 
-SOURCE_COMMIT = "19c58bca0b75a6899eb0a38cb79e0e0a77a37f3b"
+SOURCE_COMMIT = "23bad9be38936d61b8c29b5be5f3900bec87fa6d"
 SOURCE_BLOB = "6add9dfbf4cbb0a19794abaadd7e699239923e08"
 SCHEMA = "SG-WO3-HISTORICAL-NATIVE-V85-REPRODUCTION-01"
 
