@@ -9367,7 +9367,9 @@ bool Simulation::queue_npc_station_docking(
     }
     for(const auto& [id,v]:voyages_){
         (void)id;
-        if(v.ferry==ship && (v.status==1 || v.status==3))return false;
+        if(v.ferry==ship && (v.status==1 || v.status==3) &&
+           (purpose!=NpcFlightPurpose::Passenger ||
+            !original_passenger_ferry_safe_to_fly(ship)))return false;
     }
     for(const auto& [key,shuttle]:planetary_shuttles_){
         (void)key;
@@ -9699,9 +9701,21 @@ bool Simulation::begin_native_celestial_transit(
     if(!decision.plan)return false;
     const auto frame=ship_frames_.find(ship);
     if(frame==ship_frames_.end() || frame->second.anchor_body==body)return false;
+    bool authorized_passenger_flight=false;
+    for(const auto& [flight_id,flight]:npc_flight_orders_){
+        (void)flight_id;
+        if(flight.ship==ship && flight.owner==owner &&
+           flight.purpose==NpcFlightPurpose::Passenger &&
+           (flight.phase==NpcFlightPhase::Planned ||
+            flight.phase==NpcFlightPhase::InTransit) &&
+           flight.transit_request==id)
+            authorized_passenger_flight=true;
+    }
     for(const auto& [voyage_id,v]:voyages_){
         (void)voyage_id;
-        if(v.ferry==ship && (v.status==1 || v.status==3))return false;
+        if(v.ferry==ship && (v.status==1 || v.status==3) &&
+           (!authorized_passenger_flight ||
+            !original_passenger_ferry_safe_to_fly(ship)))return false;
     }
     for(const auto& [when,commands]:commands_){
         (void)when;
