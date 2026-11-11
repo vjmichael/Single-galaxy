@@ -43,10 +43,12 @@ public:
         exec("CREATE INDEX IF NOT EXISTS dock05_route_station "
              "ON dock05_route_v1(origin,owner,stage,id)");
         exec("CREATE UNIQUE INDEX IF NOT EXISTS dock05_ferry_active "
-             "ON dock05_route_v1(ferry) WHERE stage NOT IN(6,7,8)");
+             "ON dock05_route_v1(ferry) WHERE stage NOT IN(6,8)");
         exec("CREATE TABLE IF NOT EXISTS dock05_route_people_v1("
              "route INTEGER NOT NULL,npc INTEGER NOT NULL,home INTEGER NOT NULL,"
-             "voyage INTEGER NOT NULL,stage INTEGER NOT NULL DEFAULT 0 "
+             "voyage INTEGER NOT NULL,ordinal INTEGER NOT NULL "
+             "CHECK(ordinal BETWEEN 1 AND 16),"
+             "stage INTEGER NOT NULL DEFAULT 0 "
              "CHECK(stage BETWEEN 0 AND 5),"
              "PRIMARY KEY(route,npc),UNIQUE(voyage))");
         exec("CREATE INDEX IF NOT EXISTS dock05_people_state "
@@ -184,11 +186,13 @@ public:
             const auto route=static_cast<std::uint64_t>(sqlite3_last_insert_rowid(db_));
             if(!route || route>0x00000000001FFFFFULL)
                 throw std::runtime_error("bounded ferry route identity exhausted");
+            std::uint64_t ordinal=0;
             for(const auto& t:tickets){
                 dock::Statement person(db_,"INSERT INTO dock05_route_people_v1 "
-                    "(route,npc,home,voyage) VALUES(?,?,?,?)");
+                    "(route,npc,home,voyage,ordinal) VALUES(?,?,?,?,?)");
                 person.bind(1,route);person.bind(2,t.npc);
-                person.bind(3,t.home);person.bind(4,t.voyage);person.next();
+                person.bind(3,t.home);person.bind(4,t.voyage);
+                person.bind(5,++ordinal);person.next();
             }
             exec("COMMIT");return route;
         }catch(...){exec("ROLLBACK");throw;}
@@ -277,15 +281,15 @@ public:
     // recovered; missing/ambiguous evidence becomes a held request only.
     void reconcile(PersistentWorld& world,EntityId origin,PlayerId owner){
         dock::Statement q(db_,"SELECT p.route,p.npc,p.home,p.voyage,p.stage,"
-               "r.receiver,r.destination FROM dock05_route_people_v1 p "
+               "r.receiver,r.destination,p.ordinal FROM dock05_route_people_v1 p "
                "JOIN dock05_route_v1 r ON r.id=p.route "
                "WHERE r.origin=? AND r.owner=? AND p.stage IN(1,3)");
         q.bind(1,origin);q.bind(2,owner);
-        struct Pending {std::uint64_t route,npc,home,voyage,stage,receiver,station;};
+        struct Pending {std::uint64_t route,npc,home,voyage,stage,receiver,station,ordinal;};
         std::vector<Pending> list;
         while(q.next()==SQLITE_ROW)
             list.push_back({q.number(0),q.number(1),q.number(2),q.number(3),
-                            q.number(4),q.number(5),q.number(6)});
+                            q.number(4),q.number(5),q.number(6),q.number(7)});
         for(const auto& p:list){
             if(p.stage==1){
                 if(world.world().completed_voyage_matches(
@@ -299,7 +303,7 @@ public:
                 const auto it=world.world().npc_records().find(p.npc);
                 if(it!=world.world().npc_records().end() &&
                    it->second.location==p.station &&
-                   visitor_proven(visitor_receipt(p.route,p.npc),
+                   visitor_proven(visitor_receipt(p.route,p.ordinal),
                                   p.npc,p.voyage,p.receiver,p.station)){
                     set_person(p.route,p.npc,3,4);
                 }else{
@@ -340,17 +344,12 @@ private:
         return 0xD050000000ULL | (route<<3)|3ULL;
     }
     static std::uint64_t disembark_command(std::uint64_t route,
-                                            std::uint64_t npc){
-        // Stable exact route+visitor pair must fit within original signed
-        // SQLite command namespace. Route IDs capped; original NPC IDs may
-        // exceed a 16-bit suffix, so a row-specific durable ID is needed.
-        (void)npc;
-        return 0x5800000000000000ULL|(route<<8)|1ULL;
+                                            std::uint64_t ordinal){
+        return 0x5800000000000000ULL|(route<<8)|(ordinal*2+1);
     }
     static std::uint64_t visitor_receipt(std::uint64_t route,
-                                         std::uint64_t npc){
-        (void)npc;
-        return 0x5900000000000000ULL|(route<<8)|2ULL;
+                                         std::uint64_t ordinal){
+        return 0x5900000000000000ULL|(route<<8)|(ordinal*2+2);
     }
     void exec(const char* sql)const{
         char* e=nullptr;
@@ -361,7 +360,7 @@ private:
     }
     bool has_active_ferry(EntityId ferry)const{
         dock::Statement q(db_,"SELECT 1 FROM dock05_route_v1 "
-            "WHERE ferry=? AND stage NOT IN(6,7,8) LIMIT 1");
+            "WHERE ferry=? AND stage NOT IN(6,8) LIMIT 1");
         q.bind(1,ferry);return q.next()==SQLITE_ROW;
     }
     Route load_route(std::uint64_t route)const{
@@ -437,7 +436,7 @@ private:
            !sim.life_support(j.receiver)){
             hold_route(j.id);return false;
         }
-        dock::Statement p(db_,"SELECT npc,home,voyage,stage "
+        dock::Statement p(db_,"SELECT npc,home,voyage,stage,ordinal "
                               "FROM dock05_route_people_v1 "
                               "WHERE route=? AND stage IN(0,2) ORDER BY npc LIMIT 1");
         p.bind(1,j.id);
@@ -451,7 +450,7 @@ private:
             hold_route(j.id);return false;
         }
         const auto npc=p.number(0),home=p.number(1),voyage=p.number(2),
-                   state=p.number(3);
+                   state=p.number(3),ordinal=p.number(4);
         if(state==0){
             const auto it=sim.npc_records().find(npc);
             if(it==sim.npc_records().end() ||
@@ -461,7 +460,7 @@ private:
                !sim.original_passenger_ferry_safe_to_fly(j.ferry)) {
                 hold_route(j.id);return false;
             }
-            const auto cmd=disembark_command(j.id,npc);
+            const auto cmd=disembark_command(j.id,ordinal);
             set_person(j.id,npc,0,1);
             Command c{};
             c.id=cmd;c.sequence=cmd;c.execute_tick=sim.tick()+1;
@@ -483,7 +482,7 @@ private:
             if(!sim.original_completed_ferry_guest(npc,j.receiver,voyage)) {
                 hold_route(j.id);return false;
             }
-            const auto receipt=visitor_receipt(j.id,npc);
+            const auto receipt=visitor_receipt(j.id,ordinal);
             set_person(j.id,npc,2,3);
             if(!world.station_visitor_transfer(j.owner,j.receiver,
                     j.destination,npc,voyage,true,receipt)){
