@@ -7,6 +7,9 @@ signal ship_state_received(ship: Dictionary)
 signal asteroid_contact_received(contact: Dictionary)
 signal status_changed(message: String)
 signal connection_changed(connected: bool)
+# Read-only telemetry for an operator-initiated physical acceptance session.
+signal flight_command_sent(request_id: int, verb: String)
+signal flight_command_result(request_id: int, verb: String, disposition: String, elapsed_ms: int, outcome: int)
 
 const MAX_LINE := 256
 var _pid := -1
@@ -26,6 +29,7 @@ var _flight_cycle := 0
 var _seat_sequence := -1
 var _seated := false
 var _pending_kind := ""
+var _pending_flight_verb := ""
 var _generation := -1
 var _tick := -1
 var _next_request := 1
@@ -101,6 +105,7 @@ func start(save_override: String = "") -> void:
 	_seat_sequence = -1
 	_seated = false
 	_pending_kind = ""
+	_pending_flight_verb = ""
 	_generation = -1
 	_tick = -1
 	_next_request = 1
@@ -148,6 +153,10 @@ func _accept_line(line: String) -> void:
 			return
 		var request := int(parts[2])
 		if request == _pending:
+			if _pending_kind == "FLIGHT":
+				flight_command_result.emit(request, _pending_flight_verb, "DENY",
+					maxi(0, Time.get_ticks_msec() - _last_send_msec), -1)
+				_pending_flight_verb = ""
 			_pending = 0
 			_pending_kind = ""
 		_status("NATIVE DENIED action #%d: %s; original game did not accept it" % [request, parts[3]])
@@ -251,10 +260,15 @@ func _accept_ship(parts: PackedStringArray) -> void:
 			command_id < 1152921504606846976 or tick <= _tick or generation <= _generation:
 			stop("Unrequested or stale native flight acknowledgement")
 			return
+		var done_verb := _pending_flight_verb
+		var elapsed_ms := maxi(0, Time.get_ticks_msec() - _last_send_msec)
 		_pending = 0
 		_pending_kind = ""
+		_pending_flight_verb = ""
 		_tick = tick
 		_generation = generation
+		flight_command_result.emit(request, done_verb, "ACK" if outcome == 0 else "OUTCOME",
+			elapsed_ms, outcome)
 	_last_ship_telemetry_request = request
 	_dock_state = dock
 	ship_state_received.emit({"ship":ship,"command_id":command_id,"outcome":outcome,
@@ -345,11 +359,13 @@ func submit_flight(actions: PackedStringArray) -> void:
 	_next_request += 1
 	_pending = req
 	_pending_kind = "FLIGHT"
+	_pending_flight_verb = verb
 	_last_send_msec = now
 	if not _stdout.store_line("FLIGHT|%d|%d|%d|%s" % [_session,req,_seat_sequence,verb]):
 		stop("Native flight command pipe write failed; world state must be reverified")
 		return
 	_stdout.flush()
+	flight_command_sent.emit(req, verb)
 
 func submit_motion(heading: Vector3) -> void:
 	if not _active or _session <= 0 or _pending != 0 or _seated:
@@ -390,6 +406,10 @@ func toggle_seat() -> void:
 	_stdout.flush()
 
 func stop(message: String = "Native player stopped; last committed pose retained", graceful: bool = false) -> void:
+	if _pending != 0 and _pending_kind == "FLIGHT":
+		flight_command_result.emit(_pending, _pending_flight_verb, "INTERRUPTED",
+			maxi(0, Time.get_ticks_msec() - _last_send_msec), -1)
+	_pending_flight_verb = ""
 	if _pid > 0:
 		_last_shutdown_pid = _pid
 		_last_shutdown_msec = Time.get_ticks_msec()
