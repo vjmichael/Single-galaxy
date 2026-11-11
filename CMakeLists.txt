@@ -2353,3 +2353,12 @@ if(BUILD_TESTING)
       ${CMAKE_CURRENT_BINARY_DIR}/group3_v126_fitting.sqlite)
   set_tests_properties(galaxy_group3_original_fitted_mining PROPERTIES TIMEOUT 120)
 endif()
+
+# GROUP3-B read-only capped 8.5km original-space optical asteroid survey.
+if(BUILD_TESTING)
+  add_executable(galaxy_group3_asteroid_survey_tests tests/Group3AsteroidSurveyTests.cpp)
+  target_link_libraries(galaxy_group3_asteroid_survey_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_group3_original_asteroid_survey
+    COMMAND galaxy_group3_asteroid_survey_tests)
+  set_tests_properties(galaxy_group3_original_asteroid_survey PROPERTIES TIMEOUT 50)
+endif()

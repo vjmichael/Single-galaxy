@@ -6,6 +6,9 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
+concurrency:
+  group: group3-native-exact-head
+  cancel-in-progress: true
 jobs:
   group3-native:
     name: Group3-A ${{ matrix.os }} original SQLite module/mass custody
@@ -51,26 +54,51 @@ jobs:
         run: |
           set -euo pipefail
           cmake -S . -B build/group3 -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON -DBUILD_BENCHMARKS=OFF
-          cmake --build build/group3 --parallel 2 --target galaxy_group3_fitted_mining_tests
+          cmake --build build/group3 --parallel 2 --target galaxy_group3_fitted_mining_tests galaxy_group3_asteroid_survey_tests
       - name: Configure + compile true native kernel and regression (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
           cmake -S . -B build/group3 -G "Visual Studio 17 2022" -A x64 -DBUILD_TESTING=ON -DBUILD_BENCHMARKS=OFF "-DCMAKE_TOOLCHAIN_FILE=$env:SG_TOOLCHAIN" -DVCPKG_TARGET_TRIPLET=x64-windows
           if($LASTEXITCODE -ne 0){throw 'MSVC configuration failure'}
-          cmake --build build/group3 --config Release --parallel 2 --target galaxy_group3_fitted_mining_tests
+          cmake --build build/group3 --config Release --parallel 2 --target galaxy_group3_fitted_mining_tests galaxy_group3_asteroid_survey_tests
           if($LASTEXITCODE -ne 0){throw 'MSVC compilation failure'}
       - name: Real SQLite module fitting finite mining and restart (Linux)
         if: runner.os == 'Linux'
         shell: bash
         run: |
           set -euo pipefail
-          ctest --test-dir build/group3 --no-tests=error -R '^galaxy_group3_original_fitted_mining$' --output-on-failure --output-junit group3-linux.xml --timeout 120
+          ctest --test-dir build/group3 --no-tests=error -R '^galaxy_group3_original_(fitted_mining|asteroid_survey) --output-on-failure --output-junit group3-linux.xml --timeout 120
       - name: Real SQLite module fitting finite mining and restart (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
           ctest --test-dir build/group3 -C Release --no-tests=error -R '^galaxy_group3_original_fitted_mining$' --output-on-failure --output-junit group3-windows.xml --timeout 120
+          if($LASTEXITCODE -ne 0){throw 'Original v126 module/ore conservation test failed'}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: group3-native-${{ matrix.os }}-${{ github.sha }}
+          path: |
+            build/group3/Testing/Temporary/LastTest.log
+            build/group3/group3-*.xml
+          if-no-files-found: warn
+ --output-on-failure --output-junit group3-linux.xml --timeout 120
+      - name: Real SQLite module fitting finite mining and restart (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          ctest --test-dir build/group3 -C Release --no-tests=error -R '^galaxy_group3_original_(fitted_mining|asteroid_survey) --output-on-failure --output-junit group3-windows.xml --timeout 120
+          if($LASTEXITCODE -ne 0){throw 'Original v126 module/ore conservation test failed'}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: group3-native-${{ matrix.os }}-${{ github.sha }}
+          path: |
+            build/group3/Testing/Temporary/LastTest.log
+            build/group3/group3-*.xml
+          if-no-files-found: warn
+ --output-on-failure --output-junit group3-windows.xml --timeout 120
           if($LASTEXITCODE -ne 0){throw 'Original v126 module/ore conservation test failed'}
       - uses: actions/upload-artifact@v4
         if: always()
