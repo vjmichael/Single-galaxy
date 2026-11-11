@@ -62,8 +62,10 @@ static int run_host(int argc,char** argv){
   // colony materials model. This is a NEW-WORLD genesis change only.
   // The ship is not gifted a drill or physical refined stock.
   const auto starting_ship=seed.add_colony_ship(kOwner,{0,0},12,8);
-  seed.enable_individual_workforce();
   (void)seed.add_colony_ship(8,{15000,0},8,2);
+  // Native v125 SQLite restore requires a matching durable NPC roster for
+  // EVERY original colony ship. Initialize after both crews exist.
+  seed.enable_individual_workforce();
   // Explicit test-station genesis ONLY: a single persistent finite asteroid.
   // Existing saves ignore this seed. A visual Godot sample never adds ore.
   (void)seed.add_geological_asteroid({25000,0},AsteroidClass::Metallic,10,900);
