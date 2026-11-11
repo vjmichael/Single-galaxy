@@ -287,7 +287,7 @@ func _accept_line(line: String) -> void:
 func _accept_dock(f: PackedStringArray) -> void:
 	# Every status is a response to one local one-use command. Never allow
 	# client forecasts to replace authoritative worker or cargo counts.
-	if f.size() != 15 or f[1] != "1" or _pending_dock_kind.is_empty():
+	if f.size() != 17 or f[1] != "1" or _pending_dock_kind.is_empty():
 		stop("Unrequested dock service receipt")
 		return
 	for i in range(2, 15):
