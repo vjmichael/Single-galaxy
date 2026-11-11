@@ -124,6 +124,25 @@ bool Simulation::station_visitor_transfer(
     person.location=ashore?station:receiver;
     return true;
 }
+bool Simulation::original_completed_ferry_guest(
+    std::uint64_t npc_id,EntityId receiving_ship,std::uint64_t voyage) const {
+    if(!npc_id || !receiving_ship || !voyage)return false;
+    const auto n=npcs_.find(npc_id),v=voyages_.find(voyage);
+    if(n==npcs_.end() || v==voyages_.end() ||
+       v->second.status!=2 || !v->second.origin ||
+       v->second.ferry==receiving_ship ||
+       v->second.destination!=receiving_ship ||
+       !std::binary_search(v->second.passengers.begin(),
+                            v->second.passengers.end(),npc_id) ||
+       n->second.transport_id || n->second.home_ship==receiving_ship ||
+       n->second.assigned_site!=n->second.home_ship)
+        return false;
+    return n->second.location==receiving_ship ||
+           (find(receiving_ship) &&
+            find(receiving_ship)->dock_state==DockState::Docked &&
+            n->second.location==find(receiving_ship)->dock_station);
+}
+
 bool Simulation::has_original_station_guest_ashore(EntityId receiver) const {
     const auto* ship=find(receiver);
     if(!ship || ship->dock_state!=DockState::Docked ||
