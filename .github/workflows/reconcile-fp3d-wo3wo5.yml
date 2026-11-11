@@ -1,0 +1,64 @@
+name: FP3D Group 2 + WO3-WO5 non-destructive reconciliation probe
+
+on:
+  push:
+    branches:
+      - integration/fp3d-group2-wo3wo5-20261110
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fp3d-wo3wo5-merge-probe
+  cancel-in-progress: true
+
+jobs:
+  dry-run-merge:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify immutable source heads and perform genuine Git three-way merge
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p reconciliation-evidence
+          GROUP2=dd86e3547cf2952d696eae27195ff2e0b2af5c64
+          WO=d632ffc265df967da3c159252079787862a186d7
+          git fetch --no-tags origin "$GROUP2" "$WO"
+          test "$(git rev-parse HEAD)" = "$GROUP2" || {
+            echo "This probe must begin from the *unchanged* Group 2 accepted head" >&2
+            exit 1
+          }
+          git config user.name "Single-Galaxy merge probe"
+          git config user.email "merge-probe@users.noreply.github.com"
+          printf 'group2=%s\nwo3_wo5=%s\n' "$GROUP2" "$WO" | tee reconciliation-evidence/sources.txt
+          git merge-base "$GROUP2" "$WO" | tee reconciliation-evidence/merge-base.txt
+          set +e
+          git merge --no-commit --no-ff "$WO" >reconciliation-evidence/merge-output.txt 2>&1
+          result=$?
+          set -e
+          printf 'git_merge_exit=%s\n' "$result" | tee reconciliation-evidence/status.txt
+          git status --porcelain=v1 >reconciliation-evidence/worktree-status.txt
+          git diff --name-only --diff-filter=U >reconciliation-evidence/unmerged-paths.txt
+          cat reconciliation-evidence/merge-output.txt
+          if [ "$result" -ne 0 ]; then
+            echo "Explicit merge conflicts: preserved both accepted branches; no synthetic merge commit." >&2
+            cat reconciliation-evidence/unmerged-paths.txt >&2
+            exit 1
+          fi
+          git diff --check
+          git diff --stat "$GROUP2" >reconciliation-evidence/merge-diff-stat.txt
+          git write-tree | tee reconciliation-evidence/result-tree-sha.txt
+          echo "MERGE CLEAN: not an integration or native acceptance pass; no remote branch was changed."
+      - name: Upload evidence regardless of conflicts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: group2-wo3wo5-merge-probe
+          path: reconciliation-evidence/
+          if-no-files-found: error
