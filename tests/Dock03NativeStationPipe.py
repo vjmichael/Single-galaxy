@@ -36,7 +36,7 @@ def command(child, op, session, request, generation, source, amount=None):
     child.stdin.write(line + "\n")
     child.stdin.flush()
     answer = child.stdout.readline().strip().split("|")
-    check(len(answer) == 17 and answer[:2] == ["DOCK","1"],
+    check(len(answer) == 32 and answer[:2] == ["DOCK","1"],
           f"{op} failed to return an original DOCK/1 receipt: {answer}")
     check(int(answer[2]) == session and int(answer[3]) == request,
           "dock response is from a different original session/request")
@@ -60,12 +60,29 @@ def main(executable):
             status = command(child, "DOCKVIEW",session,1,gen,station)
             check(int(status[7]) == 0, "starter station created fictitious workers")
             gen = int(status[5])
-            hired = command(child,"DOCKASSIGN",session,2,gen,0)
+            time.sleep(0.07)
+            child.stdin.write(f"DOCKDESTS|{session}|2|{gen}|{station}\n")
+            child.stdin.flush()
+            possible=child.stdout.readline().strip().split("|")
+            check(len(possible)>=8 and possible[:2]==["DDEST","1"] and
+                  int(possible[2])==session and int(possible[3])==2,
+                  "invalid original-world receiving colony list")
+            check(int(possible[7])<=4 and
+                  len(possible)==8+int(possible[7])*2,
+                  "receiving station list unbounded or malformed")
+            time.sleep(0.07)
+            child.stdin.write(f"DOCKREGIONS|{session}|3|{gen}|1\n")
+            child.stdin.flush()
+            regional=child.stdout.readline().strip().split("|")
+            check(len(regional)==14 and regional[:2]==["DREG","1"]
+                  and int(regional[2])==session and int(regional[3])==3,
+                  "cold-region source was not conservatively projected")
+            hired = command(child,"DOCKASSIGN",session,4,gen,0)
             check(int(hired[7]) == 1 and int(hired[14]) == 1,
                   "original named ship crew did not physically staff the dock")
             check(int(hired[5]) > gen,"shore transfer lacked original STEP generation")
             gen = int(hired[5])
-            released = command(child,"DOCKRELEASE",session,3,gen,0)
+            released = command(child,"DOCKRELEASE",session,5,gen,0)
             check(int(released[7]) == 0 and int(released[14]) == 2,
                   "dock worker did not physically return to ship")
         finally:
