@@ -7487,6 +7487,38 @@ public:
             if(actual!=declared)
                 throw std::runtime_error("orphaned child berth/arrival records");
         }
+        // DOCK-04: a ship-role NPC temporarily stationed at a physical
+        // docking berth MUST be explained by its own unique original-world
+        // shore-transfer journal, not merely a plausible snapshot location.
+        // Original ferry voyagers have transport IDs and are checked above.
+        {
+            Statement table(db_,"SELECT 1 FROM sqlite_master WHERE type='table' "
+                                 "AND name='sg_dock_worker_moves'");
+            const bool has_moves=table.row();
+            for(const auto& [id,n]:restored.npc_records()){
+                if(n.role!=NpcRole::Ship || n.transport_id ||
+                   n.assigned_site!=n.home_ship ||
+                   n.location==n.home_ship)continue;
+                const auto* berth=restored.find(n.location);
+                if(!berth || berth->type!=EntityType::Station)continue;
+                if(!has_moves)
+                    throw std::runtime_error("shore worker lacks original movement provenance");
+                Statement proof(db_,"SELECT station,ship,direction,generation "
+                                    "FROM sg_dock_worker_moves WHERE npc_id=? "
+                                    "ORDER BY generation DESC LIMIT 1");
+                proof.i64(1,static_cast<sqlite3_int64>(id));
+                if(!proof.row() ||
+                   sqlite3_column_int64(proof.get(),0)!=
+                      static_cast<sqlite3_int64>(n.location) ||
+                   sqlite3_column_int64(proof.get(),1)!=
+                      static_cast<sqlite3_int64>(n.home_ship) ||
+                   sqlite3_column_int(proof.get(),2)!=1 ||
+                   sqlite3_column_int64(proof.get(),3)<1 ||
+                   static_cast<std::uint64_t>(sqlite3_column_int64(proof.get(),3))>generation ||
+                   proof.row())
+                    throw std::runtime_error("original dock worker provenance does not match physical custody");
+            }
+        }
         out.swap(restored);
         return true;
     }
@@ -10178,6 +10210,8 @@ bool PersistentWorld::station_dock_worker_transfer(
                 "station INTEGER NOT NULL,npc_id INTEGER NOT NULL,"
                 "direction INTEGER NOT NULL CHECK(direction IN(1,2)),"
                 "tick INTEGER NOT NULL,generation INTEGER NOT NULL)");
+            run(db,"CREATE INDEX IF NOT EXISTS sg_dock_moves_identity_v1 "
+                   "ON sg_dock_worker_moves(npc_id,generation DESC)");
             Statement record(db,"INSERT INTO sg_dock_worker_moves "
                 "(receipt,owner,ship,station,npc_id,direction,tick,generation) "
                 "VALUES(?,?,?,?,?,?,?,?)");
