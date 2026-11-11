@@ -2,6 +2,6 @@
   "schema": "SG-WORKORDER-GATE-01",
   "task_group": "WO5",
   "pr_number": 92,
-  "source_sha": "d2ebf307ca5b5d5ebd8213a50da9e6d219504e95",
-  "note": "WO3-F real historical native source reproduction — compiler-repaired pre-v109 v108 source commit 19c58bca0b75a6899eb0a38cb79e0e0a77a37f3b; genuine original on-disk v85 journal, SHA-256 attested native binary and SQLite, unchanged production source and original genesis, v86 memory-only legal-ship upgrade, host rejection of fictitious planet residents; independent restart. Run complete 33-test exact-head WO3–WO5 matrix on Windows/Linux; do not claim archived original v86 SQLite or patch legacy production kernel."
+  "source_sha": "3d4493ecc69481e70aa4583bfd5926f2afb0d78a",
+  "note": "Pinned original pre-v109 historical native producer source now 23bad9be38936d61b8c29b5be5f3900bec87fa6d, including actual 2026-11-10 typed-cyber compiler repair, without altering historical source kernel. Capture native v85 SQLite at original committed visitor receipt; attest original native executable and SQLite SHA-256, source test blob, original operation journal+genesis; assert real v86 in-memory migration retains ColonyShip legal homes and denies invented planet homes, independent SQLite restart, full WO3/WO4/WO5 33 CTests on Windows/Ubuntu."
 }
