@@ -60,16 +60,11 @@ with tempfile.TemporaryDirectory() as folder:
     result,contact=send(child,f"FLIGHT|{session}|7|1|UND",session,7)
     assert result[0]=="SHIP" and result[5]=="0" and result[16]=="0",result
     assert contact[0]=="ROCK" and int(contact[7])==rock and int(contact[8])==ore,contact
-    # SURVEY is a read-only original-world optical observation, not mining.
-    # No fitted survey scanner -> rock identity but no exact ore/geology.
-    time.sleep(.07)
-    child.stdin.write(f"SURVEY|{session}|8|1|1\n");child.stdin.flush()
-    survey_head=child.stdout.readline().strip().split("|")
-    assert survey_head[:5]==["SHEAD","1",session,"8",str(ship)] and int(survey_head[7])>=1,survey_head
-    sources=[child.stdout.readline().strip().split("|") for _ in range(int(survey_head[7]))]
-    survey_end=child.stdout.readline().strip().split("|")
-    assert survey_end[:5]==["SEND","1",session,"8",str(ship)] and survey_end[5:7]==survey_head[5:7],survey_end
-    assert any(int(v[7])==rock and int(v[12])==-1 and v[14]=="0" for v in sources),sources
+    # PLAY-11: original 50m geology requires its own separately fitted
+    # powered scanner. Mining drill type 4 is NOT scanner type 1, and the
+    # Godot 8.5km render clip grants no sensor or invented survey row.
+    result,_=send(child,f"SURVEY|{session}|8|1|1",session,8)
+    assert result[0]=="DENY" and result[3]=="no-powered-original-survey-scanner",result
     result,contact=send(child,f"MINE|{session}|9|1|{rock}",session,9)
     assert result[0]=="SHIP" and result[5]!="0" and int(contact[8])==ore,(result,contact)
     req=9
