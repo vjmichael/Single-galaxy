@@ -13,6 +13,9 @@ signal dock_service_requested()
 signal dock_destinations_requested()
 signal dock_route_requested(destination: int, receiver: int)
 signal dock_cancel_requested(route_id: int)
+signal dock_region_source_requested(index: int)
+signal dock_region_bind_requested(index: int, authority_generation: int,
+	checkpoint_revision: int, rate_per_million: int)
 
 var _lots: ItemList
 var _status: Label
@@ -26,6 +29,14 @@ var _destinations: OptionButton
 var _route_button: Button
 var _held_route_button: Button
 var _reviewable_route := 0
+var _region_index := 0
+var _region_total := 0
+var _region_generation := 0
+var _region_revision := 0
+var _region_description: Label
+var _region_rate: OptionButton
+var _region_link: Button
+var _region_next: Button
 var _minerals: Label
 var _refine_button: Button
 var _unload_button: Button
@@ -113,6 +124,36 @@ func _ready() -> void:
 	_held_route_button.disabled = true
 	_held_route_button.pressed.connect(_on_review_pressed)
 	column.add_child(_held_route_button)
+	var regional_title := Label.new()
+	regional_title.text = "REGIONAL POPULATION | LINK ORIGINAL SOURCE"
+	column.add_child(regional_title)
+	var population_row := HBoxContainer.new()
+	column.add_child(population_row)
+	_region_description = Label.new()
+	_region_description.text = "No regional population linked"
+	_region_description.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	column.add_child(_region_description)
+	var find_region := Button.new()
+	find_region.text = "Find population source"
+	find_region.pressed.connect(func(): dock_region_source_requested.emit(1))
+	population_row.add_child(find_region)
+	_region_next = Button.new()
+	_region_next.text = "Next source"
+	_region_next.disabled = true
+	_region_next.pressed.connect(_on_next_region)
+	population_row.add_child(_region_next)
+	_region_rate = OptionButton.new()
+	_region_rate.add_item("No travel forecast")
+	_region_rate.set_item_metadata(0,0)
+	for number in [1,10,100,1000]:
+		_region_rate.add_item("%d potential travelers per million" % number)
+		_region_rate.set_item_metadata(_region_rate.item_count-1,number)
+	column.add_child(_region_rate)
+	_region_link = Button.new()
+	_region_link.text = "Link selected population to THIS colony"
+	_region_link.disabled = true
+	_region_link.pressed.connect(_on_link_region)
+	column.add_child(_region_link)
 	var lot_heading := Label.new()
 	lot_heading.text = "This colony's ore lots | local owner hangar"
 	column.add_child(lot_heading)
@@ -179,6 +220,10 @@ func set_dock_status(snapshot: Dictionary) -> void:
 	_dock_status.text += "\nReal passengers aboard/in transit: %d | reached destination walkway: %d" % [
 		int(snapshot.get("passengers_travelling",0)),
 		int(snapshot.get("visitors_arrived",0))]
+	if is_instance_valid(_region_description) and bool(snapshot.get("regional_source_bound",false)):
+		_region_description.text = "Verified population: %d | capacity-limited travel interest: %d" % [
+			int(snapshot.get("cold_population",0)),
+			int(snapshot.get("travel_pressure",0))]
 	_dock_staff.text = "Dock workers: %d on active original-world shifts" % staff
 	_reviewable_route = int(snapshot.get("reviewable_route",0))
 	_held_route_button.disabled = _reviewable_route<=0
@@ -189,6 +234,36 @@ func set_dock_status(snapshot: Dictionary) -> void:
 		int(snapshot.get("active_routes",0)))==0
 	_dock_release_button.disabled = staff <= 0
 	_dock_queue_button.disabled = int(_current.get("eligible_ship",0)) <= 0
+
+func set_regional_source(frame: Dictionary) -> void:
+	if not is_instance_valid(_region_description):
+		return
+	_region_total=int(frame.get("count",0))
+	_region_index=int(frame.get("index",0))
+	_region_generation=int(frame.get("authority_generation",0))
+	_region_revision=int(frame.get("revision",0))
+	_region_next.disabled = _region_index<=0 or _region_index>=_region_total
+	_region_link.disabled = _region_index<=0 or \
+		_region_generation<=0 or _region_revision<=0
+	if _region_index<=0:
+		_region_description.text = "No unambiguous cold-region population source"
+		return
+	_region_description.text = "Source %d of %d | %s / %s | %d verified aggregate residents" % [
+		_region_index,_region_total,str(frame.get("scope","")),
+		str(frame.get("colony","")),int(frame.get("population",0))]
+
+func _on_next_region() -> void:
+	if _region_index>0 and _region_index<_region_total:
+		dock_region_source_requested.emit(_region_index+1)
+
+func _on_link_region() -> void:
+	if _region_link.disabled or _region_index<=0 or \
+			_region_rate.selected<0:
+		return
+	var rate := int(_region_rate.get_item_metadata(_region_rate.selected))
+	_region_link.disabled = true
+	dock_region_bind_requested.emit(_region_index,_region_generation,
+		_region_revision,rate)
 
 func set_destinations(frame: Dictionary) -> void:
 	if not is_instance_valid(_destinations):
