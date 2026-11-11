@@ -401,13 +401,15 @@ func _send(command: String) -> void:
 		return
 	_stdout.flush()
 
-func submit_walk(heading: Vector3) -> void:
+func submit_walk(heading: Vector3, running: bool = false) -> void:
 	if not _active or _session <= 0 or _pending != 0 or _queued_hangar_intent or _person.get("state", -1) != 4:
 		return
 	if heading.length_squared() < 0.01:
 		return
 	var now := Time.get_ticks_msec()
-	if now - _last_send < 70:
+	# Same 100mm legal original step; walk/sprint differ only in bounded
+	# input cadence. C++ retains its 45ms host limit and position checks.
+	if now - _last_send < (70 if running else 120):
 		return
 	var d := Vector2(heading.x, heading.z).normalized() * 100.0
 	var dx := int(round(d.x))

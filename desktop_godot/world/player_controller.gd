@@ -10,6 +10,14 @@ var native_seated := false
 var native_dock_state := -1
 var native_in_ship := false
 var authoritative_mode := false
+# On-foot Shift is a latch, not a hold-to-sprint requirement. Native C++
+# remains the only movement authority; this controls legal step cadence.
+var run_toggled := false
+
+func toggle_run() -> void:
+	if native_in_ship or native_seated:
+		return
+	run_toggled = not run_toggled
 
 func use_native_ship_custody(aboard: bool) -> void:
 	# This is a verified original PERSON/POSE presentation flag only.
@@ -111,7 +119,12 @@ func _ready() -> void:
 	Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
 
 func _unhandled_input(event: InputEvent) -> void:
-	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_ESCAPE:
+	if event is InputEventKey and event.pressed and not event.echo and \
+			(event.keycode == KEY_SHIFT or event.physical_keycode == KEY_SHIFT) and \
+			get_window().has_focus() and not native_in_ship and not native_seated:
+		toggle_run()
+		get_viewport().set_input_as_handled()
+	elif if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_ESCAPE:
 		Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
 		get_viewport().set_input_as_handled()
 	elif event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
@@ -227,7 +240,7 @@ func _physics_process(delta: float) -> void:
 		return
 	var axis := Input.get_vector("fps_left", "fps_right", "fps_forward", "fps_backward")
 	var direction := (global_transform.basis * Vector3(axis.x, 0.0, axis.y)).normalized()
-	var speed: float = RUN_SPEED if Input.is_action_pressed("fps_run") else WALK_SPEED
+	var speed: float = RUN_SPEED if run_toggled else WALK_SPEED
 	velocity.x = direction.x * speed
 	velocity.z = direction.z * speed
 	move_and_slide()

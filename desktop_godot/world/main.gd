@@ -1009,7 +1009,7 @@ func _refresh_interaction_prompt() -> void:
 			else:
 				status_label.text = "PILOT READY | A/D turn, W/S vertical, ↑/↓ thrust, B brake, G dock"
 		elif station_connected:
-			status_label.text = "COLONY TO DOCK | WASD walk, E board existing ship"
+			status_label.text = "COLONY / DOCK | WASD move, Shift toggle %s, E board, I colony inventory" % ("RUN ON" if is_instance_valid(player) and player.run_toggled else "RUN OFF")
 		else:
 			status_label.text = "Connecting original world | No unverified movement"
 	if interaction_label.text != display:
@@ -1638,7 +1638,7 @@ func _on_native_player_seat_intent() -> void:
 
 func _on_native_player_intent(heading: Vector3) -> void:
 	if native_station_session != null and native_station_session.is_active():
-		native_station_session.submit_walk(heading)
+		native_station_session.submit_walk(heading, is_instance_valid(player) and player.run_toggled)
 	# PILOT-ONLY: intentionally NEVER route cabin MOVE to native cockpit,
 	# even when a stale/extra Godot emitter calls this handler directly.
 	# The only in-ship user controls are authorized original FLIGHT verbs.
