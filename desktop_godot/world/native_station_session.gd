@@ -383,7 +383,7 @@ func _accept_colony_population(f: PackedStringArray) -> void:
 	if session!=_session or request!=_pending or tick!=_tick or \
 			generation!=_generation or int(_person.get("state",-1))!=4 or \
 			station!=int(_person.get("station",-1)) or \
-			present<0 or present>4096 or assigned<0 or assigned>present or \
+			present<0 or present>4096 or assigned<0 or assigned>16 or \
 			truncated not in [0,1] or (assigned>present and truncated==0):
 		stop("Colony population from mismatched source or unbounded count")
 		return
