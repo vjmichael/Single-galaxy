@@ -123,6 +123,61 @@ static func _station_shell_details(parent: Node3D) -> void:
 			Vector3(x,height*0.5,-210.0),Vector3(21.0,height,14.0),
 			Color(0.29,0.29,0.30))
 
+static func _native_pedestrian_wayfinding(station: Node3D) -> void:
+	# DOCK-06 visual representation of the exact original native station
+	# corridors (millimeters are defined by Dock06Corridor.hpp). These
+	# meshes and signs are NOT a new navmesh, physical collision or free NPC.
+	var district := Node3D.new()
+	district.name = "OriginalPedestrianDistrict_WayfindingOnly"
+	station.add_child(district)
+	var passengers := Node3D.new()
+	passengers.name = "PassengerSecurityAndGangway"
+	district.add_child(passengers)
+	# Public corridor: source (1.7,3.0) to the berth at (0.9,-3.4).
+	# Individual named NPC paths stay within the +/-0.54m native lanes.
+	for i in range(9):
+		var z := 2.8-float(i)*0.75
+		_box(passengers,"Passenger floor lane %02d" % i,
+			Vector3(0.9,0.15,z),Vector3(1.7,0.012,0.13),
+			PATH_COLOR,true)
+	for x in [0.34,1.45]:
+		_box(passengers,"Security rail %.2f" % x,
+			Vector3(x,0.53,-0.25),Vector3(0.05,1.04,1.65),FRAME_STEEL)
+	_box(passengers,"Gangway check-in stop",
+		Vector3(0.9,0.155,-3.40),Vector3(1.72,0.016,0.12),
+		ROUTE_ACCENT,true)
+	_sign(passengers,"Passenger gate direction",
+		"BOARDING  /  CHECK IN  /  GANGWAY",
+		Vector3(1.05,2.0,0.88),PATH_COLOR,21)
+	_sign(passengers,"Arrival return direction",
+		"ARRIVALS  /  COLONY COMMONS",
+		Vector3(1.38,2.0,2.55),Color(0.52,0.86,0.47),20)
+	var service := Node3D.new()
+	service.name = "StaffRestrictedWalkway"
+	district.add_child(service)
+	# Native worker lane is x=-3.62m. It skirts the physical crate
+	# collision and remains separate from the native passenger gate.
+	for i in range(8):
+		_box(service,"Worker lane segment %02d" % i,
+			Vector3(-3.62,0.155,1.85-float(i)*0.77),
+			Vector3(0.16,0.014,0.50),ROUTE_ACCENT,true)
+	_box(service,"Worker dispatch checkpoint",
+		Vector3(-3.55,0.155,-3.7),Vector3(0.9,0.014,0.13),
+		ROUTE_ACCENT,true)
+	_sign(service,"Staff movement identity",
+		"DOCK CREW  /  AUTHORIZED SERVICE ROUTE",
+		Vector3(-3.55,2.15,1.72),COLONY_LIGHT,19)
+	# Fixed display lights help depth/wayfinding but do not provide
+	# electric power, a navigation light, or physically constructed industry.
+	for i in range(3):
+		var overhead := OmniLight3D.new()
+		overhead.name = "Wayfinding ceiling light %02d" % i
+		overhead.position = Vector3(0.15,3.75,2.0-float(i)*2.6)
+		overhead.light_color = Color(0.83,0.91,1.0)
+		overhead.light_energy = 0.42
+		overhead.omni_range = 5.5
+		district.add_child(overhead)
+
 static func build(station: Node3D) -> void:
 	# The dock is a logistics district WITHIN the original station, not
 	# a second gameplay colony. 3D layout is swappable by the creator;
@@ -222,4 +277,5 @@ static func build(station: Node3D) -> void:
 		_box(dock,"Physical docking cue %d" % side,
 			Vector3(float(side)*3.0,0.14,-1.2),
 			Vector3(0.19,0.22,0.19),PATH_COLOR,true)
+	_native_pedestrian_wayfinding(station)
 	_station_shell_details(station)
