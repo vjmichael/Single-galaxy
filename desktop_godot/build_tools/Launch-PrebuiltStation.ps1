@@ -130,7 +130,8 @@ try {
       @('--headless','--path',('"' + $project + '"'),'--script','res://tests/boarding_action_pipe_smoke.gd'),
       @('--headless','--path',('"' + $project + '"'),'--script','res://tests/native_player_protocol_smoke.gd'),
       @('--headless','--path',('"' + $project + '"'),'--script','res://tests/native_station_protocol_smoke.gd'),
-      @('--headless','--path',('"' + $project + '"'),'--script','res://tests/native_station_refinery_protocol_smoke.gd')
+      @('--headless','--path',('"' + $project + '"'),'--script','res://tests/native_station_refinery_protocol_smoke.gd'),
+      @('--headless','--path',('"' + $project + '"'),'--script','res://tests/visual_design_smoke.gd')
     )
     $index=0
     foreach($suite in $suites){
@@ -198,6 +199,7 @@ try {
     $env:SG_FP3D_OPERATOR_CAPTURE_DIR=$operatorLogDir
     Write-Host 'Original saved colony starts automatically: WASD walk to cyan hatch, E board (auto native pilot seat and permanent third-person camera), mouse/A,D steer, U undock, B brake, G dock near colony, ONE E disembark after return docking, F11 capture. No cabin exploration or V toggle. H retries a failed station connection only.'
     Write-Host 'For physical playtest evidence, press F11 at native station, docked cockpit, exterior flight, asteroid contact and after restart. F12 marks a stuck-input or stutter event in the native command/frame-time trace.'
+    Write-Host 'GAME MENU: Click New game... or press F6 to archive the current SQLite world and start fresh. F4 cycles Radeon high/balanced draw distance. Never delete Godot AppData.'
     $game=Start-Process -FilePath $GodotExe -ArgumentList @('--path',('"' + $project + '"')) -Wait -PassThru
     Write-Host "Godot exited code $($game.ExitCode). Window close is NOT proof of physical gameplay acceptance."
     $pass=$game.ExitCode -eq 0

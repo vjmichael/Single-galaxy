@@ -12,6 +12,10 @@ const STATION_NAV := preload("res://world/native_station_navigation.gd")
 const INTERACTION_PROMPTS := preload("res://world/interaction_prompts.gd")
 const COLONY_DOCK_LAYOUT := preload("res://world/colony_dock_layout.gd")
 const PHYSICAL_TRACE := preload("res://world/physical_acceptance_diagnostics.gd")
+const WORLD_RESET := preload("res://world/world_reset_manager.gd")
+const INDUSTRIAL_SHIP := preload("res://world/industrial_ship_design.gd")
+const VISUAL_QUALITY := preload("res://world/visual_quality_profile.gd")
+const SGDX_DIAG := preload("res://world/sgdx_operator_diagnostics.gd")
 const STATION_GRAY := Color(0.47, 0.51, 0.55, 1.0)
 const SHIP_WHITE := Color(0.96, 0.97, 0.99, 1.0)
 # Visual capsule center for 1.75 m tall collider; original C++ X/Z unchanged.
@@ -24,6 +28,14 @@ var scope_label: Label
 var status_label: Label
 var interaction_label: Label
 var retry_station_button: Button
+var new_game_button: Button
+var new_game_confirm: ConfirmationDialog
+var sgdx_dx_button: Button
+var sgdx_dx_dialog: AcceptDialog
+var _world_reset_pending := false
+var _world_reset_blocked := false
+var _world_reset_wait_started := 0
+var _world_reset_writer_pids: Array[int] = []
 var fps_label: Label
 var primary_speed_label: Label
 var navigation_label: Label
@@ -38,6 +50,9 @@ var station_space: Node3D
 var ship_space: Node3D
 var space_preview: Node3D
 var native_asteroid_mesh: MeshInstance3D
+var _visual_inertial_stars: MultiMeshInstance3D
+var _visual_station_target: Node3D
+var _visual_high_quality := false
 var exterior_ship_visual: Node3D
 var exterior_camera: Camera3D
 var asteroid_label: Label
@@ -95,10 +110,13 @@ var _station_connection_failure := ""
 
 func _ready() -> void:
 	_frame_delta_ms.resize(FRAME_PACING_CAPACITY)
+	# Radeon high quality is an operator preference, not physics authority.
+	_visual_high_quality = VISUAL_QUALITY.is_r9700_adapter()
 	material = StandardMaterial3D.new()
 	material.albedo_color = STATION_GRAY
 	material.roughness = 1.0
 	material.metallic = 0.0
+	COLONY_DOCK_LAYOUT.apply_station_material(material)
 	ship_material = StandardMaterial3D.new()
 	ship_material.albedo_color = SHIP_WHITE
 	ship_material.roughness = 0.78
@@ -113,6 +131,7 @@ func _ready() -> void:
 	# Procedural, visual-only colony -> dock -> berth transition. Native
 	# station-person coordinates, SQLite ownership and boarding are unchanged.
 	COLONY_DOCK_LAYOUT.build(station_space)
+	INDUSTRIAL_SHIP.build_docked(station_space.get_node("SpacefaringDock") as Node3D)
 	ship_space = Node3D.new()
 	ship_space.name = "ShipInterior_Prototype"
 	add_child(ship_space)
@@ -122,6 +141,7 @@ func _ready() -> void:
 	_build_native_space_preview()
 	_show_native_location(true) # station first; only native PERSON/POSE chooses later
 	_build_player()
+	_apply_visual_quality()
 	_build_hud()
 	_apply_technical_hud()
 	# Native world observations are optional. The local character is NOT synchronized.
@@ -165,10 +185,137 @@ func _ready() -> void:
 			"godot_version":str(Engine.get_version_info().get("string", "unknown")),
 			"limitation":"adapter and Godot main-loop measurements do not alone establish physical GPU approval"})
 	if _player_session_autoconnect:
-		call_deferred("_open_saved_station_automatically")
+		# Incomplete reset journal from a genuine interrupted prior session
+		# restores the original files BEFORE we permit a new SQLite genesis.
+		var repair: Dictionary = WORLD_RESET.recover_pending(OS.get_user_data_dir(), [])
+		if not bool(repair.get("ok", false)):
+			_world_reset_blocked = true
+			_on_native_player_status("SAVE RECOVERY BLOCKED: " + str(repair.get("reason", "unknown")))
+		else:
+			if bool(repair.get("recovered", false)):
+				_on_native_player_status(str(repair.get("reason", "Original world recovered")))
+			call_deferred("_open_saved_station_automatically")
+
+func _show_sgdx_diagnostics() -> void:
+	# Read only. No SQLite command, restart, control or arbitrary OS capture.
+	# SGDX process receipts are already emitted by the supervised native
+	# executable even if the player is lost in space.
+	var profile := OS.get_user_data_dir()
+	var perf: Dictionary = _frame_timing_summary()
+	var observed := {
+		"station_connected":native_station_session != null and native_station_session.is_active(),
+		"ship_connected":native_player_session != null and native_player_session.is_active(),
+		"tick":int(_verified_flight_ship.get("tick",-1)),
+		"generation":int(_verified_flight_ship.get("gen",-1)),
+		"dock":int(_verified_flight_ship.get("dock",-1)),
+		"adapter":RenderingServer.get_video_adapter_name(),
+		"draw_distance_m":VISUAL_QUALITY.distance_m(_visual_high_quality),
+		"fps":Engine.get_frames_per_second(),
+		"p95_ms":float(perf.get("p95_ms",0.0)),
+		"p99_ms":float(perf.get("p99_ms",0.0)),
+		"visual_only":true}
+	if bool(_verified_station_nav.get("found",false)):
+		observed["return_range_m"] = float(_verified_station_nav["range_m"])
+	var report: Dictionary = SGDX_DIAG.snapshot(profile,observed)
+	if _physical_trace != null and _physical_trace.enabled():
+		_physical_trace.record("operator_sgdx_diagnosis",report)
+		_physical_trace.flush()
+	var directory := OS.get_environment("SG_FP3D_OPERATOR_CAPTURE_DIR")
+	if directory.is_empty():
+		directory = profile
+	var file_path := directory.path_join("sgdx-last-diagnosis.json")
+	var saved := SGDX_DIAG.save_operator_snapshot(file_path, report)
+	if is_instance_valid(sgdx_dx_dialog):
+		sgdx_dx_dialog.dialog_text = SGDX_DIAG.human_summary(report) + (
+			"\n\nLocal evidence: "+file_path if saved else "\n\nCould not save evidence (report remains visible)")
+		Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+		sgdx_dx_dialog.popup_centered(Vector2i(730,480))
+
+func _ask_world_reset() -> void:
+	if not _player_session_autoconnect:
+		_on_native_player_status("New Game is available only in the installed, running game")
+		return
+	if _world_reset_pending or _world_reset_blocked:
+		_on_native_player_status("New Game blocked while original save recovery is unresolved")
+		return
+	if not is_instance_valid(new_game_confirm):
+		return
+	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+	new_game_confirm.popup_centered(Vector2i(530, 210))
+
+func _confirmed_world_reset() -> void:
+	if not _player_session_autoconnect or _world_reset_pending or _world_reset_blocked:
+		return
+	# Original native writers may have pending committed operations: send
+	# QUIT, collect the SGDX guardian PIDs, and wait for actual OS death.
+	_world_reset_pending = true
+	_world_reset_wait_started = Time.get_ticks_msec()
+	_world_reset_writer_pids.clear()
+	for pid in [native_player_session.process_id(), native_station_session.process_id(), _handoff_pid]:
+		if int(pid) > 0 and not _world_reset_writer_pids.has(int(pid)):
+			_world_reset_writer_pids.append(int(pid))
+	_handoff_target = ""
+	_handoff_pid = -1
+	if is_instance_valid(new_game_button):
+		new_game_button.disabled = true
+	if is_instance_valid(player):
+		player.use_native_authority(true)
+	if native_session != null and native_session.is_active():
+		native_session.stop("Closing read-only SGDX observer for backed-up new game")
+	if native_player_session != null and native_player_session.is_active():
+		native_player_session.stop("Original pilot writer closing for explicit world archive", true)
+	if native_station_session != null and native_station_session.is_active():
+		native_station_session.stop("Original station writer closing for explicit world archive", true)
+	_on_native_player_status("New Game: waiting for original SGDX processes to release SQLite before archive")
+
+func _advance_world_reset() -> void:
+	if not _world_reset_pending:
+		return
+	for pid in _world_reset_writer_pids:
+		if pid > 0 and OS.is_process_running(pid):
+			if Time.get_ticks_msec() - _world_reset_wait_started > 8000:
+				_world_reset_pending = false
+				if is_instance_valid(new_game_button):
+					new_game_button.disabled = false
+				_on_native_player_status("RESET BLOCKED: original native writer still alive; old SQLite untouched. Wait for its process to exit, then use Retry.")
+			return
+	var save_dir := OS.get_user_data_dir()
+	var archived: Dictionary = WORLD_RESET.archive_for_new_game(save_dir, _world_reset_writer_pids)
+	_world_reset_pending = false
+	if is_instance_valid(new_game_button):
+		new_game_button.disabled = false
+	if not bool(archived.get("ok", false)):
+		# Any interrupted archive keeps its recovery journal. Never launch
+		# a blank station world before verifying full original-file recovery.
+		var recovered: Dictionary = WORLD_RESET.recover_pending(save_dir, [])
+		if not bool(recovered.get("ok", false)):
+			_world_reset_blocked = true
+		_on_native_player_status("NEW GAME REFUSED: " + str(archived.get("reason", "archive error")) +
+			(". Original save recovery blocked." if _world_reset_blocked else ". Old world preserved; Retry station."))
+		return
+	# Only after the old SQLite + WAL archive has a durable manifest do we
+	# allow the original native station host to create its fresh world.
+	_station_connect_attempted = true
+	_station_connection_failure = ""
+	station_test_save_selected = false
+	last_station_player_state = -1
+	_pilot_auto_seat_attempted = false
+	_colony_return_pending = false
+	_colony_return_armed = false
+	_last_native_dock = -1
+	_verified_flight_ship.clear()
+	_verified_flight_rock.clear()
+	_verified_station_nav.clear()
+	_refresh_station_visual_target()
+	_show_native_location(true)
+	var archive: String = str(archived.get("archive", ""))
+	_on_native_player_status("Old original world archived (not deleted): " +
+		(archive if not archive.is_empty() else "no saved world existed") +
+		" | Waiting for new original station registration")
+	_schedule_native_handoff("station", -1)
 
 func _open_saved_station_automatically() -> void:
-	if _station_connect_attempted:
+	if _world_reset_pending or _world_reset_blocked or _station_connect_attempted:
 		return
 	_station_connect_attempted = true
 	_station_connection_failure = ""
@@ -178,6 +325,9 @@ func _open_saved_station_automatically() -> void:
 	_schedule_native_handoff("station", native_player_session.process_id())
 
 func _retry_original_station() -> void:
+	if _world_reset_pending or _world_reset_blocked:
+		_on_native_player_status("Recover the original save/finish New Game before reconnecting")
+		return
 	if native_station_session.is_active():
 		_on_native_player_status("Station already connected. Walk to the cyan boarding hatch and press E.")
 		return
@@ -245,7 +395,9 @@ func _setup_environment() -> void:
 	var sun := DirectionalLight3D.new()
 	sun.rotation_degrees = Vector3(-52.0, -38.0, 0.0)
 	sun.light_energy = 1.5
-	sun.shadow_enabled = false
+	# Actual Radeon quality: geometry shadows on the physical GPU, with
+	# a lower-cost Balanced fallback for CPU/VM/headless acceptance.
+	sun.shadow_enabled = _visual_high_quality
 	add_child(sun)
 
 func _solid_box(label: String, pos: Vector3, dimensions: Vector3) -> StaticBody3D:
@@ -443,6 +595,45 @@ func _build_native_space_preview() -> void:
 			Transform3D(Basis.IDENTITY, inertial_location))
 	orientation_guides.multimesh = dot_meshes
 	space_preview.add_child(orientation_guides)
+	_visual_inertial_stars = VISUAL_QUALITY.add_inertial_background(space_preview)
+	_visual_station_target = Node3D.new()
+	_visual_station_target.name = "SameTickOriginalStationTarget_NONCOLLIDING"
+	_visual_station_target.visible = false
+	space_preview.add_child(_visual_station_target)
+	var station_skin := StandardMaterial3D.new()
+	station_skin.albedo_color = Color(0.65,0.69,0.66)
+	station_skin.metallic = 0.42
+	station_skin.roughness = 0.74
+	var station_beacon := StandardMaterial3D.new()
+	station_beacon.albedo_color = Color(0.14,0.72,0.86)
+	station_beacon.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	for i in range(4):
+		var bar := MeshInstance3D.new()
+		bar.name = "Native station frame %d" % i
+		var shape := BoxMesh.new()
+		shape.size = Vector3(5.0,0.45,0.55) if i%2==0 else Vector3(0.55,0.45,5.0)
+		bar.mesh = shape
+		bar.position = Vector3(0.0,1.1 if i < 2 else -1.1,0.0)
+		bar.material_override = station_skin
+		_visual_station_target.add_child(bar)
+	var core := MeshInstance3D.new()
+	core.name = "Original C++ station transponder shell"
+	var body_shape := CylinderMesh.new()
+	body_shape.height = 2.0
+	body_shape.top_radius = 1.2
+	body_shape.bottom_radius = 1.2
+	core.mesh = body_shape
+	core.material_override = station_skin
+	_visual_station_target.add_child(core)
+	var light := MeshInstance3D.new()
+	light.name = "Station transponder light"
+	var light_shape := SphereMesh.new()
+	light_shape.radius = 0.85
+	light_shape.height = 1.7
+	light.mesh = light_shape
+	light.position.y = 2.4
+	light.material_override = station_beacon
+	_visual_station_target.add_child(light)
 	# Greybox ship hull is 8m long, 2.5m high, with visible wings spanning
 	# ~6m. The ORIGINAL C++ physics uses a conservative 5.2m bounding sphere.
 	# Neither these meshes nor the camera writes any collision or ship pose.
@@ -456,6 +647,7 @@ func _build_native_space_preview() -> void:
 	body.mesh = body_mesh
 	body.material_override = ship_material
 	exterior_ship_visual.add_child(body)
+	var model_wings: Array[Node3D] = []
 	for side in [-1,1]:
 		var wing := MeshInstance3D.new()
 		wing.name = "Native hull wing" + str(side)
@@ -465,6 +657,10 @@ func _build_native_space_preview() -> void:
 		wing.material_override = ship_material
 		wing.position = Vector3(-0.25, -0.45, float(side) * 2.35)
 		exterior_ship_visual.add_child(wing)
+		model_wings.append(wing)
+	# The model decorates existing hull/wing nodes; original SHIP owns
+	# heading, pose, physics and SQLite. Direct children remain 4.
+	INDUSTRIAL_SHIP.decorate_external_body(body, model_wings)
 	exterior_camera = Camera3D.new()
 	exterior_camera.name = "OriginalShip_ThirdPersonCamera"
 	exterior_camera.position = Vector3(-16.0, 7.0, 0.0)
@@ -477,6 +673,42 @@ func _build_native_space_preview() -> void:
 static func native_heading_to_godot_yaw(heading: int) -> float:
 	# Original yaw 0 = +X; 90 = +native Y = -Godot Z.
 	return deg_to_rad(float(heading % 360))
+
+func _apply_visual_quality() -> void:
+	if is_instance_valid(exterior_camera):
+		VISUAL_QUALITY.apply_camera(exterior_camera, _visual_high_quality)
+	if is_instance_valid(player) and is_instance_valid(player.camera):
+		VISUAL_QUALITY.apply_camera(player.camera, _visual_high_quality)
+	VISUAL_QUALITY.set_background_quality(_visual_inertial_stars, _visual_high_quality)
+	_refresh_station_visual_target()
+
+func _refresh_station_visual_target() -> void:
+	if not is_instance_valid(_visual_station_target):
+		return
+	_visual_station_target.visible = false
+	if not bool(_verified_station_nav.get("found", false)):
+		return
+	var range_m := float(_verified_station_nav.get("range_m", -1.0))
+	# Don't draw a fabricated station when the C++ return vector is out of
+	# draw range; the honest distance/bearing HUD remains visible instead.
+	if range_m < 3.0 or range_m > VISUAL_QUALITY.distance_m(_visual_high_quality) - 40.0:
+		return
+	_visual_station_target.position = Vector3(
+		float(_verified_station_nav.get("dx_mm", 0))/1000.0,
+		float(_verified_station_nav.get("dz_mm", 0))/1000.0,
+		-float(_verified_station_nav.get("dy_mm", 0))/1000.0)
+	_visual_station_target.visible = true
+
+func _toggle_visual_quality() -> void:
+	_visual_high_quality = not _visual_high_quality
+	_apply_visual_quality()
+	_on_native_player_status("R9700 PRESENTATION: %s, %.0fm camera draw, genuine station navigation unchanged" % [
+		"HIGH" if _visual_high_quality else "BALANCED",
+		VISUAL_QUALITY.distance_m(_visual_high_quality)])
+	if _physical_trace != null and _physical_trace.enabled():
+		_physical_trace.record("visual_quality_changed", {
+			"high":_visual_high_quality,
+			"draw_distance_m":VISUAL_QUALITY.distance_m(_visual_high_quality)})
 
 func _toggle_technical_details() -> void:
 	_show_technical_details = not _show_technical_details
@@ -571,7 +803,7 @@ func _build_hud() -> void:
 	contents.add_theme_constant_override("separation", 4)
 	panel.add_child(contents)
 	var title := Label.new()
-	title.text = "SINGLE-GALAXY  |  COLONY / DEPARTURES  |  F3 DETAILS"
+	title.text = "SINGLE-GALAXY  |  COLONY / DEPARTURES  |  F3 HUD  F4 VIEW  F5 DX  F6 RESET"
 	title.add_theme_font_size_override("font_size", 17)
 	contents.add_child(title)
 	scope_label = Label.new()
@@ -609,6 +841,35 @@ func _build_hud() -> void:
 	retry_station_button.visible = false
 	retry_station_button.pressed.connect(_retry_original_station)
 	contents.add_child(retry_station_button)
+
+	# A human-clickable reset is available even when stranded in space.
+	# It never deletes AppData or bypasses SGDX/SQLite. Godot must display
+	# the explicit confirmation BEFORE the running writer is stopped.
+	new_game_button = Button.new()
+	new_game_button.name = "NewGameArchiveCurrentWorld"
+	new_game_button.text = "New game... (backup old world)"
+	new_game_button.add_theme_font_size_override("font_size", 12)
+	new_game_button.pressed.connect(_ask_world_reset)
+	contents.add_child(new_game_button)
+	new_game_confirm = ConfirmationDialog.new()
+	new_game_confirm.name = "ConfirmArchiveAndNewGame"
+	new_game_confirm.title = "Start a new Single-Galaxy world?"
+	new_game_confirm.dialog_text = "Archive your current original SQLite world, WAL and SGDX diagnostics in a dated world-archives folder, then create a fresh world. Your old save is NOT deleted. Cancel keeps your current game."
+	new_game_confirm.ok_button_text = "Archive old world and start new game"
+	new_game_confirm.confirmed.connect(_confirmed_world_reset)
+	hud.add_child(new_game_confirm)
+	sgdx_dx_button = Button.new()
+	sgdx_dx_button.name = "DiagnoseGameWithSGDX"
+	sgdx_dx_button.text = "Diagnose game (F5)"
+	sgdx_dx_button.add_theme_font_size_override("font_size", 12)
+	sgdx_dx_button.pressed.connect(_show_sgdx_diagnostics)
+	contents.add_child(sgdx_dx_button)
+	sgdx_dx_dialog = AcceptDialog.new()
+	sgdx_dx_dialog.name = "SGDXGameHealthReadOnly"
+	sgdx_dx_dialog.title = "SGDX native diagnostics"
+	sgdx_dx_dialog.dialog_autowrap = true
+	sgdx_dx_dialog.ok_button_text = "Close diagnostics"
+	hud.add_child(sgdx_dx_dialog)
 
 	flight_panel = PanelContainer.new()
 	flight_panel.name = "FlightTelemetryPanel"
@@ -793,6 +1054,18 @@ func _advance_native_handoff() -> void:
 		player.use_native_authority(_player_session_autoconnect)
 
 func _unhandled_input(event: InputEvent) -> void:
+	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_F5:
+		_show_sgdx_diagnostics()
+		get_viewport().set_input_as_handled()
+		return
+	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_F4:
+		_toggle_visual_quality()
+		get_viewport().set_input_as_handled()
+		return
+	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_F6:
+		_ask_world_reset()
+		get_viewport().set_input_as_handled()
+		return
 	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_F3:
 		_toggle_technical_details()
 		get_viewport().set_input_as_handled()
@@ -1002,6 +1275,8 @@ func _capture_operator_view() -> void:
 		"original_rock":_verified_flight_rock.duplicate(true) if not joined.is_empty() else {},
 		"original_target_instrument":joined,
 		"original_nearest_station":_verified_station_nav.duplicate(true),
+		"visual_quality_high":_visual_high_quality,
+		"camera_draw_distance_m":VISUAL_QUALITY.distance_m(_visual_high_quality),
 		"exterior_camera":is_instance_valid(exterior_camera) and exterior_camera.current,
 		"person_camera":is_instance_valid(player) and is_instance_valid(player.camera) and player.camera.current,
 		"operator_visual_judgment":"NOT YET RECORDED"
@@ -1133,6 +1408,7 @@ func _on_native_station_nav(nav: Dictionary) -> void:
 			navigation_label.text = STATION_NAV.display({})
 		return
 	_verified_station_nav = readout
+	_refresh_station_visual_target()
 	if is_instance_valid(navigation_label):
 		navigation_label.text = STATION_NAV.display(readout)
 	if _physical_trace != null and _physical_trace.enabled():
@@ -1186,6 +1462,7 @@ func _on_native_ship_state(ship: Dictionary) -> void:
 	_verified_flight_ship = ship.duplicate(true)
 	_verified_flight_rock.clear()
 	_verified_station_nav.clear()
+	_refresh_station_visual_target()
 	if is_instance_valid(navigation_label):
 		navigation_label.text = STATION_NAV.display({})
 	_refresh_native_flight_instruments()
@@ -1379,15 +1656,19 @@ func _process(delta: float) -> void:
 	if is_instance_valid(exterior_camera) and exterior_camera.current:
 		exterior_camera.transform = exterior_camera.transform.interpolate_with(
 			_exterior_camera_rest, clampf(delta * 12.0, 0.0, 1.0))
-	_advance_native_handoff()
+	if _world_reset_pending:
+		_advance_world_reset()
+	else:
+		_advance_native_handoff()
 	if native_session != null:
 		native_session.poll()
 	if native_player_session != null:
 		native_player_session.poll()
 	if native_station_session != null:
 		native_station_session.poll()
-	_ensure_native_pilot_role()
-	_refresh_interaction_prompt()
+	if not _world_reset_pending and not _world_reset_blocked:
+		_ensure_native_pilot_role()
+		_refresh_interaction_prompt()
 	if not _native_visual_evidence_buffer.is_empty() and \
 			Time.get_ticks_msec() - _last_visual_evidence_flush_ms >= NATIVE_EVIDENCE_FLUSH_INTERVAL_MS:
 		_flush_native_visual_evidence()

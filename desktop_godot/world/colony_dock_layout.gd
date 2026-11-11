@@ -17,13 +17,42 @@ const DOCK_DECK := Color(0.30, 0.34, 0.38, 1.0)
 const PATH_COLOR := Color(0.17, 0.72, 0.83, 1.0)
 const ROUTE_ACCENT := Color(0.91, 0.72, 0.24, 1.0)
 const COLONY_LIGHT := Color(0.73, 0.82, 0.89, 1.0)
+const INDUSTRIAL_IVORY := Color(0.75, 0.74, 0.68, 1.0)
+const FRAME_STEEL := Color(0.23, 0.27, 0.29, 1.0)
+const WEATHERED_BRASS := Color(0.65,0.45,0.23,1.0)
+static var _patina_tex: ImageTexture
+
+static func _get_patina() -> ImageTexture:
+	if _patina_tex != null:
+		return _patina_tex
+	# Fine physically varied metal/paint surface, generated ONCE on startup.
+	# Procedural 3D material, not a flat decal or internet image.
+	var image := Image.create_empty(96,96,false,Image.FORMAT_RGBA8)
+	var noise := FastNoiseLite.new()
+	noise.seed = 19771977
+	noise.frequency = 0.085
+	for y in range(96):
+		for x in range(96):
+			var n := noise.get_noise_2d(float(x),float(y))
+			var c := clampf(0.82 + n*0.11,0.69,0.98)
+			image.set_pixel(x,y,Color(c,c,c,1.0))
+	_patina_tex = ImageTexture.create_from_image(image)
+	return _patina_tex
+
+static func apply_station_material(mat: StandardMaterial3D) -> void:
+	mat.albedo_texture = _get_patina()
+	mat.metallic = 0.24
+	mat.roughness = 0.83
 
 static func _material(color: Color, unshaded: bool = false) -> StandardMaterial3D:
 	var mat := StandardMaterial3D.new()
 	mat.albedo_color = color
-	mat.roughness = 0.91
+	mat.roughness = 0.84
+	mat.metallic = 0.27
 	if unshaded:
 		mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	else:
+		mat.albedo_texture = _get_patina()
 	return mat
 
 static func _box(parent: Node3D, name: String, at: Vector3,
@@ -46,12 +75,84 @@ static func _sign(parent: Node3D, name: String, wording: String,
 	sign.text = wording
 	sign.position = at
 	sign.billboard = BaseMaterial3D.BILLBOARD_ENABLED
-	sign.pixel_size = 0.006
-	sign.font_size = font
+	sign.pixel_size = 0.0038
+	sign.font_size = mini(font, 32)
 	sign.modulate = color
-	sign.no_depth_test = true
+	# Previous no-depth signage overlapped across the whole screen, even
+	# through buildings. Physical occlusion keeps wayfinding legible.
+	sign.no_depth_test = false
 	parent.add_child(sign)
 	return sign
+
+static func _pipe(parent: Node3D, name: String, at: Vector3,
+		length: float, radius: float, color: Color, vertical: bool = false) -> void:
+	var part := MeshInstance3D.new()
+	part.name = name
+	var mesh := CylinderMesh.new()
+	mesh.top_radius = radius
+	mesh.bottom_radius = radius
+	mesh.height = length
+	mesh.radial_segments = 10
+	part.mesh = mesh
+	part.position = at
+	part.rotation.z = 0.0 if vertical else PI*0.5
+	part.material_override = _material(color)
+	parent.add_child(part)
+
+static func _station_shell_details(parent: Node3D) -> void:
+	# These are surface cladding on the PREEXISTING station perimeter only,
+	# not fabricated player settlements or functional plants.
+	var shell := Node3D.new()
+	shell.name = "OriginalStation_IndustrialCladding_NonOperational"
+	parent.add_child(shell)
+	for side in [-1,1]:
+		var x: float = float(side)*7.10
+		# Visible structural ribs and stamped panels, hard-SF service hatches.
+		for i in range(5):
+			var z := 1.60 + float(i)*0.95
+			_box(shell,"Retrofuturist habitation facade rib %d-%d" % [side,i],
+				Vector3(x,2.0,z),Vector3(2.82,3.84,0.065),FRAME_STEEL)
+			_box(shell,"Recessed ceramic shell panel %d-%d" % [side,i],
+				Vector3(x,2.12,z+0.13),Vector3(2.44,3.12,0.12),INDUSTRIAL_IVORY)
+			_box(shell,"Amber service plate %d-%d" % [side,i],
+				Vector3(x,0.85,z+0.22),Vector3(1.35,0.18,0.16),WEATHERED_BRASS)
+		for band in range(3):
+			_pipe(shell,"External station coolant trunk %d-%d" % [side,band],
+				Vector3(x+float(side)*1.62,1.25+float(band)*0.63,3.6),
+				4.2,0.095,FRAME_STEEL)
+		for i in range(5):
+			_box(shell,"Modular roof heat-radiator %d-%d" % [side,i],
+				Vector3(x-1.15+float(i)*0.56,3.75,3.65),
+				Vector3(0.07,0.70,2.30),FRAME_STEEL)
+	# Existing station plaza overhead communications, no gameplay beacon.
+	_pipe(shell,"Existing station mast",Vector3(-7.0,5.9,-2.7),5.5,0.14,FRAME_STEEL,true)
+	for altitude in [4.6,5.8,7.0]:
+		_box(shell,"Mast level %.1f" % altitude,
+			Vector3(-7.0,altitude,-2.7),Vector3(1.85,0.095,0.13),WEATHERED_BRASS)
+	for i in range(6):
+		var z := -5.6+float(i)*1.1
+		_box(shell,"Dock gantry overhead rib %02d" % i,Vector3(0.0,5.1,z),
+			Vector3(8.5,0.11,0.24),FRAME_STEEL)
+		for side in [-1,1]:
+			_box(shell,"Dock vertical gantry truss %d-%02d" % [side,i],
+				Vector3(float(side)*4.22,2.6,z),
+				Vector3(0.14,5.2,0.16),FRAME_STEEL)
+	for i in range(12):
+		var x := -4.5+float(i)*0.82
+		_box(shell,"Plaza bolted drainage rail %02d" % i,
+			Vector3(x,0.11,0.72),Vector3(0.045,0.018,0.71),FRAME_STEEL)
+	# A far wall of rugged material is purely atmospheric ground and not
+	# a new geological resource deposit or physically traversable terrain.
+	var vista := Node3D.new()
+	vista.name = "DistantEarthworks_BackdropNotMineralInventory"
+	parent.add_child(vista)
+	for i in range(28):
+		var x := (float(i)-13.5)*20.0
+		var height := 9.0+absf(sin(float(i)*1.91))*17.0
+		_box(vista,"Distant escarpment %02d" % i,
+			Vector3(x,height*0.5,-185.0),Vector3(21.0,height,14.0),
+			Color(0.30,0.30,0.31))
+	# No additional native collision bodies, production output, or NPC data.
 
 static func build(station: Node3D) -> void:
 	# Colony represents home, civilian industry and the safe walking origin.
@@ -119,7 +220,7 @@ static func build(station: Node3D) -> void:
 			Vector3(float(side)*3.05, 0.13, -1.15),
 			Vector3(0.23, 0.25, 0.23), PATH_COLOR, true)
 	_sign(dock, "Departure dock label", "DEPARTURES  /  TO SPACE",
-		Vector3(0.0, 3.8, -4.6), COLONY_LIGHT)
+		Vector3(0.0, 4.2, -4.6), COLONY_LIGHT, 26)
 	# Make it visibly a SPACECRAFT instead of an anonymous white container.
 	# The existing white owned hull/wing bodies are built by main.gd,
 	# while these non-colliding details add landing gear, hatch and canopy.
@@ -139,3 +240,4 @@ static func build(station: Node3D) -> void:
 			Color(0.74, 0.77, 0.81, 1.0))
 	# White hull, ramp and active (0,0) checkpoint share the central axis.
 	# This builder deliberately creates NO collision or boarding callback.
+	_station_shell_details(station)
