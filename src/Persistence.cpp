@@ -10089,6 +10089,54 @@ bool PersistentWorld::station_player_action(PlayerId owner,EntityId station,
         });
     return true;
 }
+bool PersistentWorld::station_dock_worker_transfer(
+        PlayerId owner,EntityId ship,EntityId station,std::uint64_t npc,
+        bool disembark,std::uint64_t receipt,FailPoint fail){
+    if(!receipt ||
+       receipt>=static_cast<std::uint64_t>(std::numeric_limits<sqlite3_int64>::max()))
+        return false;
+    // Preview guarantees that no invalid crew member receives a reserved
+    // event or tick. The real mutation is rechecked after the STEP.
+    auto preview=world_;
+    if(!preview.station_dock_worker_transfer(owner,ship,station,npc,disembark))
+        return false;
+    // A family/dependent ledger may bind a named adult as a guardian.
+    // Do not send a guardian ashore independently of child custody.
+    if(store_->has_child_or_dependent_link(ship))return false;
+    const auto expected_generation=generation_;
+    step_with_cell_worker(nullptr,fail,
+        [&](sqlite3* db,std::uint64_t generation){
+            if(generation!=expected_generation+1)
+                throw std::runtime_error("dock worker custody generation race");
+            run(db,"CREATE TABLE IF NOT EXISTS sg_dock_worker_moves("
+                "receipt INTEGER PRIMARY KEY CHECK(receipt>0),"
+                "owner INTEGER NOT NULL,ship INTEGER NOT NULL,"
+                "station INTEGER NOT NULL,npc_id INTEGER NOT NULL,"
+                "direction INTEGER NOT NULL CHECK(direction IN(1,2)),"
+                "tick INTEGER NOT NULL,generation INTEGER NOT NULL)");
+            Statement record(db,"INSERT INTO sg_dock_worker_moves "
+                "(receipt,owner,ship,station,npc_id,direction,tick,generation) "
+                "VALUES(?,?,?,?,?,?,?,?)");
+            record.i64(1,static_cast<sqlite3_int64>(receipt));
+            record.i64(2,static_cast<sqlite3_int64>(owner));
+            record.i64(3,static_cast<sqlite3_int64>(ship));
+            record.i64(4,static_cast<sqlite3_int64>(station));
+            record.i64(5,static_cast<sqlite3_int64>(npc));
+            record.i64(6,disembark?1:2);
+            record.i64(7,static_cast<sqlite3_int64>(world_.tick()+1));
+            record.i64(8,static_cast<sqlite3_int64>(generation));
+            record.execute();
+            if(sqlite3_changes(db)!=1)
+                throw std::runtime_error("dock worker move receipt not unique");
+        },
+        [&](Simulation& next){
+            if(!next.station_dock_worker_transfer(
+                owner,ship,station,npc,disembark))
+                throw std::runtime_error("dock NPC custody changed during STEP");
+        });
+    return true;
+}
+
 bool PersistentWorld::grant_player_rescue_consent(
     PlayerId owner,EntityId receiver,std::uint64_t consent_id,FailPoint fail){
     auto next=world_;
