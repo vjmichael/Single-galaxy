@@ -13,6 +13,8 @@ const INTERACTION_PROMPTS := preload("res://world/interaction_prompts.gd")
 const COLONY_DOCK_LAYOUT := preload("res://world/colony_dock_layout.gd")
 const PHYSICAL_TRACE := preload("res://world/physical_acceptance_diagnostics.gd")
 const WORLD_RESET := preload("res://world/world_reset_manager.gd")
+const INDUSTRIAL_SHIP := preload("res://world/industrial_ship_design.gd")
+const VISUAL_QUALITY := preload("res://world/visual_quality_profile.gd")
 const STATION_GRAY := Color(0.47, 0.51, 0.55, 1.0)
 const SHIP_WHITE := Color(0.96, 0.97, 0.99, 1.0)
 # Visual capsule center for 1.75 m tall collider; original C++ X/Z unchanged.
@@ -45,6 +47,9 @@ var station_space: Node3D
 var ship_space: Node3D
 var space_preview: Node3D
 var native_asteroid_mesh: MeshInstance3D
+var _visual_inertial_stars: MultiMeshInstance3D
+var _visual_station_target: Node3D
+var _visual_high_quality := false
 var exterior_ship_visual: Node3D
 var exterior_camera: Camera3D
 var asteroid_label: Label
@@ -102,6 +107,8 @@ var _station_connection_failure := ""
 
 func _ready() -> void:
 	_frame_delta_ms.resize(FRAME_PACING_CAPACITY)
+	# Radeon high quality is an operator preference, not physics authority.
+	_visual_high_quality = VISUAL_QUALITY.is_r9700_adapter()
 	material = StandardMaterial3D.new()
 	material.albedo_color = STATION_GRAY
 	material.roughness = 1.0
@@ -120,6 +127,7 @@ func _ready() -> void:
 	# Procedural, visual-only colony -> dock -> berth transition. Native
 	# station-person coordinates, SQLite ownership and boarding are unchanged.
 	COLONY_DOCK_LAYOUT.build(station_space)
+	INDUSTRIAL_SHIP.build_docked(station_space.get_node("SpacefaringDock") as Node3D)
 	ship_space = Node3D.new()
 	ship_space.name = "ShipInterior_Prototype"
 	add_child(ship_space)
@@ -129,6 +137,7 @@ func _ready() -> void:
 	_build_native_space_preview()
 	_show_native_location(true) # station first; only native PERSON/POSE chooses later
 	_build_player()
+	_apply_visual_quality()
 	_build_hud()
 	_apply_technical_hud()
 	# Native world observations are optional. The local character is NOT synchronized.
@@ -544,6 +553,45 @@ func _build_native_space_preview() -> void:
 			Transform3D(Basis.IDENTITY, inertial_location))
 	orientation_guides.multimesh = dot_meshes
 	space_preview.add_child(orientation_guides)
+	_visual_inertial_stars = VISUAL_QUALITY.add_inertial_background(space_preview)
+	_visual_station_target = Node3D.new()
+	_visual_station_target.name = "SameTickOriginalStationTarget_NONCOLLIDING"
+	_visual_station_target.visible = false
+	space_preview.add_child(_visual_station_target)
+	var station_skin := StandardMaterial3D.new()
+	station_skin.albedo_color = Color(0.65,0.69,0.66)
+	station_skin.metallic = 0.42
+	station_skin.roughness = 0.74
+	var station_beacon := StandardMaterial3D.new()
+	station_beacon.albedo_color = Color(0.14,0.72,0.86)
+	station_beacon.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	for i in range(4):
+		var bar := MeshInstance3D.new()
+		bar.name = "Native station frame %d" % i
+		var shape := BoxMesh.new()
+		shape.size = Vector3(5.0,0.45,0.55) if i%2==0 else Vector3(0.55,0.45,5.0)
+		bar.mesh = shape
+		bar.position = Vector3(0.0,1.1 if i < 2 else -1.1,0.0)
+		bar.material_override = station_skin
+		_visual_station_target.add_child(bar)
+	var core := MeshInstance3D.new()
+	core.name = "Original C++ station transponder shell"
+	var body_shape := CylinderMesh.new()
+	body_shape.height = 2.0
+	body_shape.top_radius = 1.2
+	body_shape.bottom_radius = 1.2
+	core.mesh = body_shape
+	core.material_override = station_skin
+	_visual_station_target.add_child(core)
+	var light := MeshInstance3D.new()
+	light.name = "Station transponder light"
+	var light_shape := SphereMesh.new()
+	light_shape.radius = 0.85
+	light_shape.height = 1.7
+	light.mesh = light_shape
+	light.position.y = 2.4
+	light.material_override = station_beacon
+	_visual_station_target.add_child(light)
 	# Greybox ship hull is 8m long, 2.5m high, with visible wings spanning
 	# ~6m. The ORIGINAL C++ physics uses a conservative 5.2m bounding sphere.
 	# Neither these meshes nor the camera writes any collision or ship pose.
@@ -557,6 +605,7 @@ func _build_native_space_preview() -> void:
 	body.mesh = body_mesh
 	body.material_override = ship_material
 	exterior_ship_visual.add_child(body)
+	var model_wings: Array[Node3D] = []
 	for side in [-1,1]:
 		var wing := MeshInstance3D.new()
 		wing.name = "Native hull wing" + str(side)
@@ -566,6 +615,10 @@ func _build_native_space_preview() -> void:
 		wing.material_override = ship_material
 		wing.position = Vector3(-0.25, -0.45, float(side) * 2.35)
 		exterior_ship_visual.add_child(wing)
+		model_wings.append(wing)
+	# The model decorates existing hull/wing nodes; original SHIP owns
+	# heading, pose, physics and SQLite. Direct children remain 4.
+	INDUSTRIAL_SHIP.decorate_external_body(body, model_wings)
 	exterior_camera = Camera3D.new()
 	exterior_camera.name = "OriginalShip_ThirdPersonCamera"
 	exterior_camera.position = Vector3(-16.0, 7.0, 0.0)
@@ -578,6 +631,42 @@ func _build_native_space_preview() -> void:
 static func native_heading_to_godot_yaw(heading: int) -> float:
 	# Original yaw 0 = +X; 90 = +native Y = -Godot Z.
 	return deg_to_rad(float(heading % 360))
+
+func _apply_visual_quality() -> void:
+	if is_instance_valid(exterior_camera):
+		VISUAL_QUALITY.apply_camera(exterior_camera, _visual_high_quality)
+	if is_instance_valid(player) and is_instance_valid(player.camera):
+		VISUAL_QUALITY.apply_camera(player.camera, _visual_high_quality)
+	VISUAL_QUALITY.set_background_quality(_visual_inertial_stars, _visual_high_quality)
+	_refresh_station_visual_target()
+
+func _refresh_station_visual_target() -> void:
+	if not is_instance_valid(_visual_station_target):
+		return
+	_visual_station_target.visible = false
+	if not bool(_verified_station_nav.get("found", false)):
+		return
+	var range_m := float(_verified_station_nav.get("range_m", -1.0))
+	# Don't draw a fabricated station when the C++ return vector is out of
+	# draw range; the honest distance/bearing HUD remains visible instead.
+	if range_m < 25.0 or range_m > VISUAL_QUALITY.distance_m(_visual_high_quality) - 40.0:
+		return
+	_visual_station_target.position = Vector3(
+		float(_verified_station_nav.get("dx_mm", 0))/1000.0,
+		float(_verified_station_nav.get("dz_mm", 0))/1000.0,
+		-float(_verified_station_nav.get("dy_mm", 0))/1000.0)
+	_visual_station_target.visible = true
+
+func _toggle_visual_quality() -> void:
+	_visual_high_quality = not _visual_high_quality
+	_apply_visual_quality()
+	_on_native_player_status("R9700 PRESENTATION: %s, %.0fm camera draw, genuine station navigation unchanged" % [
+		"HIGH" if _visual_high_quality else "BALANCED",
+		VISUAL_QUALITY.distance_m(_visual_high_quality)])
+	if _physical_trace != null and _physical_trace.enabled():
+		_physical_trace.record("visual_quality_changed", {
+			"high":_visual_high_quality,
+			"draw_distance_m":VISUAL_QUALITY.distance_m(_visual_high_quality)})
 
 func _toggle_technical_details() -> void:
 	_show_technical_details = not _show_technical_details
@@ -911,6 +1000,10 @@ func _advance_native_handoff() -> void:
 		player.use_native_authority(_player_session_autoconnect)
 
 func _unhandled_input(event: InputEvent) -> void:
+	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_F4:
+		_toggle_visual_quality()
+		get_viewport().set_input_as_handled()
+		return
 	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_F6:
 		_ask_world_reset()
 		get_viewport().set_input_as_handled()
@@ -1124,6 +1217,8 @@ func _capture_operator_view() -> void:
 		"original_rock":_verified_flight_rock.duplicate(true) if not joined.is_empty() else {},
 		"original_target_instrument":joined,
 		"original_nearest_station":_verified_station_nav.duplicate(true),
+		"visual_quality_high":_visual_high_quality,
+		"camera_draw_distance_m":VISUAL_QUALITY.distance_m(_visual_high_quality),
 		"exterior_camera":is_instance_valid(exterior_camera) and exterior_camera.current,
 		"person_camera":is_instance_valid(player) and is_instance_valid(player.camera) and player.camera.current,
 		"operator_visual_judgment":"NOT YET RECORDED"
@@ -1255,6 +1350,7 @@ func _on_native_station_nav(nav: Dictionary) -> void:
 			navigation_label.text = STATION_NAV.display({})
 		return
 	_verified_station_nav = readout
+	_refresh_station_visual_target()
 	if is_instance_valid(navigation_label):
 		navigation_label.text = STATION_NAV.display(readout)
 	if _physical_trace != null and _physical_trace.enabled():
@@ -1308,6 +1404,7 @@ func _on_native_ship_state(ship: Dictionary) -> void:
 	_verified_flight_ship = ship.duplicate(true)
 	_verified_flight_rock.clear()
 	_verified_station_nav.clear()
+	_refresh_station_visual_target()
 	if is_instance_valid(navigation_label):
 		navigation_label.text = STATION_NAV.display({})
 	_refresh_native_flight_instruments()
