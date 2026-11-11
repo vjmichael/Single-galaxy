@@ -192,14 +192,26 @@ static int run_host(int argc,char** argv){
     }
     std::uint64_t result=0;
     if(dock_assign){
-      if(!dock_ledger.assign(world.world(),local_station,kOwner,ship)){
-        deny(req,"dock-worker-unavailable-or-on-duty");continue;
+      // Selector zero means "first eligible real local worker"; no UI
+      // requires a creator to know an opaque internal NPC identifier.
+      bool appointed=false;
+      if(ship!=0){
+        appointed=dock_ledger.assign(world.world(),local_station,kOwner,ship);
+      }else{
+        for(const auto& [npc_id,npc]:world.world().npc_records()){
+          if(npc.location==local_station &&
+             dock_ledger.assign(world.world(),local_station,kOwner,npc_id)){
+            appointed=true;break;
+          }
+        }
       }
+      if(!appointed){deny(req,"no-available-local-dock-worker");continue;}
       result=1;
     }else if(dock_release){
-      if(!dock_ledger.release(local_station,kOwner,ship)){
-        deny(req,"dock-worker-not-assigned-here");continue;
-      }
+      const bool released=ship ?
+        dock_ledger.release(local_station,kOwner,ship) :
+        dock_ledger.release_first(local_station,kOwner);
+      if(!released){deny(req,"dock-worker-not-assigned-here");continue;}
       result=2;
     }else if(dock_passenger){
       // A genuine named-NPC appointment, not boarding or immigration.
@@ -214,8 +226,14 @@ static int run_host(int argc,char** argv){
       result=4;
     }else if(dock_work){
       // Only actual assigned staff can advance one durable original job.
-      result=dock_ledger.serve_one(world,local_station,kOwner)?5:6;
-      if(result==5)
+      const auto staff=dock_ledger.active_staff(world.world(),local_station,kOwner);
+      std::uint64_t completed=0;
+      for(std::uint64_t n=0;n<std::min<std::uint64_t>(staff,4);++n) {
+        if(!dock_ledger.serve_one(world,local_station,kOwner))break;
+        ++completed;
+      }
+      result=completed?5:6;
+      if(completed)
         galaxy::server_dx::committed_breadcrumb(world.world().tick(),world.generation());
     }
     const auto data=dock_ledger.snapshot(world.world(),local_station,kOwner);
