@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Attest a reproduced historical *v85 saved SQLite* from the authentic v86-era
+"""Attest a reproduced historical *v85 saved SQLite* from the authentic pre-v109
 game kernel. This is NOT an archived v86 database or an old signed executable.
 
 The pinned original PLAY13D test already issues real native commands to an
@@ -15,8 +15,8 @@ import os
 from pathlib import Path
 import subprocess
 
-SOURCE_COMMIT = "d2cf352346a0574225e156f89e1baf1ac8ed9bd9"
-SOURCE_TEST_BLOB = "23516163160b4e8730553371eb04666082ae6231"
+SOURCE_COMMIT = "19c58bca0b75a6899eb0a38cb79e0e0a77a37f3b"
+SOURCE_TEST_BLOB = "6add9dfbf4cbb0a19794abaadd7e699239923e08"
 SOURCE_TEST = "tests/PLAY13D_RegionalFacilitiesTests.cpp"
 CAPTURE_ENV = "SG_WO3_HISTORICAL_CAPTURE_OUTPUT"
 
@@ -63,7 +63,7 @@ def prepare(source):
     )
     original = original.replace(anchor, source_injection)
     original = original.replace("#include <chrono>\n", "#include <chrono>\n#include <cstdlib>\n", 1)
-    main_anchor = '        scenario(dir/"farm.sqlite",true);'
+    main_anchor = '            scenario(dir/"farm.sqlite",true);'
     if original.count(main_anchor) != 1:
         raise RuntimeError("native farm scenario anchor missing/ambiguous")
     original = original.replace(
@@ -78,7 +78,7 @@ def prepare(source):
     changed = git(source, "diff", "--name-only").splitlines()
     if changed != [SOURCE_TEST]:
         raise RuntimeError("instrumentation attempted to modify original kernel")
-    print("Original v86-era game source pinned to", SOURCE_COMMIT)
+    print("Original pre-v109 game source pinned to", SOURCE_COMMIT)
     print("Historical native core unmodified; observational test only:", SOURCE_TEST)
 
 
