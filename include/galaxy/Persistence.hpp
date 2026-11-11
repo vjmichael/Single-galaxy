@@ -942,6 +942,10 @@ public:
     bool station_dock_worker_transfer(PlayerId owner,EntityId ship,
         EntityId station,std::uint64_t npc_id,bool disembark,
         std::uint64_t receipt,FailPoint fail=FailPoint::None);
+    bool station_visitor_transfer(PlayerId owner,EntityId receiver,
+        EntityId station,std::uint64_t npc_id,std::uint64_t voyage,
+        bool ashore,std::uint64_t receipt,
+        FailPoint fail=FailPoint::None);
     bool grant_player_rescue_consent(PlayerId owner,EntityId receiver,
         std::uint64_t consent_id,FailPoint fail=FailPoint::None);
     bool revoke_player_rescue_consent(PlayerId owner,std::uint64_t consent_id,
