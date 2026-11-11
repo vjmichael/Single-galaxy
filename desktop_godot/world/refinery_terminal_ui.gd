@@ -66,8 +66,8 @@ func _ready() -> void:
 	_dock_release_button.pressed.connect(func(): dock_release_requested.emit())
 	workers.add_child(_dock_release_button)
 	var passenger := Button.new()
-	passenger.text = "Register next available resident for passenger check-in"
-	passenger.tooltip_text = "Named resident check-in only. Physical boarding and travel are separate future actions."
+	passenger.text = "Book a real ferry boarding"
+	passenger.tooltip_text = "Requires two real owned ships at this colony, original named passenger, available ferry seats and supplies; boarding follows native dock-worker scheduling."
 	passenger.pressed.connect(func(): dock_passenger_requested.emit())
 	column.add_child(passenger)
 	var freight := HBoxContainer.new()
@@ -134,12 +134,15 @@ func set_dock_status(snapshot: Dictionary) -> void:
 	var passengers := int(snapshot.get("passengers",0))
 	var tonnes := int(snapshot.get("freight_tonnes",0))
 	var held := int(snapshot.get("held_jobs",0))
-	_dock_status.text = "Station #%d | %d available workers | %d experienced cargo handlers\n%d services/cycle | %d local check-ins waiting | %d t docked freight | %d held\n%d check-ins processed (not boarded) | %d t unloaded to local hangar" % [
+	_dock_status.text = "Station #%d | %d available dock workers | %d experienced cargo handlers\n%d services/cycle | %d passenger gangways | %d%% boarding congestion\n%d passengers awaiting real boarding (%d urgent) | %d completed ferry boardings\n%d t real docked freight | %d held freight | %d held passenger requests\n%d t unloaded to this colony's original hangar" % [
 		int(snapshot.get("station",0)),staff,int(snapshot.get("qualified_staff",0)),
-		int(snapshot.get("service_capacity",0)),passengers,tonnes,held,
-		int(snapshot.get("checked_in",0)),int(snapshot.get("handled_tonnes",0))]
+		int(snapshot.get("service_capacity",0)),int(snapshot.get("gangways",0)),
+		int(snapshot.get("congestion",0)),int(snapshot.get("boarding_waiting",0)),
+		int(snapshot.get("urgent_boarding",0)),int(snapshot.get("actually_boarded",0)),
+		tonnes,held,int(snapshot.get("boarding_held",0)),
+		int(snapshot.get("handled_tonnes",0))]
 	_dock_staff.text = "Dock workers: %d on active original-world shifts" % staff
-	_dock_serve_button.disabled = staff <= 0 or (passengers+tonnes)==0
+	_dock_serve_button.disabled = staff <= 0 or (passengers+tonnes+int(snapshot.get("boarding_waiting",0)))==0
 	_dock_release_button.disabled = staff <= 0
 	_dock_queue_button.disabled = int(_current.get("eligible_ship",0)) <= 0
 
