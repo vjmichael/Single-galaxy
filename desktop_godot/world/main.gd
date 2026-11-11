@@ -182,6 +182,7 @@ func _ready() -> void:
 	native_station_session.refinery_received.connect(_on_native_refinery_state)
 	native_station_session.colony_population_received.connect(_on_native_colony_population)
 	native_station_session.dock_received.connect(_on_native_dock_status)
+	native_station_session.dock_pedestrians_received.connect(_on_native_dock_pedestrians)
 	native_station_session.dock_destinations_received.connect(_on_dock_destinations)
 	native_station_session.regional_sources_received.connect(_on_dock_regional_source)
 	native_station_session.status_changed.connect(_on_native_station_status)
@@ -1283,6 +1284,16 @@ func _on_native_dock_status(snapshot: Dictionary) -> void:
 	# Refresh only the bounded original named-NPC observation; no actor spawn
 	# or queue service is executed by the rendering loop.
 	_population_requested = false
+
+func _on_native_dock_pedestrians(frame: Dictionary) -> void:
+	if native_station_session==null or not native_station_session.is_active() or \
+			last_station_player_state!=4:
+		return
+	var station:=int(native_station_session._person.get("station",-1))
+	if station<=0 or int(frame.get("station",-1))!=station:
+		return
+	if is_instance_valid(_colony_population_visual):
+		_colony_population_visual.show_native_walkers(frame,station)
 
 func _on_native_colony_population(snapshot: Dictionary) -> void:
 	# The only census comes from original C++ named NPC custody; capped
