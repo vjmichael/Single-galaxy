@@ -46,9 +46,9 @@ func clear() -> void:
 
 func show_source_counts(frame: Dictionary, station: int) -> void:
 	# Zero/stale source never creates an artificial crowd.
-	if station <= 0 or station != int(frame.get("station", -1)) or
+	if (station <= 0 or station != int(frame.get("station", -1)) or
 			int(frame.get("source_count",-1)) < 0 or
-			int(frame.get("dock_staff",-1)) < 0:
+			int(frame.get("dock_staff",-1)) < 0):
 		clear()
 		return
 	_last_station = station
