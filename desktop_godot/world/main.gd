@@ -182,6 +182,7 @@ func _ready() -> void:
 	native_station_session.refinery_received.connect(_on_native_refinery_state)
 	native_station_session.colony_population_received.connect(_on_native_colony_population)
 	native_station_session.dock_received.connect(_on_native_dock_status)
+	native_station_session.dock_destinations_received.connect(_on_dock_destinations)
 	native_station_session.status_changed.connect(_on_native_station_status)
 	native_station_session.connection_changed.connect(_on_native_station_connection)
 	refinery_terminal.refine_requested.connect(_on_native_refine_requested)
@@ -192,6 +193,9 @@ func _ready() -> void:
 	refinery_terminal.dock_freight_requested.connect(_on_dock_freight_requested)
 	refinery_terminal.dock_passenger_requested.connect(_on_dock_passenger_requested)
 	refinery_terminal.dock_service_requested.connect(_on_dock_service_requested)
+	refinery_terminal.dock_destinations_requested.connect(_on_dock_destinations_requested)
+	refinery_terminal.dock_route_requested.connect(_on_dock_route_requested)
+	refinery_terminal.dock_cancel_requested.connect(_on_dock_cancel_requested)
 	refinery_terminal.terminal_closed.connect(_hide_refinery_terminal)
 	_player_session_autoconnect = not Engine.is_editor_hint() and DisplayServer.get_name() != "headless" and not OS.get_cmdline_args().has("--script")
 	_physical_trace = PHYSICAL_TRACE.new()
@@ -1220,6 +1224,26 @@ func _on_dock_service_requested() -> void:
 	if _dock_commands_allowed():
 		native_station_session.advance_dock_services()
 
+func _on_dock_destinations_requested() -> void:
+	if _dock_commands_allowed():
+		native_station_session.request_dock_destinations()
+
+func _on_dock_route_requested(destination: int, receiver: int) -> void:
+	if _dock_commands_allowed():
+		native_station_session.schedule_intercolony_ferry(destination,receiver)
+
+func _on_dock_cancel_requested(route_id: int) -> void:
+	if _dock_commands_allowed():
+		native_station_session.cancel_reviewable_route(route_id)
+
+func _on_dock_destinations(frame: Dictionary) -> void:
+	if not _dock_commands_allowed():
+		return
+	var station := int(native_station_session._person.get("station",-1))
+	if int(frame.get("station",-2))!=station:
+		return
+	refinery_terminal.set_destinations(frame)
+
 func _on_native_dock_status(snapshot: Dictionary) -> void:
 	if native_station_session == null or not native_station_session.is_active() or \
 			last_station_player_state != 4:
@@ -1228,6 +1252,9 @@ func _on_native_dock_status(snapshot: Dictionary) -> void:
 		return
 	if is_instance_valid(refinery_terminal):
 		refinery_terminal.set_dock_status(snapshot)
+	if is_instance_valid(_colony_population_visual):
+		_colony_population_visual.show_source_traffic(snapshot,
+			int(snapshot.get("station",0)))
 	# Refresh only the bounded original named-NPC observation; no actor spawn
 	# or queue service is executed by the rendering loop.
 	_population_requested = false
