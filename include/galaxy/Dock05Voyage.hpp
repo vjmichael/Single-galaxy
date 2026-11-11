@@ -110,6 +110,12 @@ public:
                               "WHERE origin=? AND owner=? AND outcome=6");
         a.bind(1,origin);a.bind(2,owner);
         if(a.next()==SQLITE_ROW)v.delivered+=a.number(0);
+        dock::Statement arrived(db_,"SELECT COALESCE(SUM(people),0) "
+            "FROM dock05_terminal_audit_v1 "
+            "WHERE origin=? AND owner=? AND outcome=6");
+        arrived.bind(1,origin);arrived.bind(2,owner);
+        if(arrived.next()==SQLITE_ROW)
+            v.visitors_arrived+=arrived.number(0);
         dock::Statement review(db_,"SELECT COALESCE(MAX(id),0) FROM "
             "dock05_route_v1 WHERE origin=? AND owner=? AND stage IN(0,7,9)");
         review.bind(1,origin);review.bind(2,owner);
@@ -334,6 +340,65 @@ public:
                 }
             }
         }
+    }
+    // Retain recent finished journeys in the active routing table. Move
+    // older completed rows into a compact immutable summary ONLY after
+    // independent voyage and dock-walk receipts have been verified.
+    // Original world travel/visitor receipts are never deleted.
+    std::uint64_t archive_delivered(const Simulation& sim,EntityId origin,
+                                    PlayerId owner,std::uint64_t retain=64){
+        if(!origin||!owner||retain<8||retain>128)return 0;
+        dock::Statement q(db_,"SELECT id,receiver,ferry,destination "
+            "FROM dock05_route_v1 WHERE origin=? AND owner=? AND stage=6 "
+            "ORDER BY id DESC LIMIT -1 OFFSET ?");
+        q.bind(1,origin);q.bind(2,owner);q.bind(3,retain);
+        struct Terminal{std::uint64_t id,receiver,ferry,destination,count;};
+        std::vector<Terminal> ready;
+        while(q.next()==SQLITE_ROW)
+            ready.push_back({q.number(0),q.number(1),q.number(2),q.number(3),0});
+        for(auto& route:ready){
+            dock::Statement p(db_,"SELECT npc,voyage,ordinal FROM "
+                "dock05_route_people_v1 WHERE route=? AND stage=4");
+            p.bind(1,route.id);
+            while(p.next()==SQLITE_ROW){
+                const auto npc=p.number(0),voyage=p.number(1),
+                           ordinal=p.number(2);
+                if(!sim.original_completed_ferry_guest(npc,route.receiver,voyage) ||
+                   !visitor_proven(visitor_receipt(route.id,ordinal),
+                       npc,voyage,route.receiver,route.destination))
+                    throw std::runtime_error("delivered route lacks original arrival proof");
+                ++route.count;
+            }
+            dock::Statement total(db_,"SELECT COUNT(*) FROM dock05_route_people_v1 "
+                                   "WHERE route=?");
+            total.bind(1,route.id);
+            if(total.next()!=SQLITE_ROW || route.count==0 ||
+               route.count!=total.number(0))
+                throw std::runtime_error("route archive missing real passenger");
+        }
+        if(ready.empty())return 0;
+        exec("BEGIN IMMEDIATE");
+        try{
+            for(const auto& route:ready){
+                dock::Statement audit(db_,"INSERT INTO dock05_terminal_audit_v1 "
+                    "(route,owner,origin,destination,ferry,receiver,people,"
+                    "completed_tick,outcome) VALUES(?,?,?,?,?,?,?,?,6)");
+                audit.bind(1,route.id);audit.bind(2,owner);audit.bind(3,origin);
+                audit.bind(4,route.destination);audit.bind(5,route.ferry);
+                audit.bind(6,route.receiver);audit.bind(7,route.count);
+                audit.bind(8,sim.tick());audit.next();
+                dock::Statement remove_people(db_,"DELETE FROM "
+                    "dock05_route_people_v1 WHERE route=?");
+                remove_people.bind(1,route.id);remove_people.next();
+                dock::Statement remove_route(db_,"DELETE FROM dock05_route_v1 "
+                    "WHERE id=? AND stage=6 AND origin=? AND owner=?");
+                remove_route.bind(1,route.id);remove_route.bind(2,origin);
+                remove_route.bind(3,owner);remove_route.next();
+                if(sqlite3_changes(db_)!=1)
+                    throw std::runtime_error("delivered route archive raced original journey");
+            }
+            exec("COMMIT");return ready.size();
+        }catch(...){exec("ROLLBACK");throw;}
     }
     // Review held jobs without replay; the original physical state always
     // wins. A reviewer can safely abandon an unstarted route, but cannot
