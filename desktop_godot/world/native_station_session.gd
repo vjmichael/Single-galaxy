@@ -5,6 +5,7 @@ const SGDX_LAUNCH := preload("res://world/sgdx_process_launch.gd")
 signal person_received(person: Dictionary)
 signal refinery_received(snapshot: Dictionary)
 signal colony_population_received(snapshot: Dictionary)
+signal dock_received(snapshot: Dictionary)
 signal status_changed(message: String)
 signal connection_changed(connected: bool)
 
@@ -34,6 +35,7 @@ var _person := {}
 var _refinery_receiving := false
 var _pending_refinery_kind := "" # VIEW, REFINE or UNLOAD; never reuse a stale receipt
 var _pending_population := false
+var _pending_dock_kind := ""
 var _refinery_header := {}
 var _refinery_lots: Array[Dictionary] = []
 var _refinery_minerals := {}
@@ -140,6 +142,7 @@ func start() -> void:
 	_queued_hangar_ready_msec = 0
 	_pending_refinery_kind = ""
 	_pending_population = false
+	_pending_dock_kind = ""
 	_next_request = 1
 	_last_send = -10000
 	_buffer.clear()
@@ -187,6 +190,9 @@ func _integer(value: String) -> bool:
 
 func _accept_line(line: String) -> void:
 	var f := line.split("|", false)
+	if f.size() > 0 and f[0] == "DOCK":
+		_accept_dock(f)
+		return
 	if f.size() > 0 and f[0] == "COLPOP":
 		_accept_colony_population(f)
 		return
@@ -207,6 +213,7 @@ func _accept_line(line: String) -> void:
 				_status("Native WALK rejected; press E again after reaching the hatch")
 			_pending_refinery_kind = ""
 			_pending_population = false
+			_pending_dock_kind = ""
 			_refinery_receiving = false
 			_refinery_header.clear()
 			_refinery_lots.clear()
@@ -263,6 +270,95 @@ func _accept_line(line: String) -> void:
 			_last_send + NATIVE_HANGAR_COMMAND_GAP_MS)
 		_status("E received — synchronizing original station boarding after WALK receipt")
 
+func _accept_dock(f: PackedStringArray) -> void:
+	# Every status is a response to one local one-use command. Never allow
+	# client forecasts to replace authoritative worker or cargo counts.
+	if f.size() != 15 or f[1] != "1" or _pending_dock_kind.is_empty():
+		stop("Unrequested dock service receipt")
+		return
+	for i in range(2, 15):
+		if not _integer(f[i]):
+			stop("Malformed original dock receipt")
+			return
+	var session := int(f[2])
+	var req := int(f[3])
+	var tick := int(f[4])
+	var generation := int(f[5])
+	var station := int(f[6])
+	var staff := int(f[7])
+	var passengers := int(f[8])
+	var tonnes := int(f[9])
+	var jobs := int(f[10])
+	var held := int(f[11])
+	var completed_people := int(f[12])
+	var completed_tonnes := int(f[13])
+	var result := int(f[14])
+	var expected_result := {"VIEW":[0],"ASSIGN":[1],"RELEASE":[2],
+		"PASS":[3],"FREIGHT":[4],"WORK":[5,6]}
+	if session != _session or req != _pending or tick < _tick or generation < _generation or \
+			int(_person.get("state",-1)) != 4 or station != int(_person.get("station",-1)) or \
+			staff < 0 or staff > 16 or passengers < 0 or passengers > 128 or \
+			tonnes < 0 or tonnes > 8192 or jobs < 0 or jobs > 128 or held < 0 or held > 128 or \
+			completed_people < 0 or completed_tonnes < 0 or \
+			not expected_result.get(_pending_dock_kind,[]).has(result):
+		stop("Original dock receipt violates source custody or queue bounds")
+		return
+	_pending = 0
+	_pending_dock_kind = ""
+	_tick = tick
+	_generation = generation
+	var snapshot := {"station":station,"dock_staff":staff,
+		"passengers":passengers,"freight_tonnes":tonnes,"freight_jobs":jobs,
+		"held_jobs":held,"checked_in":completed_people,
+		"handled_tonnes":completed_tonnes,"result":result,
+		"tick":tick,"generation":generation}
+	dock_received.emit(snapshot)
+	_status("Dock assignment changed" if result in [1,2] else
+		"Freight service updated" if result in [4,5] else
+		"Passenger checked into local queue" if result==3 else
+		"Dock workers unavailable or queue idle" if result==6 else
+		"Dock services ready")
+
+func request_dock_status() -> bool:
+	return _submit_dock("VIEW",0)
+
+func assign_available_dock_worker() -> bool:
+	return _submit_dock("ASSIGN",0)
+
+func end_dock_worker_shift() -> bool:
+	return _submit_dock("RELEASE",0)
+
+func queue_docked_freight_tonne() -> bool:
+	if int(_person.get("eligible_ship",0)) <= 0:
+		_status("No original owned ship docked at this colony")
+		return false
+	return _submit_dock("FREIGHT",int(_person["eligible_ship"]),1)
+
+func advance_dock_services() -> bool:
+	return _submit_dock("WORK",int(_person.get("station",0)))
+
+func _submit_dock(kind: String, source: int, quantity: int = 0) -> bool:
+	if not _active or _session<=0 or _pending!=0 or \
+			int(_person.get("state",-1)) != 4 or \
+			Time.get_ticks_msec()-_last_send < NATIVE_HANGAR_COMMAND_GAP_MS:
+		_status("Dock service busy; retry after current native acknowledgement")
+		return false
+	var op := {"VIEW":"DOCKVIEW","ASSIGN":"DOCKASSIGN",
+		"RELEASE":"DOCKRELEASE","FREIGHT":"DOCKFREIGHT",
+		"WORK":"DOCKWORK"}.get(kind,"")
+	if op.is_empty():
+		return false
+	var request := _next_request
+	_next_request += 1
+	_pending = request
+	_pending_dock_kind = kind
+	_last_send = Time.get_ticks_msec()
+	var line := "%s|%d|%d|%d|%d" % [op,_session,request,_generation,source]
+	if kind=="FREIGHT":
+		line += "|%d" % quantity
+	_send(line)
+	return true
+
 func _accept_colony_population(f: PackedStringArray) -> void:
 	# A single read-only observation from bounded named NPC source records.
 	# Never materialize individual NPCs or a second population ledger.
@@ -285,7 +381,7 @@ func _accept_colony_population(f: PackedStringArray) -> void:
 			generation!=_generation or int(_person.get("state",-1))!=4 or \
 			station!=int(_person.get("station",-1)) or \
 			present<0 or present>4096 or assigned<0 or assigned>present or \
-			truncated not in [0,1]:
+			truncated not in [0,1] or (assigned>present and truncated==0):
 		stop("Colony population from mismatched source or unbounded count")
 		return
 	_pending = 0
@@ -608,5 +704,6 @@ func stop(message: String = "Station session closed", graceful: bool = false) ->
 	_queued_hangar_intent = false
 	_queued_hangar_ready_msec = 0
 	_pending_refinery_kind = ""
+	_pending_dock_kind = ""
 	connection_changed.emit(false)
 	_status(message)
