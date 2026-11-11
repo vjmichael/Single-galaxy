@@ -7,6 +7,7 @@ signal refinery_received(snapshot: Dictionary)
 signal colony_population_received(snapshot: Dictionary)
 signal dock_received(snapshot: Dictionary)
 signal dock_destinations_received(frame: Dictionary)
+signal regional_sources_received(frame: Dictionary)
 signal status_changed(message: String)
 signal connection_changed(connected: bool)
 
@@ -202,6 +203,9 @@ func _integer(value: String) -> bool:
 
 func _accept_line(line: String) -> void:
 	var f := line.split("|", false)
+	if f.size() > 0 and f[0] == "DREG":
+		_accept_regional_source(f)
+		return
 	if f.size() > 0 and f[0] == "DDEST":
 		_accept_dock_destinations(f)
 		return
@@ -290,6 +294,35 @@ func _accept_line(line: String) -> void:
 			_last_send + NATIVE_HANGAR_COMMAND_GAP_MS)
 		_status("E received — synchronizing original station boarding after WALK receipt")
 
+func _accept_regional_source(f: PackedStringArray) -> void:
+	if f.size()!=14 or f[1]!="1" or _pending_dock_kind!="REGIONS":
+		stop("Unrequested regional source")
+		return
+	for i in range(2,12):
+		if not _integer(f[i]):
+			stop("Invalid regional source identity")
+			return
+	var count := int(f[7])
+	var index := int(f[8])
+	if int(f[2])!=_session or int(f[3])!=_pending or \
+			int(f[4])<_tick or int(f[5])<_generation or \
+			int(f[6])!=int(_person.get("station",-1)) or \
+			int(_person.get("state",-1))!=4 or count<0 or count>16 or \
+			index<0 or index>count or int(f[9])<0 or \
+			int(f[10])<0 or int(f[11])<0 or \
+			f[12].length()>12 or f[13].length()>12 or \
+			(index==0 and (int(f[9])!=0 or int(f[10])!=0 or int(f[11])!=0)):
+		stop("Regional population not backed by current original authority")
+		return
+	_pending=0
+	_pending_dock_kind=""
+	_tick=int(f[4])
+	_generation=int(f[5])
+	regional_sources_received.emit({"station":int(f[6]),"count":count,
+		"index":index,"population":int(f[9]),
+		"authority_generation":int(f[10]),"revision":int(f[11]),
+		"scope":f[12],"colony":f[13]})
+
 func _accept_dock_destinations(f: PackedStringArray) -> void:
 	if f.size()<8 or f[1]!="1" or _pending_dock_kind!="DESTS":
 		stop("Unexpected dock destination receipt")
@@ -328,10 +361,10 @@ func _accept_dock_destinations(f: PackedStringArray) -> void:
 func _accept_dock(f: PackedStringArray) -> void:
 	# Every status is a response to one local one-use command. Never allow
 	# client forecasts to replace authoritative worker or cargo counts.
-	if f.size() != 29 or f[1] != "1" or _pending_dock_kind.is_empty():
+	if f.size() != 32 or f[1] != "1" or _pending_dock_kind.is_empty():
 		stop("Unrequested dock service receipt")
 		return
-	for i in range(2, 29):
+	for i in range(2, 32):
 		if not _integer(f[i]):
 			stop("Malformed original dock receipt")
 			return
@@ -362,9 +395,12 @@ func _accept_dock(f: PackedStringArray) -> void:
 	var passengers_travelling := int(f[26])
 	var visitors_arrived := int(f[27])
 	var reviewable_route := int(f[28])
+	var cold_population := int(f[29])
+	var travel_pressure := int(f[30])
+	var source_bound := int(f[31])
 	var expected_result := {"VIEW":[0],"ASSIGN":[1],"RELEASE":[2],
 		"PASS":[3],"FREIGHT":[4],"WORK":[5,6,9],
-		"ROUTE":[7],"CANCEL":[8]}
+		"ROUTE":[7],"CANCEL":[8],"BIND":[10]}
 	if session != _session or req != _pending or tick < _tick or generation < _generation or \
 			int(_person.get("state",-1)) != 4 or station != int(_person.get("station",-1)) or \
 			staff < 0 or staff > 16 or passengers < 0 or passengers > 128 or \
@@ -377,6 +413,9 @@ func _accept_dock(f: PackedStringArray) -> void:
 			active_routes<0 or active_routes>10000 or delivered_routes<0 or \
 			held_routes<0 or passengers_travelling<0 or \
 			visitors_arrived<0 or reviewable_route<0 or \
+			cold_population<0 or travel_pressure<0 or travel_pressure>128 or \
+			source_bound not in [0,1] or (source_bound==0 and \
+				(cold_population!=0 or travel_pressure!=0)) or \
 			not expected_result.get(_pending_dock_kind,[]).has(result):
 		stop("Original dock receipt violates source custody or queue bounds")
 		return
@@ -398,6 +437,8 @@ func _accept_dock(f: PackedStringArray) -> void:
 		"delivered_routes":delivered_routes,"held_routes":held_routes,
 		"passengers_travelling":passengers_travelling,
 		"visitors_arrived":visitors_arrived,"reviewable_route":reviewable_route,
+		"cold_population":cold_population,"travel_pressure":travel_pressure,
+		"regional_source_bound":source_bound==1,
 		"checked_in":completed_people,
 		"handled_tonnes":completed_tonnes,"result":result,
 		"tick":tick,"generation":generation}
@@ -405,6 +446,7 @@ func _accept_dock(f: PackedStringArray) -> void:
 	_status("Dock assignment changed" if result in [1,2] else
 		"Freight service updated" if result in [4,5] else
 		"Passenger booked against an actual local ferry berth" if result==3 else
+		"Verified regional population source linked" if result==10 else
 		"Ferry journey scheduled from original ships" if result==7 else
 		"Unstarted ferry route withdrawn" if result==8 else
 		"Ferry and original travel progressing" if result==9 else
@@ -450,6 +492,17 @@ func queue_docked_freight_tonne() -> bool:
 func advance_dock_services() -> bool:
 	return _submit_dock("WORK",int(_person.get("station",0)))
 
+func request_regional_population_source(index: int = 1) -> bool:
+	return _submit_dock("REGIONS",index)
+
+func bind_regional_population_source(index: int,authority_generation: int,
+		checkpoint_revision: int,rate_per_million: int) -> bool:
+	if index<=0 or authority_generation<=0 or checkpoint_revision<=0 or \
+			rate_per_million<0 or rate_per_million>1000000:
+		return false
+	return _submit_dock("BIND",index,authority_generation,
+		checkpoint_revision,rate_per_million)
+
 func request_dock_destinations() -> bool:
 	return _submit_dock("DESTS",int(_person.get("station",0)))
 
@@ -464,7 +517,7 @@ func cancel_reviewable_route(route_id: int) -> bool:
 	return _submit_dock("CANCEL",route_id)
 
 func _submit_dock(kind: String, source: int, quantity: int = 0,
-		extra: int = 0) -> bool:
+		extra: int = 0, more: int = 0) -> bool:
 	if not _active or _session<=0 or _pending!=0 or \
 			int(_person.get("state",-1)) != 4 or \
 			Time.get_ticks_msec()-_last_send < NATIVE_HANGAR_COMMAND_GAP_MS:
@@ -473,7 +526,8 @@ func _submit_dock(kind: String, source: int, quantity: int = 0,
 	var op := {"VIEW":"DOCKVIEW","ASSIGN":"DOCKASSIGN",
 		"RELEASE":"DOCKRELEASE","PASS":"DOCKPASS","FREIGHT":"DOCKFREIGHT",
 		"WORK":"DOCKWORK","DESTS":"DOCKDESTS",
-		"ROUTE":"DOCKROUTE","CANCEL":"DOCKCANCEL"}.get(kind,"")
+		"ROUTE":"DOCKROUTE","CANCEL":"DOCKCANCEL",
+		"REGIONS":"DOCKREGIONS","BIND":"DOCKBIND"}.get(kind,"")
 	if op.is_empty():
 		return false
 	var request := _next_request
@@ -486,6 +540,8 @@ func _submit_dock(kind: String, source: int, quantity: int = 0,
 		line += "|%d" % quantity
 	elif kind=="ROUTE":
 		line += "|%d|%d" % [quantity,extra]
+	elif kind=="BIND":
+		line += "|%d|%d|%d" % [quantity,extra,more]
 	_send(line)
 	return true
 
