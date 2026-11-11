@@ -311,6 +311,9 @@ static int run_host(int argc,char** argv){
                     if(!contact || contact->rock!=desired) {
                         deny(req,"no-matching-original-rock-contact");continue;
                     }
+                    if(!contact->mining_tool_online) {
+                        deny(req,"no-original-powered-fitted-drill");continue;
+                    }
                     c.action=Action::Mine;c.target=desired;c.amount=1;
                 }else if(fitting){
                     c.action=Action::ConfigureMiningTool;
