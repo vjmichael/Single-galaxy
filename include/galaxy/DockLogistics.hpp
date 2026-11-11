@@ -87,7 +87,8 @@ class Ledger {
     s.bind(1,station);s.bind(2,owner);s.bind(3,sim.tick());s.bind(4,sim.tick());
     std::uint64_t count=0;
     while(s.next()==SQLITE_ROW){
-      const auto id=s.number(0),it=sim.npc_records().find(id);
+      const auto id=s.number(0);
+      const auto it=sim.npc_records().find(id);
       if(it!=sim.npc_records().end() && it->second.location==station &&
          it->second.role==NpcRole::Ship &&
          (it->second.assigned_site==0 || it->second.assigned_site==station) &&
