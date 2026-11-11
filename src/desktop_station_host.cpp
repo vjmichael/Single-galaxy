@@ -4,6 +4,7 @@
 // PLAY-STATION-02 development-native station spawn and boarding bridge.
 // Real person, original SQLite world and exact berth custody; fixture-only hull.
 #include "galaxy/Persistence.hpp"
+#include "galaxy/DockLogistics.hpp"
 #include "galaxy/StationLaunch.hpp"
 #include "galaxy/StationRefineryProtocol.hpp"
 #include <charconv>
@@ -103,6 +104,9 @@ static int run_host(int argc,char** argv){
   }
   if(!world.world().player_people().count(kOwner))
     throw std::runtime_error("existing world lacks registered person; no silent bootstrap");
+  // The dock ledger references real world IDs and never stores material stock.
+  // Reopen the SAME SQLite save under this already-acquired native writer lease.
+  dock::Ledger dock_ledger(save_utf8);
   const auto session=epoch();
   const auto receipt_prefix=(epoch()&((std::uint64_t{1}<<45)-1))<<14;
   std::uint64_t latest_request=0,budget=0;
@@ -128,12 +132,21 @@ static int run_host(int argc,char** argv){
    const bool colony_refine=colony_console&&f[0]=="COLREFINE";
    const bool colony_unload=colony_console&&f[0]=="COLUNLOAD";
    const bool population=f.size()==5&&f[0]=="POPVIEW";
-   if(!walking&&!boarding&&!exiting&&!view&&!refine&&!unload&&!colony_console&&!population){deny(0,"malformed");continue;}
-   std::uint64_t requested_session=0,req=0,expected=0,ship=0;
+   const bool dock_view=f.size()==5&&f[0]=="DOCKVIEW";
+   const bool dock_assign=f.size()==5&&f[0]=="DOCKASSIGN";
+   const bool dock_release=f.size()==5&&f[0]=="DOCKRELEASE";
+   const bool dock_passenger=f.size()==5&&f[0]=="DOCKPASS";
+   const bool dock_freight=f.size()==6&&f[0]=="DOCKFREIGHT";
+   const bool dock_work=f.size()==5&&f[0]=="DOCKWORK";
+   const bool dock_action=dock_view||dock_assign||dock_release||
+                          dock_passenger||dock_freight||dock_work;
+   if(!walking&&!boarding&&!exiting&&!view&&!refine&&!unload&&!colony_console&&!population&&!dock_action){deny(0,"malformed");continue;}
+   std::uint64_t requested_session=0,req=0,expected=0,ship=0,quantity=0;
    std::int64_t dx=0,dz=0;
    if(!parse(f[1],requested_session)||!parse(f[2],req)||!parse(f[3],expected)||
       (walking&&(!parse(f[4],dx)||!parse(f[5],dz)))||
-      (!walking&&!parse(f[4],ship))){deny(0,"integer");continue;}
+      (!walking&&!parse(f[4],ship))||
+      (dock_freight&&!parse(f[5],quantity))){deny(0,"integer");continue;}
    if(requested_session!=session){deny(req,"session");continue;}
    if(req<=latest_request||req>10000){deny(req,"replay");continue;}
    latest_request=req;
@@ -151,22 +164,69 @@ static int run_host(int argc,char** argv){
     // simulation of millions of named 3D NPCs. Truncation is explicit.
     // Only station-located named workers with a real station site
     // assignment and ship/logistics role qualify as dock workers.
-    std::uint64_t present=0,assigned=0,scanned=0;
+    std::uint64_t present=0,scanned=0;
     bool truncated=false;
     for(const auto& [id,npc]:world.world().npc_records()){
        (void)id;
        if(++scanned>4096){truncated=true;break;}
        if(npc.location!=ship)continue;
        ++present;
-       if(npc.assigned_site==ship && npc.role==NpcRole::Ship)++assigned;
     }
-    if(assigned>present)throw std::runtime_error("dock worker census invalid");
+    const auto assigned=dock_ledger.active_staff(world.world(),ship,kOwner);
     std::cout<<"COLPOP|1|"<<session<<'|'<<req<<'|'<<world.world().tick()
              <<'|'<<world.generation()<<'|'<<ship<<'|'<<present<<'|'
              <<assigned<<'|'<<(truncated?1:0)<<'\n'<<std::flush;
     if(!std::cout)throw std::runtime_error("colony population pipe closed");
     last=now;
     continue;
+   }
+   if(dock_action){
+    // Only the original authenticated physical PERSON opens local dock work.
+    if(person.owner!=kOwner || person.state!=PlayerPersonState::AtStation ||
+       !person.physical_station){
+      deny(req,"dock-service-requires-local-owner");continue;
+    }
+    const EntityId local_station=person.physical_station;
+    if((dock_view||dock_work) && ship!=local_station){
+      deny(req,"dock-service-is-local");continue;
+    }
+    std::uint64_t result=0;
+    if(dock_assign){
+      if(!dock_ledger.assign(world.world(),local_station,kOwner,ship)){
+        deny(req,"dock-worker-unavailable-or-on-duty");continue;
+      }
+      result=1;
+    }else if(dock_release){
+      if(!dock_ledger.release(local_station,kOwner,ship)){
+        deny(req,"dock-worker-not-assigned-here");continue;
+      }
+      result=2;
+    }else if(dock_passenger){
+      // A genuine named-NPC appointment, not boarding or immigration.
+      if(!dock_ledger.enqueue_passenger(world.world(),local_station,kOwner,ship)){
+        deny(req,"passenger-not-present-or-queue-full");continue;
+      }
+      result=3;
+    }else if(dock_freight){
+      if(!dock_ledger.enqueue_freight(world.world(),local_station,kOwner,ship,quantity)){
+        deny(req,"freight-not-docked-or-queue-full");continue;
+      }
+      result=4;
+    }else if(dock_work){
+      // Only actual assigned staff can advance one durable original job.
+      result=dock_ledger.serve_one(world,local_station,kOwner)?5:6;
+      if(result==5)
+        galaxy::server_dx::committed_breadcrumb(world.world().tick(),world.generation());
+    }
+    const auto data=dock_ledger.snapshot(world.world(),local_station,kOwner);
+    std::cout<<"DOCK|1|"<<session<<'|'<<req<<'|'<<world.world().tick()
+             <<'|'<<world.generation()<<'|'<<local_station
+             <<'|'<<data.staff<<'|'<<data.passengers<<'|'<<data.freight_tonnes
+             <<'|'<<data.freight_jobs<<'|'<<data.held_jobs
+             <<'|'<<data.completed_passengers<<'|'<<data.completed_tonnes
+             <<'|'<<result<<'\n'<<std::flush;
+    if(!std::cout)throw std::runtime_error("dock service response pipe closed");
+    last=now;continue;
    }
    if(view || refine || unload || colony_console){
     // The local remote terminal saves walking, NOT travel. Identity is
