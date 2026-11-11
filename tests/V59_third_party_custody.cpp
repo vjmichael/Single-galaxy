@@ -296,7 +296,9 @@ int main(){
   clone(base+".forged-approval","DROP TRIGGER sg_v56_approval_immutable_update; UPDATE sg_v56_approval SET principal='8' WHERE contract_id='frames-third-party' AND role=1;");
   clone(base+".lost-approvals","DROP TABLE sg_v56_approval;");
   std::cout<<"v56 three independent owners: source warehouse -> reserved third-party carrier -> jump -> receiving warehouse; crash/replay/tamper PASS\n";
-  for(const auto& file:{path,copy,corrupt,badledger})std::filesystem::remove(file);
-  return 0;
+  // Keep every independent source/receiver and negative tamper check;
+  // release the live native SQLite owners before Windows file deletion.
  }catch(const std::exception& e){std::cerr<<"v56 third-party custody FAIL: "<<e.what()<<'\n';return 1;}
+ for(const auto& file:{path,copy,corrupt,badledger})std::filesystem::remove(file);
+ return 0;
 }

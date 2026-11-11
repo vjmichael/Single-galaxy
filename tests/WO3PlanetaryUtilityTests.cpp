@@ -4,6 +4,7 @@
 #include "galaxy/WO2IndustryWorkforce.hpp"
 #include "galaxy/Persistence.hpp"
 #include "galaxy/NpcAppearanceGenome.hpp"
+#include "galaxy/RegionalModeAuthority.hpp"
 #include <sqlite3.h>
 #include <chrono>
 #include <filesystem>
@@ -71,11 +72,13 @@ int main() {
     Simulation seed(613,chosen.system);
     const auto ship=seed.add_colony_ship(7,{0,0},200,8);
     seed.provision_colony_genesis(ship,1000,3000,1000,1000,1000);
+    // Materialize named existing crew at genesis, BEFORE geology advances
+    // the canonical snapshot format beyond the pristine migration gate.
+    seed.enable_individual_workforce();
     seed.provision_starter_exploration_scanner(ship);
     const auto bulk=seed.add_asteroid({2000,0},150);
     const auto silicate=seed.add_geological_asteroid({1000,0},
         AsteroidClass::Silicate,30,2500);
-    seed.enable_individual_workforce();
     seed.ensure_physical_celestial_systems();
     seed.ensure_ship_frame_registry();
     const auto initial_mass=seed.total_ore();
@@ -103,6 +106,9 @@ int main() {
         w.world(),7,ship,orbital,false,operator_id,22,true);
     CHECK(assignment && w.submit(*assignment));w.step();
     CHECK(w.world().events().back().result==Outcome::Applied);
+    // Physically conserve original mined ore through the downstream
+    // housing/shuttle/utility module construction, not a free rack.
+    act(w,ship,23,Action::FabricateModule,0,16);
     act(w,ship,24,Action::ConstructWorkshopFinisher,orbital);
     w.steps(8);
     CHECK(w.world().workshop(orbital)->panels_kg>=3);
@@ -112,19 +118,27 @@ int main() {
     for(std::uint64_t id=280;id<283;++id) {
         auto training=workforce02::approved_original_trade_training(
             w.world(),7,ship,orbital,builder,WorkshopTrade::Shape,id,true);
-        CHECK(training && w.submit(*training));w.step();
+        // Diagnose REAL WO2 practice admission: distinguish missing
+        // original workshop/crew/power from SQLite command refusal.
+        CHECK(training);
+        CHECK(w.submit(*training));w.step();
         CHECK(w.world().events().back().result==Outcome::Applied);
     }
     CHECK(w.world().workshop_trade_certified(builder,WorkshopTrade::Shape));
-    act(w,ship,290,Action::AssignUtilityTechnicians,orbital,0);
-    act(w,ship,291,Action::AssignHabitatResidents,orbital,-2);
+    // The original WO2 practice gate REQUIRES the named trainee to be an
+    // ACTUAL locally assigned habitat resident. We cannot certify a shipboard
+    // NPC by simply targeting a distant original workshop: physically move
+    // two additional named people into existing staffed habitat slots FIRST.
+    // 4 residents total, 2 original + 2 new; no new NPC or shadow staff.
+    act(w,ship,292,Action::AssignHabitatResidents,orbital,2);
+    CHECK(w.world().habitat(orbital)->residents==4);
     // A second actual named worker earns three physical Shape credits
     // before deployment. Supervisor relief must not conjure a certificate.
     std::uint64_t trained_partner=0;
     for(const auto& [id,n]:w.world().npc_records()) {
         if(id!=builder && id!=operator_id && n.home_ship==ship &&
-           n.location==ship && n.role==NpcRole::Ship &&
-           w.world().npc_available_for_duty(id)) {
+           n.location==orbital && n.assigned_site==orbital &&
+           n.role==NpcRole::Habitat && w.world().npc_available_for_duty(id)) {
             trained_partner=id;
             break;
         }
@@ -135,7 +149,10 @@ int main() {
     for(std::uint64_t id=310;id<313;++id) {
         const auto training=workforce02::approved_original_trade_training(
             w.world(),7,ship,orbital,trained_partner,WorkshopTrade::Shape,id,true);
-        CHECK(training && w.submit(*training));w.step();
+        // Diagnose REAL WO2 practice admission: distinguish missing
+        // original workshop/crew/power from SQLite command refusal.
+        CHECK(training);
+        CHECK(w.submit(*training));w.step();
         CHECK(w.world().events().back().result==Outcome::Applied);
     }
     CHECK(w.world().workshop_trade_certified(
@@ -143,8 +160,9 @@ int main() {
     std::uint64_t trained_visitor=0;
     for(const auto& [id,n]:w.world().npc_records()) {
         if(id!=builder && id!=trained_partner && id!=operator_id &&
-           n.home_ship==ship && n.location==ship &&
-           n.role==NpcRole::Ship && w.world().npc_available_for_duty(id)) {
+           n.home_ship==ship && n.location==orbital &&
+           n.assigned_site==orbital && n.role==NpcRole::Habitat &&
+           w.world().npc_available_for_duty(id)) {
             trained_visitor=id;
             break;
         }
@@ -155,11 +173,20 @@ int main() {
     for(std::uint64_t id=320;id<323;++id) {
         const auto training=workforce02::approved_original_trade_training(
             w.world(),7,ship,orbital,trained_visitor,WorkshopTrade::Shape,id,true);
-        CHECK(training && w.submit(*training));w.step();
+        // Diagnose REAL WO2 practice admission: distinguish missing
+        // original workshop/crew/power from SQLite command refusal.
+        CHECK(training);
+        CHECK(w.submit(*training));w.step();
         CHECK(w.world().events().back().result==Outcome::Applied);
     }
     CHECK(w.world().workshop_trade_certified(
         trained_visitor,WorkshopTrade::Shape));
+    // The exact four original named workers now return from their real
+    // habitat duty to the ship before celestial transit. The workshop
+    // operator/finisher retains qualification receipts, never shadow crew.
+    act(w,ship,290,Action::AssignUtilityTechnicians,orbital,0);
+    act(w,ship,291,Action::AssignHabitatResidents,orbital,-4);
+    CHECK(w.world().habitat(orbital)->residents==0);
     CHECK(w.world().npc_records().at(builder).location==ship);
     CHECK(w.world().npc_available_for_duty(builder));
     CHECK(w.begin_celestial_transit(7,ship,chosen.body,90001));
@@ -729,17 +756,26 @@ int main() {
             CHECK(audit_resident && audit_resident->admitted_households==1 &&
                   audit_resident->present_registered_children==1 &&
                   audit_resident->installed_beds==8);
-            // The actual registered ART02 child is already in the landed
-            // family's physical shuttle manifest. Legal admission changes
-            // residence but must NOT double its life-support demand.
+            // Admission consumes the one-time landing manifest and moves
+            // the exact two original adults into durable surface residence.
+            // The physically registered child survives in the SAME admitted
+            // household, not in a second passenger or phantom shuttle seat.
             const auto& landed_family=service.world().planetary_shuttles().at(key);
+            const auto& household=service.world().planetary_sites().at(key).
+                households.at(guardian);
             CHECK(landed_family.flight_phase==2 &&
-                  landed_family.family.stage==2 &&
-                  landed_family.family.child_ids.size()==1);
+                  landed_family.family.stage==0 &&
+                  landed_family.family.child_ids.empty() &&
+                  landed_family.passenger_ids.empty() &&
+                  household.child_ids==std::vector<std::uint64_t>{child} &&
+                  std::binary_search(landed_family.disembarked_ids.begin(),
+                                     landed_family.disembarked_ids.end(),guardian) &&
+                  std::binary_search(landed_family.disembarked_ids.begin(),
+                                     landed_family.disembarked_ids.end(),coparent));
             const auto unique_consumers=std::int64_t{2}+
                 static_cast<std::int64_t>(landed_family.disembarked_ids.size())+
                 1+static_cast<std::int64_t>(landed_family.passenger_ids.size())+
-                static_cast<std::int64_t>(landed_family.family.child_ids.size());
+                static_cast<std::int64_t>(household.child_ids.size());
             CHECK(audit_resident->current_surface_consumers==unique_consumers);
             const auto admitted_pressure=economy04::observe_owner_world(
                 service.world(),7,ship,economy04::Policy{4,1});

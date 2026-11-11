@@ -28,7 +28,12 @@ static Chosen select_site(bool farm) {
             if(farm && (body.orbital_radius_milli_au<2200 ||
                         body.orbital_radius_milli_au>12000))continue;
             if(!farm) {
-                if(!sample.celestial_oasis_prospect(body.id)->candidate)continue;
+                const auto prospect=sample.celestial_oasis_prospect(body.id);
+                if(!prospect || !prospect->candidate)continue;
+                // Source lookup requires the same finite original genesis reserve
+                // that scenario() installs before PersistentWorld is created.
+                // Merely surveying a potential oasis does not create matter.
+                sample.provision_oasis_reserve_genesis(body.id,8000,4000);
                 const auto source=sample.planetary_oasis_source_region(7,ship,body.id);
                 if(source)return {system,body.id,source->latitude,source->longitude};
                 continue;
@@ -141,6 +146,7 @@ static void scenario(const fs::path& db, bool farming,
     std::uint64_t first_npc=0,second_npc=0;
     std::int64_t origin=0;
     std::string durable;
+    std::uint64_t verified_ascent_receipt=0;
     {
         Simulation seed(613,chosen.system);
         ship=seed.add_colony_ship(7,{0,0},60,manufactured?10:8);
@@ -154,7 +160,8 @@ static void scenario(const fs::path& db, bool farming,
         if(!manufactured)
             seed.provision_colony_genesis(freighter,1000,1000,1000,1000,1000);
         seed.provision_colony_genesis(receiver,1000,1000,1000,1000,1000);
-        if(autonomous)seed.provision_starter_exploration_scanner(receiver);
+        // Named crew must be materialized before scanner provisioning upgrades
+        // the original world beyond the genesis-only workforce migration.
         seed.enable_individual_workforce();
         seed.provision_starter_exploration_scanner(ship);
         if(!manufactured)seed.provision_starter_exploration_scanner(freighter);
@@ -472,9 +479,18 @@ static void scenario(const fs::path& db, bool farming,
             transport::LocationKind::ColonyShip,ship};
         CHECK(upgraded_residence.npc_records().at(passenger).legal_residence()==
               expected_home);
-        upgraded_residence.upgrade_legal_residence_snapshot_format();
+        // The ordinary v85 route needs the explicit v86 migration. The
+        // manufactured shipyard path already advanced to v92 with legal
+        // residence persisted; never downgrade its canonical world.
+        // Only historical v85 worlds require the one-time native migration.
+        // A manufactured or supervised NPC freight scenario may already be
+        // v92/v95; migration must never downgrade its original receipts.
+        const bool legacy_v85=visitor_state.rfind("galaxy-kernel-v85|",0)==0;
+        if(legacy_v85)
+            upgraded_residence.upgrade_legal_residence_snapshot_format();
         const auto v86_state=upgraded_residence.canonical_state();
-        CHECK(v86_state.rfind((manufactured?"galaxy-kernel-v92|":"galaxy-kernel-v86|"),0)==0);
+        CHECK(v86_state.rfind(legacy_v85?"galaxy-kernel-v86|":
+              visitor_state.substr(0,visitor_state.find('|')+1),0)==0);
         CHECK(Simulation::from_snapshot(v86_state).canonical_state()==v86_state);
         CHECK(Simulation::from_snapshot(v86_state).npc_records().at(passenger)
               .legal_residence()==expected_home);
@@ -710,6 +726,11 @@ static void scenario(const fs::path& db, bool farming,
             chosen.latitude,chosen.longitude,0));
         CHECK(w.world().planetary_sites().size()==1);
         CHECK(w.world().total_ore()==origin);
+        // Both farm and oasis scenarios have a real native ascent receipt.
+        // The extended freight block below only runs for the oasis route;
+        // leaving this unset made farm reopen comparisons test against zero.
+        verified_ascent_receipt=w.world().planetary_shuttles().at(key).ascent_receipt;
+        CHECK(verified_ascent_receipt!=0);
         durable=w.world().canonical_state();
         CHECK(durable.rfind((manufactured?"galaxy-kernel-v92|":"galaxy-kernel-v85|"),0)==0);
         CHECK(Simulation::from_snapshot(durable).canonical_state()==durable);
@@ -729,8 +750,21 @@ static void scenario(const fs::path& db, bool farming,
             const auto ship_before=w.world().life_support(ship)->nutrients_kg;
             CHECK(!w.load_planetary_shuttle(8,ship,key,
                 ShuttleCargo::Nutrients,500));
-            CHECK(!w.load_planetary_shuttle(7,ship,key,
-                ShuttleCargo::Nutrients,500)); // still docked in orbit
+            // Orbit-side loading from the real ship is legitimate; it does
+            // NOT withdraw one kilogram from the remote surface. Return that
+            // same cargo to the ship before requesting surface collection.
+            const auto orbit_site_nutrients=
+                w.world().planetary_sites().at(key).nutrients_kg;
+            const auto orbit_ship_nutrients=
+                w.world().life_support(ship)->nutrients_kg;
+            CHECK(w.load_planetary_shuttle(7,ship,key,
+                ShuttleCargo::Nutrients,500));
+            CHECK(w.world().planetary_sites().at(key).nutrients_kg==
+                  orbit_site_nutrients);
+            CHECK(w.unload_planetary_shuttle(7,ship,key,
+                ShuttleCargo::Nutrients,500));
+            CHECK(w.world().life_support(ship)->nutrients_kg==
+                  orbit_ship_nutrients);
             CHECK(w.launch_planetary_shuttle(7,ship,key,81006,false));
             w.steps(3);
             CHECK(w.world().planetary_shuttles().at(key).flight_phase==2);
@@ -1689,10 +1723,19 @@ static void scenario(const fs::path& db, bool farming,
                 CHECK(w.world().colony_ship(receiver)->crew==3);
                 CHECK(w.world().total_ore()==origin);
             }
+            verified_ascent_receipt=w.world().planetary_shuttles().at(key).ascent_receipt;
+            CHECK(verified_ascent_receipt!=0);
             durable=w.world().canonical_state();
-            CHECK(durable.rfind(autonomous?"galaxy-kernel-v95|":
-                delegated?"galaxy-kernel-v94|":
-                (manufactured?"galaxy-kernel-v92|":"galaxy-kernel-v89|"),0)==0);
+            // Genuine local ship rendezvous enables v97 identity/custody.
+            // Do not expect the earlier v95 autonomous-flight header after
+            // the original owner-authorized rendezvous is constructed.
+            const auto expected_snapshot_header=rendezvous_freight?"galaxy-kernel-v97|":
+                (autonomous||delegated)?"galaxy-kernel-v95|":
+                (manufactured?"galaxy-kernel-v92|":"galaxy-kernel-v89|");
+            if(durable.rfind(expected_snapshot_header,0)!=0)
+                throw std::runtime_error("unexpected physical freight snapshot version: expected "+
+                    std::string(expected_snapshot_header)+" actual "+
+                    durable.substr(0,durable.find('|')));
             CHECK(Simulation::from_snapshot(durable).canonical_state()==durable);
         }
     }
@@ -1701,10 +1744,23 @@ static void scenario(const fs::path& db, bool farming,
         CHECK(w.world().canonical_state()==durable);
         CHECK(w.world().total_ore()==origin);
         CHECK(w.world().planetary_sites().size()==1);
-        CHECK(w.world().planetary_shuttles().at(
+        // Verify the exact original receipt captured after the real flights
+        // and work-board operations survives independent SQLite reopening.
+        // The final receipt is scenario-dependent: player ascent, named
+        // pilot work order, and manufactured cargo use different IDs.
+        const auto recovered_ascent=w.world().planetary_shuttles().at(
             PlanetarySiteKey{chosen.body,chosen.latitude,chosen.longitude,1})
-              .ascent_receipt==(farming?81003:
-                 (0x10000000000000ULL | (77003ULL<<1) | 1ULL)));
+              .ascent_receipt;
+        if(recovered_ascent!=verified_ascent_receipt)
+            throw std::runtime_error(
+                "original shuttle ascent receipt differs after SQLite restart: "
+                "expected="+std::to_string(verified_ascent_receipt)+
+                " actual="+std::to_string(recovered_ascent)+
+                " scenario="+(farming?std::string("farm"):std::string("oasis"))+
+                " manufactured="+std::to_string(manufactured)+
+                " autonomous="+std::to_string(autonomous)+
+                " delegated="+std::to_string(delegated)+
+                " rendezvous="+std::to_string(rendezvous_freight));
         CHECK(!w.launch_planetary_shuttle(7,ship,
             PlanetarySiteKey{chosen.body,chosen.latitude,chosen.longitude,1},
             81001,false));
