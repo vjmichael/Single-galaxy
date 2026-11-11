@@ -9,6 +9,11 @@ const MAX_DOCK_WORKER_VISUALS := 8
 var _public_mesh: MultiMeshInstance3D
 var _dock_mesh: MultiMeshInstance3D
 var _last_station := 0
+var _visible_public := 0
+var _visible_staff := 0
+var _moving_public := 0
+var _walk_seconds := 0.0
+const MAX_ANIMATED_TRAVELERS := 8
 
 func _ready() -> void:
 	name = "DockAndColonyPopulationLOD_ReadOnly"
@@ -39,10 +44,43 @@ func _new_batch(label: String, base_color: Color) -> MultiMeshInstance3D:
 
 func clear() -> void:
 	_last_station = 0
+	_visible_public = 0
+	_visible_staff = 0
+	_moving_public = 0
+	_walk_seconds = 0.0
 	if _public_mesh != null and _public_mesh.multimesh != null:
 		_public_mesh.multimesh.visible_instance_count = 0
 	if _dock_mesh != null and _dock_mesh.multimesh != null:
 		_dock_mesh.multimesh.visible_instance_count = 0
+
+func show_source_traffic(frame: Dictionary, station: int) -> void:
+	# A passenger is never drawn from cohort pressure or a guessed name.
+	# Only original, bounded waiting NPC count animates existing proxies.
+	if station<=0 or station!=_last_station or _public_mesh==null or \
+			int(frame.get("boarding_waiting",-1))<0 or \
+			int(frame.get("boarding_waiting",-1))>32 or \
+			int(frame.get("gangways",-1))<0 or \
+			int(frame.get("gangways",-1))>2:
+		_moving_public=0
+		return
+	var gate_limit := 0 if int(frame.get("gangways",0))==0 else MAX_ANIMATED_TRAVELERS
+	_moving_public = mini(_visible_public,
+		mini(int(frame["boarding_waiting"]),gate_limit))
+
+func _process(delta: float) -> void:
+	if _moving_public<=0 or _last_station<=0 or _public_mesh==null or \
+			_public_mesh.multimesh==null:
+		return
+	_walk_seconds = fposmod(_walk_seconds+minf(delta,0.25),30.0)
+	# Eight transforms maximum; purely visual station-lane interpolation.
+	# Movement never writes SQLite, NPC position, boarding, collision or AI.
+	for i in range(_moving_public):
+		var progress := fposmod(_walk_seconds*0.11+float(i)*0.15,1.0)
+		var start := Vector3(-2.3+float(i%4)*0.55,0.83,3.3)
+		var ending := Vector3(-0.75+float(i%4)*0.48,0.83,0.55)
+		var pos := start.lerp(ending,progress)
+		_public_mesh.multimesh.set_instance_transform(i,
+			Transform3D(Basis.IDENTITY,pos))
 
 func show_source_counts(frame: Dictionary, station: int) -> void:
 	# Zero/stale source never creates an artificial crowd.
@@ -54,6 +92,9 @@ func show_source_counts(frame: Dictionary, station: int) -> void:
 	_last_station = station
 	var public_count := mini(int(frame["source_count"]), MAX_PUBLIC_VISUALS)
 	var staff_count := mini(int(frame["dock_staff"]), MAX_DOCK_WORKER_VISUALS)
+	_visible_public = public_count
+	_visible_staff = staff_count
+	_moving_public = mini(_moving_public,public_count)
 	_public_mesh.multimesh.visible_instance_count = public_count
 	_dock_mesh.multimesh.visible_instance_count = staff_count
 	# Crowd proxies occupy ONLY presentation lanes. Avoid loops over a
