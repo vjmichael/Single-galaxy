@@ -30,10 +30,11 @@ jobs:
           GROUP2=dd86e3547cf2952d696eae27195ff2e0b2af5c64
           WO=d632ffc265df967da3c159252079787862a186d7
           git fetch --no-tags origin "$GROUP2" "$WO"
-          test "$(git rev-parse HEAD)" = "$GROUP2" || {
+          test "$(git rev-parse HEAD^)" = "$GROUP2" || {
             echo "This probe must begin from the *unchanged* Group 2 accepted head" >&2
             exit 1
           }
+          git switch --detach "$GROUP2"
           git config user.name "Single-Galaxy merge probe"
           git config user.email "merge-probe@users.noreply.github.com"
           printf 'group2=%s\nwo3_wo5=%s\n' "$GROUP2" "$WO" | tee reconciliation-evidence/sources.txt
