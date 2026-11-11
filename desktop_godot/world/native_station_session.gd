@@ -290,7 +290,7 @@ func _accept_dock(f: PackedStringArray) -> void:
 	if f.size() != 17 or f[1] != "1" or _pending_dock_kind.is_empty():
 		stop("Unrequested dock service receipt")
 		return
-	for i in range(2, 15):
+	for i in range(2, 17):
 		if not _integer(f[i]):
 			stop("Malformed original dock receipt")
 			return
@@ -307,6 +307,8 @@ func _accept_dock(f: PackedStringArray) -> void:
 	var completed_people := int(f[12])
 	var completed_tonnes := int(f[13])
 	var result := int(f[14])
+	var qualified_staff := int(f[15])
+	var service_capacity := int(f[16])
 	var expected_result := {"VIEW":[0],"ASSIGN":[1],"RELEASE":[2],
 		"PASS":[3],"FREIGHT":[4],"WORK":[5,6]}
 	if session != _session or req != _pending or tick < _tick or generation < _generation or \
@@ -314,6 +316,7 @@ func _accept_dock(f: PackedStringArray) -> void:
 			staff < 0 or staff > 16 or passengers < 0 or passengers > 128 or \
 			tonnes < 0 or tonnes > 8192 or jobs < 0 or jobs > 128 or held < 0 or held > 128 or \
 			completed_people < 0 or completed_tonnes < 0 or \
+			qualified_staff<0 or qualified_staff>staff or service_capacity<0 or service_capacity>4 or \
 			not expected_result.get(_pending_dock_kind,[]).has(result):
 		stop("Original dock receipt violates source custody or queue bounds")
 		return
@@ -326,7 +329,8 @@ func _accept_dock(f: PackedStringArray) -> void:
 	_generation = generation
 	var snapshot := {"station":station,"dock_staff":staff,
 		"passengers":passengers,"freight_tonnes":tonnes,"freight_jobs":jobs,
-		"held_jobs":held,"checked_in":completed_people,
+		"held_jobs":held,"qualified_staff":qualified_staff,
+		"service_capacity":service_capacity,"checked_in":completed_people,
 		"handled_tonnes":completed_tonnes,"result":result,
 		"tick":tick,"generation":generation}
 	dock_received.emit(snapshot)
