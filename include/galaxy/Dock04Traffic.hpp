@@ -11,6 +11,7 @@
 #include "galaxy/PopulationCohorts.hpp"
 #include <algorithm>
 #include <cstdint>
+#include <functional>
 #include <limits>
 #include <stdexcept>
 #include <string>
@@ -278,7 +279,8 @@ public:
     // home ship -> local check-in -> source hatch -> real ferry voyage.
     // Each crossing is idempotently reserved in SQLite before original STEP.
     bool serve_one(PersistentWorld& world,EntityId station,PlayerId owner,
-                   std::uint64_t worker){
+                   std::uint64_t worker,
+                   const std::function<bool(std::uint64_t)>& at_gangway){
         if(!worker || !physical_gangways(world.world(),station,owner))
             return false;
         dock::Ledger original_staff(file_);
@@ -305,6 +307,7 @@ public:
                 // through the original hatch; don't teleport them to repeat
                 // the outward transition solely for queue bookkeeping.
                 set_phase(id,0,2);
+                return false; // genuine local corridor walk must occur first
             }else {
                 if(person->second.location!=source){hold(id);return false;}
                 set_phase(id,0,1);
@@ -313,12 +316,17 @@ public:
                     hold(id);return false;
                 }
                 set_phase(id,1,2);
+                return false; // original shore custody is only the first step
             }
         }
         if(phase<=2){
             person=world.world().npc_records().find(npc);
             if(person==world.world().npc_records().end() ||
                person->second.location!=station){hold(id);return false;}
+            // DOCK-06: the actual original named passenger must finish
+            // the finite native collision-screened station corridor.
+            // A queue slot or animated proxy is NOT an embarkation proof.
+            if(!at_gangway || !at_gangway(npc))return false;
             set_phase(id,2,3);
             if(!world.station_dock_worker_transfer(
                 owner,source,station,npc,false,move_receipt(id,false))){
