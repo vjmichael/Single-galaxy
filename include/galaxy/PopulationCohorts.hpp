@@ -24,6 +24,9 @@ public:
     void transfer(CohortKey from,CohortKey to,std::uint64_t count);
     std::uint64_t count(CohortKey key) const noexcept;
     std::uint64_t population() const noexcept;
+    // DOCK-04: source-keyed exact read, O(number of strata) not residents.
+    // A caller cannot substitute another colony's aggregate population.
+    std::uint64_t population_at(std::uint64_t settlement) const noexcept;
     std::size_t cohort_count() const noexcept {return groups_.size();}
     // Fixed-point expected share of the SOURCE stratum, capped by transport.
     // No per-NPC loop. Keep all inputs and decisions observable to the caller.
