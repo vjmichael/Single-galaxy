@@ -7,6 +7,7 @@ signal terminal_closed()
 signal dock_status_requested()
 signal dock_worker_requested()
 signal dock_release_requested()
+signal dock_renew_requested()
 signal dock_freight_requested()
 signal dock_passenger_requested()
 signal dock_service_requested()
@@ -83,6 +84,11 @@ func _ready() -> void:
 	_dock_release_button.text = "End a dock shift"
 	_dock_release_button.pressed.connect(func(): dock_release_requested.emit())
 	workers.add_child(_dock_release_button)
+	var extend_shift := Button.new()
+	extend_shift.text = "Extend active shift"
+	extend_shift.tooltip_text = "One human-authorized bounded extension of existing real shore crew duty"
+	extend_shift.pressed.connect(func(): dock_renew_requested.emit())
+	workers.add_child(extend_shift)
 	var passenger := Button.new()
 	passenger.text = "Book a real ferry boarding"
 	passenger.tooltip_text = "Requires two real owned ships at this colony, original named passenger, available ferry seats and supplies; boarding follows native dock-worker scheduling."
