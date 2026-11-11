@@ -127,7 +127,8 @@ static int run_host(int argc,char** argv){
    const bool colony_view=colony_console&&f[0]=="COLVIEW";
    const bool colony_refine=colony_console&&f[0]=="COLREFINE";
    const bool colony_unload=colony_console&&f[0]=="COLUNLOAD";
-   if(!walking&&!boarding&&!exiting&&!view&&!refine&&!unload&&!colony_console){deny(0,"malformed");continue;}
+   const bool population=f.size()==5&&f[0]=="POPVIEW";
+   if(!walking&&!boarding&&!exiting&&!view&&!refine&&!unload&&!colony_console&&!population){deny(0,"malformed");continue;}
    std::uint64_t requested_session=0,req=0,expected=0,ship=0;
    std::int64_t dx=0,dz=0;
    if(!parse(f[1],requested_session)||!parse(f[2],req)||!parse(f[3],expected)||
@@ -140,6 +141,33 @@ static int run_host(int argc,char** argv){
    const auto now=std::chrono::steady_clock::now();
    if(now-last<std::chrono::milliseconds(45)){deny(req,"rate");continue;}
    const auto& person=world.world().player_people().at(kOwner);
+   if(population){
+    if(person.state!=PlayerPersonState::AtStation ||
+       person.owner!=kOwner || !person.physical_station ||
+       ship!=person.physical_station){
+       deny(req,"population-is-local-to-current-colony");continue;
+    }
+    // One bounded read-only census sampling pass, NEVER per-frame
+    // simulation of millions of named 3D NPCs. Truncation is explicit.
+    // Only station-located named workers with a real station site
+    // assignment and ship/logistics role qualify as dock workers.
+    std::uint64_t present=0,assigned=0,scanned=0;
+    bool truncated=false;
+    for(const auto& [id,npc]:world.world().npc_records()){
+       (void)id;
+       if(++scanned>4096){truncated=true;break;}
+       if(npc.location!=ship)continue;
+       ++present;
+       if(npc.assigned_site==ship && npc.role==NpcRole::Ship)++assigned;
+    }
+    if(assigned>present)throw std::runtime_error("dock worker census invalid");
+    std::cout<<"COLPOP|1|"<<session<<'|'<<req<<'|'<<world.world().tick()
+             <<'|'<<world.generation()<<'|'<<ship<<'|'<<present<<'|'
+             <<assigned<<'|'<<(truncated?1:0)<<'\n'<<std::flush;
+    if(!std::cout)throw std::runtime_error("colony population pipe closed");
+    last=now;
+    continue;
+   }
    if(view || refine || unload || colony_console){
     // The local remote terminal saves walking, NOT travel. Identity is
     // taken from original PERSON physical_station. Never trust a remote
