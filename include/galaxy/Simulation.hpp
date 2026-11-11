@@ -1170,6 +1170,11 @@ public:
     // A canonical, read-only job dispatch check. The caller remains responsible
     // for role qualification, schedules and facility-specific requirements.
     bool npc_available_for_duty(std::uint64_t npc_id) const;
+    // DOCK-04: temp berth-level shore duty keeps permanent crew assignment
+    // at the original hull. Apply the SAME health/flight/transport exclusions,
+    // but validate station physical location instead of home-ship location.
+    bool npc_available_for_shore_duty(std::uint64_t npc_id,
+                                      EntityId station) const;
     const std::map<std::uint64_t,CrewRehome>& crew_rehomes() const {return crew_rehomes_;}
     NpcHealthStatus npc_health_status(std::uint64_t npc_id) const;
     // Returns an immutable projection, never a second NPC authority.
