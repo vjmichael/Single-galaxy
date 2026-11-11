@@ -4,6 +4,7 @@ const SGDX_LAUNCH := preload("res://world/sgdx_process_launch.gd")
 ## This bridge never sets person/ship location in SQLite from Godot.
 signal person_received(person: Dictionary)
 signal refinery_received(snapshot: Dictionary)
+signal colony_population_received(snapshot: Dictionary)
 signal status_changed(message: String)
 signal connection_changed(connected: bool)
 
@@ -32,6 +33,7 @@ var _buffer := PackedByteArray()
 var _person := {}
 var _refinery_receiving := false
 var _pending_refinery_kind := "" # VIEW, REFINE or UNLOAD; never reuse a stale receipt
+var _pending_population := false
 var _refinery_header := {}
 var _refinery_lots: Array[Dictionary] = []
 var _refinery_minerals := {}
@@ -137,6 +139,7 @@ func start() -> void:
 	_queued_hangar_intent = false
 	_queued_hangar_ready_msec = 0
 	_pending_refinery_kind = ""
+	_pending_population = false
 	_next_request = 1
 	_last_send = -10000
 	_buffer.clear()
@@ -184,6 +187,9 @@ func _integer(value: String) -> bool:
 
 func _accept_line(line: String) -> void:
 	var f := line.split("|", false)
+	if f.size() > 0 and f[0] == "COLPOP":
+		_accept_colony_population(f)
+		return
 	if f.size() > 0 and f[0] in ["REFHEAD", "REFLOT", "REFMIN", "REFEND"]:
 		_accept_refinery_line(f)
 		return
@@ -200,6 +206,7 @@ func _accept_line(line: String) -> void:
 				_queued_hangar_ready_msec = 0
 				_status("Native WALK rejected; press E again after reaching the hatch")
 			_pending_refinery_kind = ""
+			_pending_population = false
 			_refinery_receiving = false
 			_refinery_header.clear()
 			_refinery_lots.clear()
@@ -255,6 +262,51 @@ func _accept_line(line: String) -> void:
 		_queued_hangar_ready_msec = maxi(Time.get_ticks_msec() + 75,
 			_last_send + NATIVE_HANGAR_COMMAND_GAP_MS)
 		_status("E received — synchronizing original station boarding after WALK receipt")
+
+func _accept_colony_population(f: PackedStringArray) -> void:
+	# A single read-only observation from bounded named NPC source records.
+	# Never materialize individual NPCs or a second population ledger.
+	if f.size()!=10 or f[1]!="1" or not _pending_population:
+		stop("Unrequested colony population observation")
+		return
+	for i in range(2,10):
+		if not _integer(f[i]):
+			stop("Malformed colony population identity")
+			return
+	var session := int(f[2])
+	var request := int(f[3])
+	var tick := int(f[4])
+	var generation := int(f[5])
+	var station := int(f[6])
+	var present := int(f[7])
+	var assigned := int(f[8])
+	var truncated := int(f[9])
+	if session!=_session or request!=_pending or tick!=_tick or \
+			generation!=_generation or int(_person.get("state",-1))!=4 or \
+			station!=int(_person.get("station",-1)) or \
+			present<0 or present>4096 or assigned<0 or assigned>present or \
+			truncated not in [0,1]:
+		stop("Colony population from mismatched source or unbounded count")
+		return
+	_pending = 0
+	_pending_population = false
+	colony_population_received.emit({"station":station,"source_count":present,
+		"dock_staff":assigned,"scan_truncated":truncated==1,
+		"tick":tick,"generation":generation})
+
+func request_colony_population() -> bool:
+	if not _active or _session<=0 or _pending!=0 or \
+			int(_person.get("state",-1))!=4 or \
+			Time.get_ticks_msec()-_last_send<130:
+		return false
+	var request := _next_request
+	_next_request += 1
+	_pending = request
+	_pending_population = true
+	_last_send = Time.get_ticks_msec()
+	_send("POPVIEW|%d|%d|%d|%d" % [
+		_session,request,_generation,int(_person["station"])])
+	return true
 
 func _accept_refinery_line(f: PackedStringArray) -> void:
 	var kind := f[0]
