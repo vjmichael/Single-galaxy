@@ -38,6 +38,8 @@ int main(int argc,char** argv) {
             station=genesis.add_station({0,0});
             home=genesis.add_colony_ship(7,{0,0},100,8);
             ferry=genesis.add_colony_ship(7,{0,0},100,4);
+            const auto rock=genesis.add_geological_asteroid(
+                {2200,0},AsteroidClass::Metallic,10,5000);
             genesis.provision_colony_genesis(home,1000,3000,1000,1000,1000);
             genesis.provision_colony_genesis(ferry,1000,3000,1000,1000,1000);
             genesis.enable_individual_workforce();
@@ -53,6 +55,14 @@ int main(int argc,char** argv) {
             CHECK(worker&&passenger&&worker!=passenger);
             const auto original_total=roster.size();
             PersistentWorld world(path,std::move(genesis));
+            Command mine{};mine.id=9109;mine.sequence=mine.id;
+            mine.execute_tick=world.world().tick()+1;
+            mine.issuer=7;mine.actor=home;mine.target=rock;
+            mine.action=Action::Mine;mine.amount=1;
+            CHECK(world.submit(mine));
+            world.step();
+            CHECK(world.world().events().back().result==Outcome::Applied);
+            CHECK(world.world().find(home)->cargo==1);
             dock_ship(world,home,station,9111);
             dock_ship(world,ferry,station,9112);
             dock04::Traffic traffic(path);
@@ -64,6 +74,8 @@ int main(int argc,char** argv) {
                 7,home,station,worker,true,9113));
             CHECK(workforce.assign(world.world(),station,7,worker));
             CHECK(workforce.active_staff(world.world(),station,7)==1);
+            CHECK(workforce.enqueue_freight(world.world(),station,7,home,1));
+            CHECK(workforce.snapshot(world.world(),station,7).freight_tonnes==1);
             CHECK(!traffic.enqueue(world.world(),station,7,worker,ferry));
             CHECK(traffic.enqueue(world.world(),station,7,passenger,ferry));
             CHECK(!traffic.enqueue(world.world(),station,7,passenger,ferry));
@@ -71,6 +83,15 @@ int main(int argc,char** argv) {
             CHECK(traffic.serve_one(world,station,7,worker));
             CHECK(traffic.snapshot(world.world(),station,7).waiting==0);
             CHECK(traffic.snapshot(world.world(),station,7).boarded==1);
+            CHECK(traffic.streak(station,7)==1);
+            const auto handlers=workforce.service_roster(world.world(),station,7);
+            CHECK(!handlers.empty()&&handlers.front()==worker);
+            CHECK(workforce.serve_one(world,station,7,handlers.front(),true));
+            traffic.freight_completed(station,7);
+            CHECK(traffic.streak(station,7)==0);
+            CHECK(world.world().find(home)->cargo==0);
+            CHECK(world.world().hangar(station,7)->ore==1);
+            CHECK(workforce.snapshot(world.world(),station,7).freight_tonnes==0);
             CHECK(world.world().npc_records().at(passenger).location==ferry);
             voyage=world.world().npc_records().at(passenger).transport_id;
             CHECK(voyage!=0 && world.world().voyage_status(voyage)==1);
@@ -91,6 +112,8 @@ int main(int argc,char** argv) {
             CHECK(world.world().voyage_status(voyage)==1);
             CHECK(traffic.snapshot(world.world(),station,7).boarded==1);
             CHECK(workforce.active_staff(world.world(),station,7)==1);
+            CHECK(world.world().hangar(station,7)->ore==1);
+            CHECK(traffic.streak(station,7)==0);
             CHECK(world.world().assess_npc_residence().reconciled);
             CHECK(world.station_dock_worker_transfer(
                 7,home,station,worker,false,9114));
