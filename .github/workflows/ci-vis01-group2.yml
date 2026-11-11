@@ -116,7 +116,7 @@ jobs:
             echo 'Godot 4.7.2 real native scene parser/runtime failure' >&2
             exit 1
           fi
-          for test in native_player_protocol_smoke.gd native_asteroid_contact_smoke.gd native_station_protocol_smoke.gd native_station_refinery_protocol_smoke.gd station_visual_smoke.gd colony_dock_smoke.gd interaction_prompt_smoke.gd boarding_action_pipe_smoke.gd fp3d_env01_collision_receipt_smoke.gd fp3d_env01f_pilot_instruments_smoke.gd physical_acceptance_trace_smoke.gd native_station_navigation_smoke.gd world_reset_manager_smoke.gd visual_design_smoke.gd; do
+          for test in native_player_protocol_smoke.gd native_asteroid_contact_smoke.gd native_station_protocol_smoke.gd native_station_refinery_protocol_smoke.gd station_visual_smoke.gd colony_dock_smoke.gd interaction_prompt_smoke.gd boarding_action_pipe_smoke.gd fp3d_env01_collision_receipt_smoke.gd fp3d_env01f_pilot_instruments_smoke.gd physical_acceptance_trace_smoke.gd native_station_navigation_smoke.gd world_reset_manager_smoke.gd visual_design_smoke.gd sgdx_operator_diagnostics_smoke.gd; do
             timeout --signal=TERM --kill-after=8s 90s "$G" --headless --path desktop_godot --script "res://tests/$test" \
               2>&1 | tee "build/fp3d-env01/godot-logs/$test.log"
             if grep -E 'SCRIPT ERROR:|ERROR: Failed to load script|Parse Error:' "build/fp3d-env01/godot-logs/$test.log"; then
@@ -255,7 +255,7 @@ jobs:
           $env:SGDX_WINDOWS_MINIDUMP='1'
           Invoke-BoundedGodot -Arguments @('--headless','--path','desktop_godot','--script','res://tests/fp3d_env01_live_scene_acceptance.gd') -Log 'build/fp3d-env01/godot-logs/real-sgdx-cockpit.log' -MaxSeconds 180
           Remove-Item Env:SGDX_WINDOWS_MINIDUMP -ErrorAction SilentlyContinue
-          foreach($test in @('native_player_protocol_smoke.gd','native_asteroid_contact_smoke.gd','native_station_protocol_smoke.gd','native_station_refinery_protocol_smoke.gd','station_visual_smoke.gd','colony_dock_smoke.gd','interaction_prompt_smoke.gd','boarding_action_pipe_smoke.gd','fp3d_env01_collision_receipt_smoke.gd','fp3d_env01f_pilot_instruments_smoke.gd','physical_acceptance_trace_smoke.gd','native_station_navigation_smoke.gd','world_reset_manager_smoke.gd','visual_design_smoke.gd')){
+          foreach($test in @('native_player_protocol_smoke.gd','native_asteroid_contact_smoke.gd','native_station_protocol_smoke.gd','native_station_refinery_protocol_smoke.gd','station_visual_smoke.gd','colony_dock_smoke.gd','interaction_prompt_smoke.gd','boarding_action_pipe_smoke.gd','fp3d_env01_collision_receipt_smoke.gd','fp3d_env01f_pilot_instruments_smoke.gd','physical_acceptance_trace_smoke.gd','native_station_navigation_smoke.gd','world_reset_manager_smoke.gd','visual_design_smoke.gd','sgdx_operator_diagnostics_smoke.gd')){
             Invoke-BoundedGodot -Arguments @('--headless','--path','desktop_godot','--script',"res://tests/$test") -Log "build/fp3d-env01/godot-logs/$test.log" -MaxSeconds 75
           }
           # Genuine native gameplay on a fresh, isolated CI-only Godot
