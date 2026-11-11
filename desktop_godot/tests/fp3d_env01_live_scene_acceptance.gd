@@ -138,6 +138,30 @@ func _on_ship(frame: Dictionary) -> void:
 func _on_rock(frame: Dictionary) -> void:
 	_rock_frames.append(frame.duplicate(true))
 
+func _submit_visible_cursor_keyboard_flight(action: String, expected: String) -> bool:
+	# Real Godot InputMap -> player intent collector -> main scene handler ->
+	# SGDX supervised original C++ pipe; the game may NOT write ship physics.
+	# Headless CI cannot simulate a genuine focused Windows window. That
+	# human/driver gate remains independent even if this native path passes.
+	if not is_instance_valid(_game) or not is_instance_valid(_game.player):
+		_fail("real Godot pilot controller was not constructed")
+		return false
+	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+	Input.action_press(action)
+	var intents: PackedStringArray = _game.player._collect_native_pilot_actions()
+	Input.action_release(action)
+	if intents.size() != 1 or intents[0] != expected:
+		_fail("released-cursor keyboard action " + action +
+			" did not produce exactly one authorized " + expected + " intent: " + str(intents))
+		return false
+	var session = _game.native_player_session
+	var before_request: int = session._next_request
+	_game._on_native_ship_intents(intents)
+	if session._next_request != before_request + 1 or session._pending_kind != "FLIGHT":
+		_fail("Godot " + expected + " intent did not enter original supervised C++ flight pipe")
+		return false
+	return true
+
 func _run() -> void:
 	_visual_dir = OS.get_environment("SG_FP3D_VISUAL_CAPTURE_DIR")
 	if not _visual_dir.is_empty():
@@ -197,16 +221,16 @@ func _run() -> void:
 		# Honor the existing 110ms original cockpit rate gate. An immediate
 		# undock after SEAT ACK is correctly ignored by the production client.
 		await create_timer(0.13).timeout
-		session.submit_flight(PackedStringArray(["UND"]))
-		if not (await _await_condition(Callable(self, "_undocked"))):
-			_fail("original ship did not complete undock")
+		if _submit_visible_cursor_keyboard_flight("ship_undock", "UND"):
+			if not (await _await_condition(Callable(self, "_undocked"))):
+				_fail("original ship did not complete keyboard undock")
 	if _error.is_empty():
 		# Real owner must be able to return to the physically near station.
 		# This is the ORIGINAL C++ docking action, not Godot teleportation.
 		await create_timer(0.13).timeout
-		session.submit_flight(PackedStringArray(["DCK"]))
-		if not (await _await_condition(Callable(self, "_docked"))):
-			_fail("original C++ return docking near station failed")
+		if _submit_visible_cursor_keyboard_flight("ship_dock", "DCK"):
+			if not (await _await_condition(Callable(self, "_docked"))):
+				_fail("original C++ keyboard return docking near station failed")
 		elif _game._last_native_dock != 1 or not _game.space_preview.visible or \
 				_game.ship_space.visible or not _game.exterior_camera.current or \
 				_game.player.camera.current:
@@ -217,9 +241,9 @@ func _run() -> void:
 			await _capture_visible("01-docked-cabin", _ship_frames[-1])
 	if _error.is_empty():
 		await create_timer(0.13).timeout
-		session.submit_flight(PackedStringArray(["UND"]))
-		if not (await _await_condition(Callable(self, "_undocked"))):
-			_fail("second original launch after docking failed")
+		if _submit_visible_cursor_keyboard_flight("ship_undock", "UND"):
+			if not (await _await_condition(Callable(self, "_undocked"))):
+				_fail("second original keyboard launch after docking failed")
 	if _error.is_empty():
 		_game._external_requested = false # V is not required or effective now
 		_game._show_native_location(false)
@@ -235,7 +259,8 @@ func _run() -> void:
 			# The original host owns every flight STEP; this intentionally
 			# does NOT call main._on_native_ship_state with synthetic data.
 			await create_timer(0.13).timeout
-			session.submit_flight(PackedStringArray(["FWD"]))
+			if not _submit_visible_cursor_keyboard_flight("ship_thrust_forward", "FWD"):
+				break
 			if not (await _await_condition(Callable(self, "_flight_done"))):
 				_fail("native flight writer did not respond")
 				break
@@ -295,6 +320,29 @@ func _run() -> void:
 				break
 	if _error.is_empty() and not collided:
 		_fail("no real swept collision reached after 70 original forward commands")
+	# An actual source-driven LEFT/RIGHT keyboard pair must alter the original
+	# C++/SQLite heading and then restore it, even when the cursor is visible.
+	# Do this only AFTER capturing verified impact, so the swept-contact gate
+	# remains independent of pilot steering and retains identical physics.
+	if _error.is_empty() and collided:
+		var before_yaw: int = int(_ship_frames[-1]["heading"])
+		await create_timer(0.13).timeout
+		if _submit_visible_cursor_keyboard_flight("ship_yaw_left", "LEFT"):
+			if not (await _await_condition(Callable(self, "_flight_done"))):
+				_fail("native left keyboard yaw had no original C++ acknowledgement")
+			elif not session._active or _ship_frames.is_empty() or \
+					int(_ship_frames[-1]["outcome"]) != 0 or \
+					int(_ship_frames[-1]["heading"]) != (before_yaw + 15) % 360:
+				_fail("released-cursor A key did not rotate real original hull by +15 degrees")
+		if _error.is_empty():
+			await create_timer(0.13).timeout
+			if _submit_visible_cursor_keyboard_flight("ship_yaw_right", "RIGHT"):
+				if not (await _await_condition(Callable(self, "_flight_done"))):
+					_fail("native right keyboard yaw had no original C++ acknowledgement")
+				elif not session._active or _ship_frames.is_empty() or \
+						int(_ship_frames[-1]["outcome"]) != 0 or \
+						int(_ship_frames[-1]["heading"]) != before_yaw:
+					_fail("released-cursor D key did not restore original C++ heading")
 	var committed_ship: Dictionary = _ship_frames[-1].duplicate(true) if not _ship_frames.is_empty() else {}
 	var committed_rock: Dictionary = _rock_frames[-1].duplicate(true) if not _rock_frames.is_empty() else {}
 	if is_instance_valid(_game) and is_instance_valid(_game.native_player_session):
@@ -375,5 +423,5 @@ func _run() -> void:
 	if not _error.is_empty():
 		quit(1)
 	else:
-		print("FP3D-ENV-01E LIVE GODOT SCENE + ORIGINAL C++ HOST PASS: true undock, docking, forward flight, safe contact, visual camera yaw/translation, SGDX QUIT and SAME SQLite world restart")
+		print("FP3D-UX-05 LIVE GODOT/C++ PASS: visible-cursor keyboard U/G/UP/A/D through game InputMap, SGDX native SHIP receipts, exact yaw, undock/redock, swept contact and SAME SQLite restart; physical Windows focus/GPU still separate")
 		quit(0)
