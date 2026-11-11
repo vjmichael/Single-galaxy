@@ -191,6 +191,7 @@ func _ready() -> void:
 	refinery_terminal.dock_status_requested.connect(_on_dock_status_requested)
 	refinery_terminal.dock_worker_requested.connect(_on_dock_worker_requested)
 	refinery_terminal.dock_release_requested.connect(_on_dock_release_requested)
+	refinery_terminal.dock_renew_requested.connect(_on_dock_renew_requested)
 	refinery_terminal.dock_freight_requested.connect(_on_dock_freight_requested)
 	refinery_terminal.dock_passenger_requested.connect(_on_dock_passenger_requested)
 	refinery_terminal.dock_service_requested.connect(_on_dock_service_requested)
@@ -1214,6 +1215,10 @@ func _on_dock_worker_requested() -> void:
 func _on_dock_release_requested() -> void:
 	if _dock_commands_allowed():
 		native_station_session.end_dock_worker_shift()
+
+func _on_dock_renew_requested() -> void:
+	if _dock_commands_allowed():
+		native_station_session.renew_available_dock_shift()
 
 func _on_dock_passenger_requested() -> void:
 	if _dock_commands_allowed():
