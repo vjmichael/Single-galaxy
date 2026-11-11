@@ -112,7 +112,7 @@ class Ledger {
          (it->second.assigned_site==0 ||
           it->second.assigned_site==it->second.home_ship) &&
          !it->second.transport_id && !occupied.count(id) &&
-         sim.npc_available_for_duty(id))++count;
+         sim.npc_available_for_shore_duty(id,station))++count;
     }
     return count;
   }
@@ -124,7 +124,7 @@ class Ledger {
     if(it==sim.npc_records().end()||it->second.location!=station ||
        it->second.role!=NpcRole::Ship || it->second.transport_id ||
        (it->second.assigned_site && it->second.assigned_site!=it->second.home_ship) ||
-       !sim.npc_available_for_duty(npc_id))return false;
+       !sim.npc_available_for_shore_duty(npc_id,station))return false;
     const auto* home=sim.find(it->second.home_ship);
     if(!home || home->owner_id!=owner ||
        home->dock_state!=DockState::Docked ||
@@ -161,7 +161,7 @@ class Ledger {
          it->second.transport_id || it->second.role!=NpcRole::Ship ||
          (it->second.assigned_site &&
           it->second.assigned_site!=it->second.home_ship) ||
-         occupied.count(id) || !sim.npc_available_for_duty(id))continue;
+         occupied.count(id) || !sim.npc_available_for_shore_duty(id,station))continue;
       const auto* ship=sim.find(it->second.home_ship);
       if(!ship||ship->owner_id!=owner ||
          ship->dock_state!=DockState::Docked ||
