@@ -10,6 +10,9 @@ signal dock_release_requested()
 signal dock_freight_requested()
 signal dock_passenger_requested()
 signal dock_service_requested()
+signal dock_destinations_requested()
+signal dock_route_requested(destination: int, receiver: int)
+signal dock_cancel_requested(route_id: int)
 
 var _lots: ItemList
 var _status: Label
@@ -19,6 +22,10 @@ var _dock_assign_button: Button
 var _dock_release_button: Button
 var _dock_queue_button: Button
 var _dock_serve_button: Button
+var _destinations: OptionButton
+var _route_button: Button
+var _held_route_button: Button
+var _reviewable_route := 0
 var _minerals: Label
 var _refine_button: Button
 var _unload_button: Button
@@ -82,6 +89,30 @@ func _ready() -> void:
 	_dock_serve_button.disabled = true
 	_dock_serve_button.pressed.connect(func(): dock_service_requested.emit())
 	freight.add_child(_dock_serve_button)
+	var journeys_title := Label.new()
+	journeys_title.text = "PASSENGER JOURNEYS | DESTINATION COLONIES"
+	column.add_child(journeys_title)
+	var journey_row := HBoxContainer.new()
+	column.add_child(journey_row)
+	var refresh_dest := Button.new()
+	refresh_dest.text = "Find receiving colonies"
+	refresh_dest.pressed.connect(func(): dock_destinations_requested.emit())
+	journey_row.add_child(refresh_dest)
+	_destinations = OptionButton.new()
+	_destinations.custom_minimum_size = Vector2(190,0)
+	_destinations.add_item("No destinations loaded")
+	_destinations.disabled = true
+	journey_row.add_child(_destinations)
+	_route_button = Button.new()
+	_route_button.text = "Send boarded ferry"
+	_route_button.disabled = true
+	_route_button.pressed.connect(_on_depart_pressed)
+	journey_row.add_child(_route_button)
+	_held_route_button = Button.new()
+	_held_route_button.text = "Withdraw unstarted route"
+	_held_route_button.disabled = true
+	_held_route_button.pressed.connect(_on_review_pressed)
+	column.add_child(_held_route_button)
 	var lot_heading := Label.new()
 	lot_heading.text = "This colony's ore lots | local owner hangar"
 	column.add_child(lot_heading)
@@ -141,10 +172,59 @@ func set_dock_status(snapshot: Dictionary) -> void:
 		int(snapshot.get("urgent_boarding",0)),int(snapshot.get("actually_boarded",0)),
 		tonnes,held,int(snapshot.get("boarding_held",0)),
 		int(snapshot.get("handled_tonnes",0))]
+	_dock_status.text += "\nFerries: %d travelling | %d destination journeys completed | %d held" % [
+		int(snapshot.get("active_routes",0)),
+		int(snapshot.get("delivered_routes",0)),
+		int(snapshot.get("held_routes",0))]
+	_dock_status.text += "\nReal passengers aboard/in transit: %d | reached destination walkway: %d" % [
+		int(snapshot.get("passengers_travelling",0)),
+		int(snapshot.get("visitors_arrived",0))]
 	_dock_staff.text = "Dock workers: %d on active original-world shifts" % staff
-	_dock_serve_button.disabled = staff <= 0 or (passengers+tonnes+int(snapshot.get("boarding_waiting",0)))==0
+	_reviewable_route = int(snapshot.get("reviewable_route",0))
+	_held_route_button.disabled = _reviewable_route<=0
+	_route_button.disabled = _destinations.disabled or \
+		int(snapshot.get("actually_boarded",0))<=0
+	_dock_serve_button.disabled = (staff <= 0 and int(snapshot.get("active_routes",0))<=0) or \
+		(passengers+tonnes+int(snapshot.get("boarding_waiting",0))+
+		int(snapshot.get("active_routes",0)))==0
 	_dock_release_button.disabled = staff <= 0
 	_dock_queue_button.disabled = int(_current.get("eligible_ship",0)) <= 0
+
+func set_destinations(frame: Dictionary) -> void:
+	if not is_instance_valid(_destinations):
+		return
+	_destinations.clear()
+	var choices: Array = frame.get("destinations",[])
+	for option in choices:
+		var port := int(option.get("station",0))
+		var ship := int(option.get("receiver",0))
+		if port<=0 or ship<=0:
+			continue
+		var label := "Colony #%d · Arrival ship #%d" % [port,ship]
+		_destinations.add_item(label)
+		_destinations.set_item_metadata(_destinations.item_count-1,
+			{"station":port,"receiver":ship})
+	_destinations.disabled = _destinations.item_count==0
+	_route_button.disabled = _destinations.disabled
+
+func _on_depart_pressed() -> void:
+	if _route_button.disabled or _destinations.disabled:
+		return
+	var selected := _destinations.selected
+	if selected<0 or selected>=_destinations.item_count:
+		return
+	var target: Dictionary = _destinations.get_item_metadata(selected)
+	var port := int(target.get("station",0))
+	var receiver := int(target.get("receiver",0))
+	if port>0 and receiver>0:
+		_route_button.disabled = true
+		dock_route_requested.emit(port,receiver)
+
+func _on_review_pressed() -> void:
+	if _held_route_button.disabled or _reviewable_route<=0:
+		return
+	_held_route_button.disabled=true
+	dock_cancel_requested.emit(_reviewable_route)
 
 func show_waiting() -> void:
 	visible = true
