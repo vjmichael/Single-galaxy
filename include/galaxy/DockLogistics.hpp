@@ -89,7 +89,9 @@ class Ledger {
     while(s.next()==SQLITE_ROW){
       const auto id=s.number(0);
       const auto it=sim.npc_records().find(id);
-      if(it!=sim.npc_records().end() && it->second.location==station &&
+      if(it==sim.npc_records().end())continue;
+      const auto* home=sim.find(it->second.home_ship);
+      if(home && home->owner_id==owner && it->second.location==station &&
          it->second.role==NpcRole::Ship &&
          (it->second.assigned_site==0 || it->second.assigned_site==station) &&
          !it->second.transport_id && !occupied.count(id))++count;
@@ -202,8 +204,12 @@ class Ledger {
     const auto requested=q.number(3),done=q.number(4);
     if(kind==1){
       const auto it=world.world().npc_records().find(source);
+      const auto* home=it==world.world().npc_records().end() ?
+          nullptr:world.world().find(it->second.home_ship);
       if(it==world.world().npc_records().end()||it->second.location!=station||
-         it->second.transport_id){hold(id);return false;}
+         it->second.transport_id||!home||home->owner_id!=owner){
+        hold(id);return false;
+      }
       // Check-in completes an appointment ONLY. No fictional voyage, world
       // tick, NPC location update or passenger materialization occurs here.
       Statement checked(db_,"UPDATE dock_jobs_v1 SET completed=1,state=2 "
