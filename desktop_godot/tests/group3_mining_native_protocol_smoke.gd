@@ -32,11 +32,11 @@ func _run() -> void:
 		equipment.append({"kind":kind,"req":req,"outcome":outcome,"command":cmd}))
 	s.asteroid_contact_received.connect(func(contact: Dictionary):contacts.append(contact))
 	s._accept_line("SHEAD|1|123|16|2|4|9|1|0")
-	s._accept_line("SROW|1|123|16|2|4|9|77|1450000|0|0|10000|-1|3|0")
+	s._accept_line("SROW|1|123|16|2|4|9|77|42000|0|0|10000|9|2|1")
 	s._accept_line("SEND|1|123|16|2|4|9")
 	if surveys.size()!=1 or s._pending!=0 or
 			int(surveys[0]["sources"][0]["rock"])!=77 or
-			int(surveys[0]["sources"][0]["ore_tonnes"])!=-1:
+			int(surveys[0]["sources"][0]["ore_tonnes"])!=9:
 		_fail("source-only original asteroid survey failed full native identity, redaction and finish")
 		return
 	s._pending_kind = "MINE"
@@ -61,8 +61,8 @@ func _run() -> void:
 		_fail("original powered tool and matching rock not presented in player UI")
 		return
 	ui.show_original_survey(surveys[0])
-	if not ui._survey.text.contains("geology UNKNOWN"):
-		_fail("non-scanner geological information was invented in Godot UI")
+	if not ui._survey.text.contains("9t original ore"):
+		_fail("Original fitted scanner mineral readback not shown in Godot UI")
 		return
 	var scene = MAIN.new()
 	if not scene.has_method("_on_group3_asteroid_survey") or
