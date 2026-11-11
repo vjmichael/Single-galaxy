@@ -5,8 +5,8 @@ Decision date: 2026-11-10. Applies to the original Single-Galaxy native
 
 ## Source-derived compatibility boundary
 
-The exact historical kernel commit
-`d2cf352346a0574225e156f89e1baf1ac8ed9bd9` (2026-11-05) has the
+The source-pinned, compiler-repaired pre-v109 kernel commit
+`19c58bca0b75a6899eb0a38cb79e0e0a77a37f3b` (2026-11-10) has the
 following demonstrated behavior:
 
 - Its original native planetary test saves the actual SQLite command journal
@@ -33,8 +33,8 @@ a signed/archive-era artifact.
 
 ## Authenticated native reproduction acceptance
 
-The historical test source is Git blob
-`23516163160b4e8730553371eb04666082ae6231` at the pinned commit.
+The compiler-repaired historical native test source is Git blob
+`6add9dfbf4cbb0a19794abaadd7e699239923e08` at the pinned commit.
 `tests/WO3HistoricalNativeProducer.py` checks these two identities before
 preparing the original source. It adds an observation-only checkpoint to
 the **historical original test harness**, never to its kernel or persistence
