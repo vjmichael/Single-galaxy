@@ -70,6 +70,79 @@ bool Simulation::original_passenger_ferry_safe_to_fly(EntityId ship) const {
     return seen.size()==actual;
 }
 
+// A visiting traveler is still employed by their original colony, but may
+// physically leave the DESTINATION receiving ship and enter its real station.
+// The completed original ferry voyage is mandatory: there is no implicit
+// immigration, instant travel or cloned passenger.
+bool Simulation::station_visitor_transfer(
+    PlayerId owner,EntityId receiver,EntityId station,std::uint64_t npc_id,
+    std::uint64_t voyage,bool ashore){
+    if(!owner || owner==kServerAuthority || !receiver || !station ||
+       !npc_id || !voyage || tick_==std::numeric_limits<std::uint64_t>::max())
+        return false;
+    const auto* ship=find(receiver),*berth=find(station);
+    if(!ship || !berth || ship->type!=EntityType::Ship ||
+       berth->type!=EntityType::Station || ship->owner_id!=owner ||
+       ship->dock_state!=DockState::Docked ||
+       ship->dock_station!=station || ship->system_id!=berth->system_id ||
+       !colony_ship(receiver))return false;
+    const auto v=voyages_.find(voyage);
+    const auto n=npcs_.find(npc_id);
+    if(v==voyages_.end() || v->second.status!=2 ||
+       v->second.destination!=receiver || v->second.ferry==receiver ||
+       !std::binary_search(v->second.passengers.begin(),
+                            v->second.passengers.end(),npc_id) ||
+       n==npcs_.end())return false;
+    auto& person=n->second;
+    if(person.role!=NpcRole::Ship || person.home_ship==receiver ||
+       person.transport_id || person.mentor_id ||
+       person.assigned_site!=person.home_ship ||
+       person.location!=(ashore?receiver:station))return false;
+    for(const auto& [id,dependent]:physical_dependents_){
+        (void)id;
+        if(dependent.guardian_id==npc_id)return false;
+    }
+    for(const auto& [id,flight]:npc_flight_orders_){
+        (void)id;
+        if(flight.ship==receiver &&
+           (flight.phase==NpcFlightPhase::Planned ||
+            flight.phase==NpcFlightPhase::InTransit))return false;
+    }
+    for(const auto& [when,pending]:commands_){
+        if(when<=tick_)continue;
+        for(const auto& cmd:pending)
+            if(cmd.actor==receiver &&
+               (cmd.action==Action::RequestUndock ||
+                cmd.action==Action::RequestJump))return false;
+    }
+    if(ashore){
+        const auto* stock=life_support(receiver);
+        if(!stock)return false;
+        // No welfare/account credit is minted. The arrival requires an
+        // actual supplied destination ship; station welfare is a later gate.
+    }
+    person.location=ashore?station:receiver;
+    return true;
+}
+bool Simulation::has_original_station_guest_ashore(EntityId receiver) const {
+    const auto* ship=find(receiver);
+    if(!ship || ship->dock_state!=DockState::Docked ||
+       !ship->dock_station)return false;
+    for(const auto& [id,npc]:npcs_){
+        if(npc.role!=NpcRole::Ship || npc.transport_id ||
+           npc.home_ship==receiver ||
+           npc.location!=ship->dock_station ||
+           npc.assigned_site!=npc.home_ship)continue;
+        for(const auto& [voyage_id,v]:voyages_){
+            (void)voyage_id;
+            if(v.status==2 && v.destination==receiver &&
+               std::binary_search(v.passengers.begin(),v.passengers.end(),id))
+                return true;
+        }
+    }
+    return false;
+}
+
 bool Simulation::station_dock_worker_transfer(
     PlayerId owner,EntityId ship,EntityId station,std::uint64_t npc_id,
     bool disembark) {
