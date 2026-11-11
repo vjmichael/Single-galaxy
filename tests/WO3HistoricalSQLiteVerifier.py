@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """WO3-F: fail-closed authentic historical native-source SQLite verification.
 
-The original Nov 5 v86-era kernel wrote real *v85* SQLite state, and its v86
+The original pre-v109 kernel at its compiler-repaired November 10 source wrote real *v85* SQLite state, and its v86
 legal-residence upgrade retained ship homes in memory. It did NOT write a
 v86 SQLite state with invented planetary legal addresses. This gate accepts
 only a pinned, unchanged vintage *kernel* and its real saved command journal,
@@ -17,8 +17,8 @@ import sqlite3
 import subprocess
 import sys
 
-SOURCE_COMMIT = "d2cf352346a0574225e156f89e1baf1ac8ed9bd9"
-SOURCE_BLOB = "23516163160b4e8730553371eb04666082ae6231"
+SOURCE_COMMIT = "19c58bca0b75a6899eb0a38cb79e0e0a77a37f3b"
+SOURCE_BLOB = "6add9dfbf4cbb0a19794abaadd7e699239923e08"
 SCHEMA = "SG-WO3-HISTORICAL-NATIVE-V85-REPRODUCTION-01"
 
 
