@@ -10,6 +10,7 @@ const REFINERY_TERMINAL_UI := preload("res://world/refinery_terminal_ui.gd")
 const FLIGHT_INSTRUMENTS := preload("res://world/native_flight_instruments.gd")
 const INTERACTION_PROMPTS := preload("res://world/interaction_prompts.gd")
 const COLONY_DOCK_LAYOUT := preload("res://world/colony_dock_layout.gd")
+const PHYSICAL_TRACE := preload("res://world/physical_acceptance_diagnostics.gd")
 const STATION_GRAY := Color(0.47, 0.51, 0.55, 1.0)
 const SHIP_WHITE := Color(0.96, 0.97, 0.99, 1.0)
 # Visual capsule center for 1.75 m tall collider; original C++ X/Z unchanged.
@@ -79,6 +80,7 @@ var _frame_count := 0
 # SHIP + ROCK ack caused unnecessary per-command desktop I/O jitter.
 var _native_visual_evidence_buffer := PackedStringArray()
 var _last_visual_evidence_flush_ms := 0
+var _physical_trace
 const NATIVE_EVIDENCE_FLUSH_INTERVAL_MS := 500
 const NATIVE_EVIDENCE_BUFFER_LIMIT := 64
 # Former developer-only H toggle is no longer needed during normal play.
@@ -131,6 +133,8 @@ func _ready() -> void:
 	native_player_session.asteroid_contact_received.connect(_on_native_asteroid_contact)
 	native_player_session.status_changed.connect(_on_native_player_status)
 	native_player_session.connection_changed.connect(_on_native_player_connection)
+	native_player_session.flight_command_sent.connect(_on_physical_flight_sent)
+	native_player_session.flight_command_result.connect(_on_physical_flight_result)
 	player.native_motion_intent.connect(_on_native_player_intent)
 	player.native_seat_intent.connect(_on_native_player_seat_intent)
 	player.native_ship_intents.connect(_on_native_ship_intents)
@@ -143,6 +147,18 @@ func _ready() -> void:
 	refinery_terminal.unload_requested.connect(_on_native_unload_requested)
 	refinery_terminal.terminal_closed.connect(_hide_refinery_terminal)
 	_player_session_autoconnect = not Engine.is_editor_hint() and DisplayServer.get_name() != "headless" and not OS.get_cmdline_args().has("--script")
+	_physical_trace = PHYSICAL_TRACE.new()
+	var operator_dir := OS.get_environment("SG_FP3D_OPERATOR_CAPTURE_DIR")
+	if _player_session_autoconnect and not operator_dir.is_empty():
+		var source_sha := "UNVERIFIED"
+		if FileAccess.file_exists("res://native/SGDX_BUILD_SHA.txt"):
+			source_sha = FileAccess.get_file_as_string("res://native/SGDX_BUILD_SHA.txt").strip_edges()
+		_physical_trace.begin(operator_dir, source_sha)
+		_physical_trace.record("renderer", {
+			"video_adapter":RenderingServer.get_video_adapter_name(),
+			"display_backend":DisplayServer.get_name(),
+			"godot_version":str(Engine.get_version_info().get("string", "unknown")),
+			"limitation":"adapter and Godot main-loop measurements do not alone establish physical GPU approval"})
 	if _player_session_autoconnect:
 		call_deferred("_open_saved_station_automatically")
 
@@ -764,6 +780,23 @@ func _unhandled_input(event: InputEvent) -> void:
 		_toggle_technical_details()
 		get_viewport().set_input_as_handled()
 		return
+	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_F12:
+		# Read-only marker for a human-observed stuck key, camera failure or stutter.
+		# No desktop capture, native action, SQLite mutation or automatic approval.
+		if _physical_trace != null and _physical_trace.enabled():
+			_physical_trace.record("operator_F12_marker", {
+				"focused":get_window().has_focus(),
+				"cursor_captured":Input.mouse_mode == Input.MOUSE_MODE_CAPTURED,
+				"seat_verified":is_instance_valid(player) and player.native_seated,
+				"ship_tick":int(_verified_flight_ship.get("tick", -1)),
+				"ship_generation":int(_verified_flight_ship.get("gen", -1)),
+				"frame_pacing":_frame_timing_summary()})
+			_physical_trace.flush()
+			_on_native_player_status("F12 physical test marker saved; F11 captures the game viewport")
+		else:
+			_on_native_player_status("F12 evidence marker requires packaged Windows playtest launcher")
+		get_viewport().set_input_as_handled()
+		return
 	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_F11:
 		# A deliberate operator action: capture only the game's Godot viewport,
 		# never the Windows desktop or any other application.
@@ -965,6 +998,11 @@ func _capture_operator_view() -> void:
 	f.seek_end()
 	f.store_line(JSON.stringify(receipt))
 	f.close()
+	if _physical_trace != null:
+		_physical_trace.record("operator_F11_viewport", {"image":filename,
+			"image_sha256":receipt["image_sha256"],"native_flight_joined":not joined.is_empty(),
+			"camera_exterior":receipt["exterior_camera"],"frame_pacing":receipt["frame_pacing"]})
+		_physical_trace.flush()
 	_on_native_player_status("F11 original-world viewport captured: " + filename)
 
 func _record_native_projection(kind: String, evidence: Dictionary) -> void:
@@ -1077,8 +1115,37 @@ func _on_native_ship_intents(actions: PackedStringArray) -> void:
 	if native_player_session != null:
 		native_player_session.submit_flight(actions)
 
+func _on_physical_flight_sent(request_id: int, verb: String) -> void:
+	if _physical_trace == null or not _physical_trace.enabled():
+		return
+	_physical_trace.record("original_flight_submitted", {
+		"request_id":request_id, "verb":verb,
+		"window_focused":get_window().has_focus(),
+		"cursor_captured":Input.mouse_mode == Input.MOUSE_MODE_CAPTURED,
+		"pilot_seated":is_instance_valid(player) and player.native_seated,
+		"dock_state":int(_verified_flight_ship.get("dock", -1)),
+		"prior_native_tick":int(_verified_flight_ship.get("tick", -1))})
+
+func _on_physical_flight_result(request_id: int, verb: String, disposition: String,
+		elapsed_ms: int, outcome: int) -> void:
+	if _physical_trace == null or not _physical_trace.enabled():
+		return
+	_physical_trace.record("original_flight_result", {
+		"request_id":request_id, "verb":verb, "result":disposition,
+		"ack_latency_ms":elapsed_ms, "native_outcome":outcome,
+		"native_tick":int(_verified_flight_ship.get("tick", -1))})
+	if disposition != "ACK":
+		_physical_trace.flush()
+
 func _on_native_ship_state(ship: Dictionary) -> void:
 	_record_native_projection("SHIP", ship)
+	if _physical_trace != null and _physical_trace.enabled():
+		_physical_trace.record("original_ship_observed", {
+			"tick":int(ship.get("tick", -1)), "generation":int(ship.get("gen", -1)),
+			"heading":int(ship.get("heading", -1)), "dock":int(ship.get("dock", -1)),
+			"vx":int(ship.get("vx", 0)), "vy":int(ship.get("vy", 0)),
+			"vz":int(ship.get("vz", 0)), "outcome":int(ship.get("outcome", -1)),
+			"camera_exterior":is_instance_valid(exterior_camera) and exterior_camera.current})
 	_verified_flight_ship = ship.duplicate(true)
 	_verified_flight_rock.clear()
 	_refresh_native_flight_instruments()
@@ -1190,6 +1257,12 @@ func _on_native_player_pose(pose: Dictionary) -> void:
 		call_deferred("_complete_docked_disembark_after_native_seat_release")
 
 func _on_native_player_status(message: String) -> void:
+	if _physical_trace != null and _physical_trace.enabled():
+		var lower := message.to_lower()
+		if lower.contains("denied") or lower.contains("timed out") or \
+				lower.contains("refused") or lower.contains("exited") or lower.contains("failed"):
+			_physical_trace.record("native_warning", {"message":message.left(180)})
+			_physical_trace.flush()
 	if is_instance_valid(native_label):
 		# The real native SEAT=0 acknowledgement is an invisible stage of a
 		# direct docked EXIT. Never advertise free cabin walking during handoff.
@@ -1237,6 +1310,8 @@ func _on_native_snapshot(frame: Dictionary) -> void:
 
 func _exit_tree() -> void:
 	_flush_native_visual_evidence()
+	if _physical_trace != null:
+		_physical_trace.finish()
 	if native_session != null:
 		native_session.stop("Native client closed")
 	if native_player_session != null:
@@ -1246,6 +1321,15 @@ func _exit_tree() -> void:
 
 func _process(delta: float) -> void:
 	_record_frame_timing(delta)
+	if _physical_trace != null and _physical_trace.enabled():
+		_physical_trace.pacing(_frame_timing_summary(), {
+			"focus":get_window().has_focus(),
+			"cursor_captured":Input.mouse_mode == Input.MOUSE_MODE_CAPTURED,
+			"seat_verified":is_instance_valid(player) and player.native_seated,
+			"ship_tick":int(_verified_flight_ship.get("tick", -1)),
+			"dock_state":int(_verified_flight_ship.get("dock", -1)),
+			"fps_counter":Engine.get_frames_per_second(),
+			"metric":"rolling Godot frame intervals, not GPU hardware timestamps"})
 	# VISUAL ONLY: interpolate the spectator camera, not the original-world
 	# ship or camera authority. UI 60 FPS is not native C++ transaction rate.
 	if is_instance_valid(exterior_camera) and exterior_camera.current:
