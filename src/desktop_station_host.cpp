@@ -6,6 +6,7 @@
 #include "galaxy/Persistence.hpp"
 #include "galaxy/DockLogistics.hpp"
 #include "galaxy/Dock04Traffic.hpp"
+#include "galaxy/Dock05Voyage.hpp"
 #include "galaxy/StationLaunch.hpp"
 #include "galaxy/StationRefineryProtocol.hpp"
 #include <algorithm>
@@ -110,6 +111,7 @@ static int run_host(int argc,char** argv){
   // Reopen the SAME SQLite save under this already-acquired native writer lease.
   dock::Ledger dock_ledger(save_utf8);
   dock04::Traffic dock_traffic(save_utf8);
+  dock05::Routes dock_routes(save_utf8);
   const auto session=epoch();
   const auto receipt_prefix=(epoch()&((std::uint64_t{1}<<45)-1))<<14;
   std::uint64_t latest_request=0,budget=0;
@@ -141,15 +143,20 @@ static int run_host(int argc,char** argv){
    const bool dock_passenger=f.size()==5&&f[0]=="DOCKPASS";
    const bool dock_freight=f.size()==6&&f[0]=="DOCKFREIGHT";
    const bool dock_work=f.size()==5&&f[0]=="DOCKWORK";
+   const bool dock_destinations=f.size()==5&&f[0]=="DOCKDESTS";
+   const bool dock_route=f.size()==7&&f[0]=="DOCKROUTE";
+   const bool dock_cancel=f.size()==5&&f[0]=="DOCKCANCEL";
    const bool dock_action=dock_view||dock_assign||dock_release||
-                          dock_passenger||dock_freight||dock_work;
+                          dock_passenger||dock_freight||dock_work||
+                          dock_destinations||dock_route||dock_cancel;
    if(!walking&&!boarding&&!exiting&&!view&&!refine&&!unload&&!colony_console&&!population&&!dock_action){deny(0,"malformed");continue;}
-   std::uint64_t requested_session=0,req=0,expected=0,ship=0,quantity=0;
+   std::uint64_t requested_session=0,req=0,expected=0,ship=0,quantity=0,extra=0;
    std::int64_t dx=0,dz=0;
    if(!parse(f[1],requested_session)||!parse(f[2],req)||!parse(f[3],expected)||
       (walking&&(!parse(f[4],dx)||!parse(f[5],dz)))||
       (!walking&&!parse(f[4],ship))||
-      (dock_freight&&!parse(f[5],quantity))){deny(0,"integer");continue;}
+      ((dock_freight||dock_route)&&!parse(f[5],quantity))||
+      (dock_route&&!parse(f[6],extra))){deny(0,"integer");continue;}
    if(requested_session!=session){deny(req,"session");continue;}
    if(req<=latest_request||req>10000){deny(req,"replay");continue;}
    latest_request=req;
@@ -190,11 +197,38 @@ static int run_host(int argc,char** argv){
       deny(req,"dock-service-requires-local-owner");continue;
     }
     const EntityId local_station=person.physical_station;
-    if((dock_view||dock_work) && ship!=local_station){
+    if((dock_view||dock_work||dock_destinations) && ship!=local_station){
       deny(req,"dock-service-is-local");continue;
     }
+    if(dock_destinations){
+      const auto dests=dock_routes.destinations(
+          world.world(),local_station,kOwner);
+      std::cout<<"DDEST|1|"<<session<<'|'<<req<<'|'
+               <<world.world().tick()<<'|'<<world.generation()
+               <<'|'<<local_station<<'|'<<dests.size();
+      for(const auto& destination:dests)
+        std::cout<<'|'<<destination.station<<'|'<<destination.receiving_ship;
+      std::cout<<'\n'<<std::flush;
+      if(!std::cout)throw std::runtime_error("dock destination pipe closed");
+      last=now;continue;
+    }
     std::uint64_t result=0;
-    if(dock_assign){
+    if(dock_route){
+      // Physical station owner authorizes one existing passenger ferry and
+      // one actual receiving berth, never remote direct stock or NPC edits.
+      const auto ferry=extra?extra:dock_routes.first_boarded_ferry(
+          world.world(),local_station,kOwner);
+      if(!ferry || !dock_routes.book(world,local_station,kOwner,ferry,
+                                     ship,quantity)){
+        deny(req,"no-original-ferry-or-reachable-receiving-colony");continue;
+      }
+      result=7;
+    }else if(dock_cancel){
+      if(!dock_routes.cancel_unstarted(world,local_station,kOwner,ship)){
+        deny(req,"route-has-original-movement-or-needs-review");continue;
+      }
+      result=8;
+    }else if(dock_assign){
       bool appointed=false;
       // The original ship NPC crosses the same real docked berth. No
       // generic crewman is counted as local labor before its SQLite STEP.
@@ -363,16 +397,24 @@ static int run_host(int argc,char** argv){
         if(!applied)break;
         ++completed;
       }
-      result=completed?5:6;
-      if(completed)
-        galaxy::server_dx::committed_breadcrumb(world.world().tick(),world.generation());
+      // A route is a lasting original physical flight plan. Advance a
+      // bounded number of world ticks per foreground request, not an ETA.
+      std::uint64_t travel_steps=0;
+      for(int i=0;i<4;++i){
+        if(!dock_routes.advance(world,local_station,kOwner))break;
+        ++travel_steps;
+      }
+      result=completed?5:(travel_steps?9:6);
+      if(completed||travel_steps)
+        galaxy::server_dx::committed_breadcrumb(
+            world.world().tick(),world.generation());
     }else if(dock_view){
-      // A view is the safe place to reconcile already-committed original
-      // travel receipts after native host restart; never retry on ambiguity.
       dock_traffic.reconcile(world,local_station,kOwner);
+      dock_routes.reconcile(world,local_station,kOwner);
     }
     const auto data=dock_ledger.snapshot(world.world(),local_station,kOwner);
     const auto traffic=dock_traffic.snapshot(world.world(),local_station,kOwner);
+    const auto trips=dock_routes.status(local_station,kOwner);
     std::cout<<"DOCK|1|"<<session<<'|'<<req<<'|'<<world.world().tick()
              <<'|'<<world.generation()<<'|'<<local_station
              <<'|'<<data.staff<<'|'<<data.passengers<<'|'<<data.freight_tonnes
@@ -383,7 +425,11 @@ static int run_host(int argc,char** argv){
              <<'|'<<traffic.waiting<<'|'<<traffic.boarded
              <<'|'<<traffic.held<<'|'<<traffic.urgent
              <<'|'<<traffic.passenger_gangways
-             <<'|'<<traffic.congestion<<'\n'<<std::flush;
+             <<'|'<<traffic.congestion
+             <<'|'<<trips.active<<'|'<<trips.delivered
+             <<'|'<<trips.held<<'|'<<trips.passengers_travelling
+             <<'|'<<trips.visitors_arrived<<'|'<<trips.reviewable_route
+             <<'\n'<<std::flush;
     if(!std::cout)throw std::runtime_error("dock service response pipe closed");
     last=now;continue;
    }
