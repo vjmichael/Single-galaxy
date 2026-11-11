@@ -7,9 +7,9 @@ extends RefCounted
 # These are exact original C++ bounds, not approximate Godot collision sizes:
 # Simulation::station_player_action(Board) checks each axis within +/-600 mm.
 const NATIVE_HATCH_AXIS_MM := 600
-# station_refinery_protocol::accessible checks a 1200mm circle at (3000,0).
-const REFINERY_CENTER_X_MM := 3000
-const REFINERY_RADIUS_MM := 1200
+# The colony operations console is available anywhere at the exact
+# ORIGINAL current physical station; no avatar-terminal proximity needed.
+# Boarding still uses the immutable native 600mm hatch envelope.
 
 static func action_key(action: String, fallback: String) -> String:
 	# Read real InputMap so the display remains correct if bindings change.
@@ -53,13 +53,12 @@ static func hint(station_active: bool, person: Dictionary, ship_active: bool,
 			var z: int = int(person.get("z_mm", 0))
 			var eligible: int = int(person.get("eligible_ship", 0))
 			if eligible > 0 and absi(x) <= NATIVE_HATCH_AXIS_MM and absi(z) <= NATIVE_HATCH_AXIS_MM:
-				return "Press %s to Board  |  Owned ship #%d at colony departure dock" % [interact_key, eligible]
-			var dx: int = x - REFINERY_CENTER_X_MM
-			if dx * dx + z * z <= REFINERY_RADIUS_MM * REFINERY_RADIUS_MM:
-				return "Press R — Use station refinery terminal"
+				return "Press %s to Board | I: inventory of THIS colony | Ship #%d at dedicated dock" % [interact_key, eligible]
+			# Do not require visiting the refinery building for a console
+			# request; native C++ still needs the actual built plant and staff.
 			if eligible <= 0:
-				return "No existing eligible docked ship — boarding unavailable"
-			return "COLONY → DOCK  |  Follow cyan boarding walkway (%.1f m)" % (Vector2(float(x), float(z)).length() / 1000.0)
+				return "I: this colony inventory | No eligible existing docked ship"
+			return "I colony inventory | Shift toggle run | Follow passenger airlock to dock (%.1fm)" % (Vector2(float(x), float(z)).length() / 1000.0)
 		if state == 0:
 			return "Boarding complete — opening your ship cockpit for departure"
 		return "Station identity not ready — no interaction authorized"
@@ -70,6 +69,6 @@ static func hint(station_active: bool, person: Dictionary, ship_active: bool,
 			return "THIRD-PERSON PILOT | U undock  •  A/D or mouse turn  •  W/S vertical"
 		if dock_state == 0:
 			# No cabin walking, free-look toggle, client miner or fake ore.
-			return "THIRD-PERSON FLIGHT | A/D turn • W/S ascend/descend • ↑/↓ forward/reverse • B brake • G dock\nMINING LOCKED — original C++ equipment not fitted yet"
+			return "THIRD-PERSON FLIGHT | A/D turn • W/S vertical • ↑/↓ thrust • B brake • G dock\nM: request finite original rock collection at contact | no UI-created ore"
 		return "Waiting for verified original ship docking status"
 	return "Connecting to your original saved station automatically..."
