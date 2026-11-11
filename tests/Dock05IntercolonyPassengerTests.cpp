@@ -1,6 +1,7 @@
 // DOCK-05: source-native real passenger ferry and visited station, staged
 // for one later consolidated Windows/Linux matrix. Not executed on creation.
 #include "galaxy/Dock05Voyage.hpp"
+#include "galaxy/Dock06Corridor.hpp"
 #include "galaxy/Dock05RegionalDemand.hpp"
 #include <filesystem>
 #include <iostream>
@@ -75,7 +76,24 @@ int main(int argc,char** argv){
                 7,home,from,employee,true,31504));
             CHECK(staff.assign(world.world(),from,7,employee));
             CHECK(boarding.enqueue(world.world(),from,7,guest,ferry));
-            CHECK(boarding.serve_one(world,from,7,employee));
+            dock06::Corridor corridor(db);
+            CHECK(dock06::Corridor::all_route_points_clear());
+            corridor.synchronize(world.world(),from,7,world.generation());
+            for(int i=0;i<128 && !corridor.worker_ready(
+                world.world(),from,7,employee);++i)
+                CHECK(corridor.advance(world.world(),from,7));
+            CHECK(corridor.worker_ready(world.world(),from,7,employee));
+            const auto gate=[&](std::uint64_t npc){
+                return corridor.boarding_ready(world.world(),from,7,npc);
+            };
+            CHECK(!boarding.serve_one(world,from,7,employee,gate));
+            CHECK(world.world().npc_records().at(guest).location==from);
+            corridor.synchronize(world.world(),from,7,world.generation());
+            for(int i=0;i<128 && !corridor.boarding_ready(
+                world.world(),from,7,guest);++i)
+                CHECK(corridor.advance(world.world(),from,7));
+            CHECK(corridor.boarding_ready(world.world(),from,7,guest));
+            CHECK(boarding.serve_one(world,from,7,employee,gate));
             manifest=world.world().npc_records().at(guest).transport_id;
             CHECK(manifest>0);
             CHECK(world.world().voyage_status(manifest)==1);
