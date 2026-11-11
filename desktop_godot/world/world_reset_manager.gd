@@ -50,7 +50,7 @@ static func _rollback(root: String, archive: String, entries: Array[Dictionary])
 
 static func recover_pending(root: String, running_pids: Array[int]) -> Dictionary:
 	for pid in running_pids:
-		if pid > 0 and OS.is_process_running(pid):
+		if pid > 0 and (pid == OS.get_process_id() or OS.is_process_running(pid)):
 			return {"ok":false,"reason":"Live SGDX writer prevents reset recovery"}
 	var journal_path := root.path_join(JOURNAL)
 	if not FileAccess.file_exists(journal_path):
@@ -87,7 +87,7 @@ static func archive_for_new_game(root: String, running_pids: Array[int], fault_a
 	# This is a human-confirmed action only; never an automatic corruption
 	# fix, game retry, GitHub test gate, or model-generated approval.
 	for pid in running_pids:
-		if pid > 0 and OS.is_process_running(pid):
+		if pid > 0 and (pid == OS.get_process_id() or OS.is_process_running(pid)):
 			return {"ok":false,"reason":"Live native supervisor still owns this world"}
 	if not DirAccess.dir_exists_absolute(root):
 		return {"ok":false,"reason":"Godot user-data directory missing"}

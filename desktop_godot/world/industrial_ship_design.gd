@@ -90,6 +90,11 @@ static func decorate_external_body(body: Node3D, wings: Array[Node3D]) -> void:
 	tapered.mesh = _tapered_hull()
 	tapered.material_override = ceramic
 	body.add_child(tapered)
+	# The original rectangular graybox is no longer the flight-visible
+	# shell. Preserve the SAME named node and its children for camera and
+	# test identity, but display only the actual triangulated hull.
+	if body is MeshInstance3D:
+		(body as MeshInstance3D).mesh = null
 	# Raised pressure-hull frames, docking-bay seams and the recessed canopy
 	# provide readable fore/aft direction from a third-person camera.
 	for i in range(7):

@@ -691,7 +691,7 @@ func _refresh_station_visual_target() -> void:
 	var range_m := float(_verified_station_nav.get("range_m", -1.0))
 	# Don't draw a fabricated station when the C++ return vector is out of
 	# draw range; the honest distance/bearing HUD remains visible instead.
-	if range_m < 25.0 or range_m > VISUAL_QUALITY.distance_m(_visual_high_quality) - 40.0:
+	if range_m < 3.0 or range_m > VISUAL_QUALITY.distance_m(_visual_high_quality) - 40.0:
 		return
 	_visual_station_target.position = Vector3(
 		float(_verified_station_nav.get("dx_mm", 0))/1000.0,
