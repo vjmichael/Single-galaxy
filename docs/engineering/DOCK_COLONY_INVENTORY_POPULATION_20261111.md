@@ -42,10 +42,43 @@ On foot, pressing **Shift** toggles running ON/OFF; holding Shift is not require
 4. **Recovery and lifecycle:** held jobs conservatively block reuse, but an owner-reviewed cancellation/reconciliation interface and a bounded archival/aggregate counter for lifetime queue history are not built yet. Existing direct manual one-tonne `COLUNLOAD` remains available outside this staff-scaled service queue.
 5. **Scale:** the LOD caps are constant (24 civilian + 8 staff graphics), but colony-wide millions-scale cohort population statistics, aggregate traffic demand generation and owner-approved transport admission are not yet connected to the visible native named-NPC sample.
 
+## DOCK-03 — Physical workforce integration (new source implementation)
+
+**Development branch only; staged tests have not been executed.** No Windows/Linux native CI, PR verification, Godot installed acceptance or change to `main` was requested or performed.
+
+### Original-world NPC movement and durable custody
+
+- `src/DockWorkforce.cpp` adds trusted `Simulation::station_dock_worker_transfer`: a **specific original named crew member** may temporarily move from a physically docked, owner-matched original ship to its exact original station. Station ownership, physical berth, current NPC role/location, duty/transport/mentorship, active flight, scheduled undock and a minimum physical crew remaining aboard are checked. The same NPC can return to the same docked hull; no new NPC, fictional journey, account-global worksite or invented inventory appears.
+- `PersistentWorld::station_dock_worker_transfer` commits the changed **canonical NPC physical location** with one original world STEP and an immutable `sg_dock_worker_moves` record **in the same SQLite transaction**. Fault injection must roll back both. Legal residence, original home ship and finite crew contract remain unchanged; a shore assignment is not permanent immigration or a second workforce roster.
+- Owner-requested `DOCKASSIGN` now selects an eligible **named ship NPC**, physically moves them ashore first and only then opens their durable dock shift. `DOCKRELEASE` returns that person to their actual docked ship before deleting the appointment. Both are guarded against detached saves and cross-owner selectors. No general NPC is counted merely because it appears in a ship manifest.
+- The original `PersistentWorld` player, supervised-cockpit, and trusted NPC-host flight submission paths deny departure while any named original crew member from that vessel is stationed ashore. The original ship-boarding/walking controls remain separate; a player must bring staff back before leaving.
+- This is an **atomic berth-level shore-duty transition**, not yet independent NPC corridor walking/path animations, fully autonomous crew reassignment, or station life-support migration. Internal simulation-created NPC flights outside the guarded host-submission paths still require an explicit integration fence in a later group.
+
+### Qualifications, shortage backpressure and automatic services
+
+- `DockLogistics.hpp` resolves current assignments against **original station physical custody, docked home-ship ownership, active native workshop/yard/medical work and NPC duty availability**. An expired shift does not count as productive labor. The global world's original role, medical and industry records remain the source of NPC identity; the dock ledger only records temporary appointments and receipts.
+- `dock_pending_worker_v1` preserves each original one-tonne unload's intended worker *before* execution. On an independently APPLIED original `Action::UnloadOre`, `dock_serviced_units_v1` records exactly one real worker credit, and queue progress/credit commit together. Restart reconciliation never mints a second credit from the same command.
+- Basic station labor is limited to physically present, original ship-role crew (no fake trained strangers). After **three successfully applied tonnes**, the specific worker earns an *experienced cargo handler* status, based only on immutable actual work receipts. Each basic worker contributes at most one tonne per service cycle; an experienced worker may contribute two, and all throughput is capped at **four original-world operations per cycle**. Physical cargo, original inventory and journal still determine actual success.
+- `native_station_session.gd` runs a **foreground automatic** dock-service dispatcher about once per 900ms **while the original station role is active**, idle and physically in the same colony. It checks native queue/staff status, then requests bounded `DOCKWORK` through the **same native writer and source receipts**; staff shortages, empty queues, boarding and disconnection stop it. There is no detached Godot SQLite writer or offline catch-up while the application is closed.
+- The **I** colony panel now shows true available staff, source-backed experienced handlers, up-to-four-service capacity, queue sizes and physically unloaded tonnage. The original capped `24 + 8` presentation meshes are unchanged, and cannot invent jobs or physical populations.
+
+### Staged, deliberately unexecuted source tests
+
+- `tests/Dock03PhysicalWorkforceTests.cpp` stages real finite-crew genesis, physical mined ore, owner refusal, atomic fault rollback, named shore custody, actual cargo queue/unload with worker experience, restart, undock fence and return.
+- `tests/Dock03NativeStationPipe.py` stages the original `PERSON`/`DOCK` pipe exchange, first live dock employee, physical return, durable SQLite move receipts and native-host restart. CMake registers both for the **later consolidated native acceptance batch only**.
+
+### DOCK-03 remaining integration gates
+
+1. **Unverified source:** native compilation, actual fault-matrix execution, source snapshot round-trip after shore duty and physical Windows installed Godot interaction are deliberately deferred. No passing result is claimed.
+2. **Internal NPC movement paths:** add the same shore-crew departure fence to simulation-generated NPC flight orders that bypass the `PersistentWorld` command entrypoints; no station employee may be abandoned by an autonomous departure.
+3. **Full workforce economics:** crew-contract headcount remains associated with the vessel even while actual location moves temporarily ashore; station food/rest, full shared qualification registry, crew productivity recalibration, long shift renewal and owner-reviewable dismissal are not yet harmonized across all native economic programs.
+4. **Dock/corridor experience:** independent per-NPC physical walking, congestion/queue priority, true passenger boarding/voyage manifests, time-of-day staffing and offline/cold work scheduling are not implemented by this dock-specific source group.
+5. **Long-running evidence and cleanup:** queue receipts and completed jobs need bounded archive/compaction and owner-reviewed held-job reconciliation; no automatic retry of ambiguous original inventory transfers.
+
 ## Open work — do not falsely mark complete
 
-1. **Dock-worker integration closeout:** DOCK-02 now has persisted, authenticated shift appointments and worker-scaled **explicit queue dispatch**. Still missing original-world station staff transfer, global cross-profession duty reservation, skill/training and autonomous shift scheduling; do not count generic ship crew as employed dock labor.
-2. **Passenger/freight capacity scheduling closeout:** DOCK-02 has bounded source-backed check-in/freight queues, staff-shortage backpressure and interruption hold. Still missing automatic scheduler, physical passenger boarding, fair traffic arbitration, completed freight archive/recovery UI and cohort-scale arrivals. Never spawn one graphical actor per simulated resident.
+1. **Dock-worker integration closeout:** DOCK-03 now adds source-level original NPC ship-to-station transfer, explicit appointments, source-backed cargo experience and foreground native automatic dispatch. Still requires real compiler/restart acceptance, station welfare, interior path animation and full cross-profession scheduling integration.
+2. **Passenger/freight capacity scheduling closeout:** DOCK-03 adds bounded active-session scheduling. True passenger boarding, fair traffic arbitration, durable batch archiving, offline/cold scheduling and cohort-scale arrivals remain open. Never spawn one graphical actor per simulated resident.
 3. **General unified production goods:** currently one logical player colony panel projects the **real hangar ore plus owned refinery mineral output**. Construction/workshop output storage and movement into the same colony inventory need original industrial/warehouse custody integration without inventing an account-global balance.
 4. **Full remote factory commands:** can be selected from this colony's panel once original infrastructure, approved recipes, workers, power, finite stock and ownership are implemented. No remote-universe material access.
 5. **Creator-led visual redesign:** art is modular and replaceable. No claim that the present staging meshes or decor constitute the final colony architecture or detailed station.
