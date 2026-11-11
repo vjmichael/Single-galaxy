@@ -41,6 +41,35 @@ bool Simulation::npc_available_for_shore_duty(std::uint64_t npc_id,
            health==NpcHealthStatus::Recovered;
 }
 
+// DOCK-05: a passenger ferry is no longer prohibited from moving solely
+// because the ORIGINAL manifest is active. Every person must be aboard the
+// same real hull with the exact immutable transport ID. Stranding, rescue,
+// unrelated pending passenger movement and over-capacity fail closed.
+bool Simulation::original_passenger_ferry_safe_to_fly(EntityId ship) const {
+    const auto* vessel=find(ship);
+    if(!vessel || vessel->type!=EntityType::Ship ||
+       !colony_ship(ship) || !life_support(ship))return false;
+    std::set<std::uint64_t> seen;
+    std::size_t actual=0;
+    for(const auto& [id,npc]:npcs_) {
+        (void)id;
+        if(npc.location==ship && npc.transport_id)++actual;
+    }
+    if(actual==0 || actual>16)return false;
+    for(const auto& [voyage_id,v]:voyages_) {
+        if(v.ferry!=ship || (v.status!=1 && v.status!=3))continue;
+        if(v.status!=1 || v.passengers.empty() || v.passengers.size()>16 ||
+           v.origin==ship)return false;
+        for(const auto id:v.passengers) {
+            const auto it=npcs_.find(id);
+            if(it==npcs_.end() || it->second.location!=ship ||
+               it->second.transport_id!=voyage_id)return false;
+            if(!seen.insert(id).second)return false;
+        }
+    }
+    return seen.size()==actual;
+}
+
 bool Simulation::station_dock_worker_transfer(
     PlayerId owner,EntityId ship,EntityId station,std::uint64_t npc_id,
     bool disembark) {
