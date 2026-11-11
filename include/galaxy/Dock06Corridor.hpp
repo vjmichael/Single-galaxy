@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <array>
 #include <cstdint>
+#include <cstdlib>
 #include <limits>
 #include <map>
 #include <set>
@@ -231,6 +232,17 @@ public:
                q.number(3)==static_cast<std::uint64_t>(at.second+8000) &&
                sim.npc_records().count(npc) &&
                sim.npc_records().at(npc).location==station;
+    }
+    bool worker_ready(const Simulation& sim,EntityId station,PlayerId owner,
+                      std::uint64_t npc) const {
+        dock::Statement q(db_,"SELECT lane,waypoint,x_bias,z_bias "
+            "FROM dock06_walkers WHERE station=? AND owner=? AND npc_id=?");
+        q.bind(1,station);q.bind(2,owner);q.bind(3,npc);
+        if(q.next()!=SQLITE_ROW || q.number(0)!=1 || q.number(1)!=5 ||
+           !sim.npc_available_for_shore_duty(npc,station))return false;
+        const auto at=route(Lane::Worker,npc)[5];
+        return q.number(2)==static_cast<std::uint64_t>(at.first+8000) &&
+               q.number(3)==static_cast<std::uint64_t>(at.second+8000);
     }
     Observation observe(const Simulation& sim,EntityId station,PlayerId owner)const{
         Observation o{};
