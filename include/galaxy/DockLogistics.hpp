@@ -162,6 +162,7 @@ class Ledger {
     if(q.next()!=SQLITE_ROW)return false;
     const auto assigned=q.number(0),ending=q.number(1),now=sim.tick();
     if(now<assigned||now>=ending||now-assigned>=1024 ||
+       assigned>std::numeric_limits<std::uint64_t>::max()-1024 ||
        now>std::numeric_limits<std::uint64_t>::max()-256)return false;
     const auto cap=assigned+1024;
     const auto next=std::min(now+256,cap);
