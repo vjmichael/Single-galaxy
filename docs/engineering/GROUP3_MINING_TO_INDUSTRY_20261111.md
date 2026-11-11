@@ -49,3 +49,22 @@
 - New `tests/Group3StationCustodyE2E.cpp` carries the finite **engineering** module via actual C++ transactions and follows mine→ship→dock→unload→staff/power/refine→1,000kg station concentrate with SQLite tamper/restart tests. Its explicit catalogue negative assertions deliberately prevent a false claim that a finished drill or aluminum item was created. It is **not** final full-chain manufacturing acceptance.
 
 **Revised gate:** 3A–3C protected native executable and Godot parser tests on exact head Windows/Linux; 3D/3E original-source replay, wrong-owner denial, crash/rollback/restart and conservation; then a separately specified, source-grounded station-material transfer + named native production batch with actual NPC/machine/power/waste and same-source provenance. A ready physical Windows package requires those plus human R9700 acceptance. PR #133 remains draft, source-only until actual runner receipts pass, no merge to `main`.
+
+## Owner-approved reprioritization — resource collection and refining first (Nov 11)
+
+**Modules/ship fitting and manufacturing are explicitly deferred.** No mining-drill BOM, fixed module 2-tonne recipe, ore->aluminum conversion, new factory, or free starting resource may be introduced as a substitute for design. The v126 experimental fitting test harness is retained as research evidence only, NOT enabled in the normal installed game's new-world seed. The normal source-lot collection path uses the already-implemented original v123+ ledger / current physical 3D ship authority.
+
+### Immediate resource loop
+
+1. **Physical original rock discovery**: existing passive 30m proximity contact for direct collection and existing 50m PLAY-11 powered scanner for detailed survey. 8.5km camera rendering is strictly visual.
+2. **Finite ore**: original `Mine` consumes exactly one geological tonne from the original asteroid and places exactly one tonne in actual ship cargo; owner, range, same frame, replay, capacity, and physical collision apply in the authoritative kernel. The multiplayer/automated-mining and v126 tool prototype are deferred.
+3. **Actual custody transfer**: return on the real ship and commit `RequestDock`, `UnloadOre` to the owner-specific station hangar with the same immutable rock/ship/owner/mining and unload receipts. No source lot is a second mass inventory.
+4. **Real refinery**: only a previously built facility with staffed operators, live utility power, and a complete source-tagged one-tonne lot may commit `RefineStationOre`. The source tonne produces exactly **1,000 kg** named geological minerals, owned by that station, with the existing source profile. No automatic return to ship or manufactured product.
+5. **Industry material-identity audit (read-only)**: `StationMineralIdentityAudit.hpp` checks each original mineral's exact `mineral/<name>` legacy identity, kg unit and 1,000 g-per-kg contract against the pre-existing INDUSTRY01 legacy register, validates plant owner and process totals, and always reports **NOT_APPROVED_MANUFACTURING_FEED**. It creates no new inventory or conversion recipe. `Group3StationMaterialIdentityTests.cpp` passed actual Linux C++ compilation and execution against the unchanged industry catalogue.
+6. **Full resource E2E**: `Group3StationCustodyE2E.cpp` is now derived from the previously accepted original PLAY-STATION-03B native C++/SQLite test plus station-material source checks. It passed actual Linux compilation/execution against the accepted native kernel: true mining, ship->hangar original custody, built/crew/powered refinery, exact 1000kg concentrates, crash rollback, independent database copy/restart and forged ledger rejection. New exact branch Windows/Linux CI remains queued and is NOT passing evidence.
+
+### Future gated work (do not substitute shortcuts)
+
+- Real human factory/workshop material feed from station concentrate needs its **own explicit physically valid conversion and native approved recipe**, with worker/machine/energy/byproduct and exact source-lot input. Candidate INDUSTRY01 recipes are not automatically authorized.
+- Fitting, advanced modules, drill model, manufacturing, full ship-asset visuals and downstream goods come **after** collection/refinery correctness. Do not block this resource acceptance on finishing undisclosed module designs.
+- Finish one native Windows/Linux exact-head batch and Godot host/parser acceptance; retain PR draft and no release authorization until genuine results are reconciled.

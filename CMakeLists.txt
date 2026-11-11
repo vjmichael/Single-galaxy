@@ -2385,3 +2385,15 @@ if(BUILD_TESTING)
       ${CMAKE_CURRENT_BINARY_DIR}/group3_station_custody.sqlite)
   set_tests_properties(galaxy_group3_original_station_custody PROPERTIES TIMEOUT 200)
 endif()
+
+# GROUP3-RESOURCE — read-only original station mineral identities and
+# conservation against the existing INDUSTRY-01 legacy-unit register.
+# Does NOT turn station concentrate into manufacturing feed.
+if(BUILD_TESTING)
+  add_executable(galaxy_group3_station_identity_tests
+    tests/Group3StationMaterialIdentityTests.cpp)
+  target_link_libraries(galaxy_group3_station_identity_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_group3_station_material_identity
+    COMMAND galaxy_group3_station_identity_tests)
+  set_tests_properties(galaxy_group3_station_material_identity PROPERTIES TIMEOUT 90)
+endif()
