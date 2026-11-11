@@ -48,10 +48,10 @@ func _ready() -> void:
 	actions.columns = 3
 	column.add_child(actions)
 	_survey_button = _action(actions,"Survey (J)", func():survey_requested.emit(),
-		"Read original same-frame asteroid silhouettes (geology requires powered scanner)")
+		"Read up to 50 metres only with original powered PLAY-11 scanner")
 	_mine = _action(actions,"Mine 1t (M)", func():mine_requested.emit(),
 		"Request exactly 1 tonne in the original native simulation; never free ore")
-	_action(actions,"Fabricate", func():fabricate_requested.emit(),
+	_action(actions,"Fabricate test module", func():fabricate_requested.emit(),
 		"Requires real ship stock equivalent to 2 refined tonnes and crew")
 	_action(actions,"Fit drill", func():fit_requested.emit(),
 		"Requires an actual docked ship, an empty original hardpoint and a manufactured module")
@@ -62,7 +62,7 @@ func _ready() -> void:
 	_action(actions,"Power OFF", func():power_requested.emit(false),
 		"Send a physical rack power request; cannot conjure new equipment")
 	_survey = Label.new()
-	_survey.text = "Survey: choose Survey while aboard"
+	_survey.text = "Survey: requires fitted powered scanner (J)"
 	_survey.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	column.add_child(_survey)
 	for button in _buttons:
@@ -102,7 +102,7 @@ func show_original_ship(ship: Dictionary, contact: Dictionary, seated: bool) -> 
 			continue
 		# The native kernel checks inventory and actual module/crew power;
 		# enabling a UI request does not imply these resources exist.
-		button.disabled = not (valid and seated and (docked if button.text in ["Fit drill","Unfit","Fabricate"] else true))
+		button.disabled = not (valid and seated and (docked if button.text in ["Fit drill","Unfit","Fabricate test module"] else true))
 	_status.text = "Original ship #%d | %s | drill %s" % [
 		int(ship.get("ship",0)),
 		"DOCKED" if docked else "IN SPACE" if flying else "TRANSITION",
@@ -116,7 +116,7 @@ func show_original_ship(ship: Dictionary, contact: Dictionary, seated: bool) -> 
 func show_original_survey(result: Dictionary) -> void:
 	var sources: Array = result.get("sources",[])
 	var rows := PackedStringArray()
-	rows.append("%d original asteroids within 8.5 km%s" % [
+	rows.append("%d original asteroids within 50m%s" % [
 		sources.size()," (scan truncated)" if bool(result.get("truncated",false)) else ""])
 	for item in sources.slice(0,6):
 		var delta := Vector3(float(item["dx_mm"]),float(item["dy_mm"]),float(item["dz_mm"]))
