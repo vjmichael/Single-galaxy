@@ -34,7 +34,7 @@ func _ready() -> void:
 	column.add_theme_constant_override("separation",3)
 	add_child(column)
 	var heading := Label.new()
-	heading.text = "MINING / FITTING | VERIFIED ORIGINAL SHIP"
+	heading.text = "RESOURCE COLLECTION | VERIFIED ORIGINAL SHIP"
 	heading.add_theme_font_size_override("font_size",14)
 	column.add_child(heading)
 	_status = Label.new()
@@ -50,17 +50,9 @@ func _ready() -> void:
 	_survey_button = _action(actions,"Survey (J)", func():survey_requested.emit(),
 		"Read up to 50 metres only with original powered PLAY-11 scanner")
 	_mine = _action(actions,"Mine 1t (M)", func():mine_requested.emit(),
-		"Request exactly 1 tonne in the original native simulation; never free ore")
-	_action(actions,"Fabricate test module", func():fabricate_requested.emit(),
-		"Requires real ship stock equivalent to 2 refined tonnes and crew")
-	_action(actions,"Fit drill", func():fit_requested.emit(),
-		"Requires an actual docked ship, an empty original hardpoint and a manufactured module")
-	_action(actions,"Unfit", func():unfit_requested.emit(),
-		"Returns the original 2-tonne-equivalent installed drill to physical ship inventory")
-	_action(actions,"Power ON", func():power_requested.emit(true),
-		"Actual installed hardpoint and trusted native power state only")
-	_action(actions,"Power OFF", func():power_requested.emit(false),
-		"Send a physical rack power request; cannot conjure new equipment")
+		"Collect one finite tonne only from the exact original rock in reach")
+	# Ship modules and manufacturing are intentionally deferred until their
+	# design is approved. Only finite original-world resource actions appear.
 	_survey = Label.new()
 	_survey.text = "Survey: requires fitted powered scanner (J)"
 	_survey.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -94,19 +86,18 @@ func show_original_ship(ship: Dictionary, contact: Dictionary, seated: bool) -> 
 	var matched_contact := (valid and bool(contact.get("found",false)) and
 		int(contact.get("tick",-1)) == int(ship.get("tick",-2)) and
 		int(contact.get("ship",-1)) == int(ship.get("ship",-2)))
-	var powered_drill := matched_contact and bool(contact.get("mining_tool_online",false))
 	_survey_button.disabled = not (valid and flying and seated)
-	_mine.disabled = not (flying and seated and powered_drill)
+	_mine.disabled = not (flying and seated and matched_contact)
 	for button in _buttons:
 		if button == _survey_button or button == _mine:
 			continue
 		# The native kernel checks inventory and actual module/crew power;
 		# enabling a UI request does not imply these resources exist.
 		button.disabled = not (valid and seated and (docked if button.text in ["Fit drill","Unfit","Fabricate test module"] else true))
-	_status.text = "Original ship #%d | %s | drill %s" % [
+	_status.text = "Original ship #%d | %s | source ore %s" % [
 		int(ship.get("ship",0)),
 		"DOCKED" if docked else "IN SPACE" if flying else "TRANSITION",
-		"POWERED" if powered_drill else "UNFITTED/OFFLINE/UNVERIFIED"]
+		"CONTACT VERIFIED" if matched_contact else "NO CONTACT"]
 	if contact.is_empty() or int(contact.get("tick",-1)) != int(ship.get("tick",-2)):
 		_cargo.text = "Cargo: waiting for original ROCK/ROCKNONE"
 	else:
