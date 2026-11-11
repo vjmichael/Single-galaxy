@@ -77,8 +77,7 @@ func _run() -> void:
 	if stage._visual_station_target.visible:
 		_fail("low quality preset draws station beyond the actual clipping range")
 		return
-	if stage.get_node_or_null("ConfirmArchiveAndNewGame",true,false) == null and \
-			stage.new_game_confirm == null:
+	if stage.new_game_confirm == null:
 		_fail("operator New Game confirmation dialog unavailable")
 		return
 	if stage.new_game_button == null or not stage.new_game_button.text.contains("backup"):
