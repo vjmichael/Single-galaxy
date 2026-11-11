@@ -145,6 +145,7 @@ jobs:
           python desktop_godot/tests/test_sgdx03_bridge_contract.py
           python desktop_godot/tests/test_fp3d_env01f_pilot_contract.py
           python desktop_godot/tests/test_fp3d_env01g_world_parity_contract.py
+          python desktop_godot/tests/test_authorized_input_contract.py
           python desktop_godot/tests/test_station_visual_contract.py
           ctest --test-dir build/fp3d-env01 --no-tests=error --timeout 200 \
             --output-on-failure --output-junit fp3d-env01-linux.xml \
@@ -266,6 +267,7 @@ jobs:
             'desktop_godot/tests/test_sgdx03_bridge_contract.py',
             'desktop_godot/tests/test_fp3d_env01f_pilot_contract.py',
             'desktop_godot/tests/test_fp3d_env01g_world_parity_contract.py',
+            'desktop_godot/tests/test_authorized_input_contract.py',
             'desktop_godot/tests/test_station_visual_contract.py'
           )){
             python $contract
