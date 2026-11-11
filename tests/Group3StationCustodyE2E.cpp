@@ -170,6 +170,14 @@ int main(int argc,char** argv){
     CHECK(w.world().station_refinery(station)->mineral_kg.at("olivine")==30);
     CHECK(w.world().station_refinery(station)->mineral_kg.at("pyroxene")==15);
     CHECK(w.world().station_refinery(station)->mineral_kg.at("other")==15);
+    // INDUSTRY-01: the station's original per-mineral inventory is NOT a
+    // fabricated finished part and cannot be silently cast as candidate
+    // aluminum/other feed. No numeric 1 litre -> 1 kg assumption.
+    for(const auto& [mineral,kg]:w.world().station_refinery(station)->mineral_kg){
+      CHECK(kg>0);
+      CHECK(industry01::find_item("bulk/"+mineral)==nullptr);
+    }
+    CHECK(!w.world().colony_ship(ship)->goods_kg.count("aluminum"));
     CHECK(w.world().total_material_kg()==initial_mass);
     CHECK(send(w,id,ship,Action::RefineStationOre,station,lot_id).result==Outcome::InvalidTarget);
     const auto state=w.world().canonical_state();
