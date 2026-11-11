@@ -422,7 +422,7 @@ public:
                 if(!sim.original_completed_ferry_guest(npc,route.receiver,voyage) ||
                    !visitor_proven(visitor_receipt(route.id,ordinal),
                        npc,voyage,route.receiver,route.destination))
-                    throw std::runtime_error("delivered route lacks original arrival proof");
+                    return 0; // preserve full route for owner review
                 ++route.count;
             }
             dock::Statement total(db_,"SELECT COUNT(*) FROM dock05_route_people_v1 "
@@ -430,7 +430,7 @@ public:
             total.bind(1,route.id);
             if(total.next()!=SQLITE_ROW || route.count==0 ||
                route.count!=total.number(0))
-                throw std::runtime_error("route archive missing real passenger");
+                return 0; // no archival if physical person or proof diverged
         }
         if(ready.empty())return 0;
         exec("BEGIN IMMEDIATE");
