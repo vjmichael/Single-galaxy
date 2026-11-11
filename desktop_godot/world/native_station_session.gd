@@ -407,9 +407,9 @@ func submit_walk(heading: Vector3) -> void:
 	if heading.length_squared() < 0.01:
 		return
 	var now := Time.get_ticks_msec()
-	if now - _last_send < 110:
+	if now - _last_send < 70:
 		return
-	var d := Vector2(heading.x, heading.z).normalized() * 90.0
+	var d := Vector2(heading.x, heading.z).normalized() * 100.0
 	var dx := int(round(d.x))
 	var dz := int(round(d.y))
 	if dx == 0 and dz == 0:

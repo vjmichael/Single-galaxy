@@ -6,13 +6,18 @@ func _initialize() -> void:
 	var got := []
 	var statuses := []
 	var ships := []
+	var navs := []
+	s.station_nav_received.connect(func(n: Dictionary): navs.append(n))
 	s.ship_state_received.connect(func(f: Dictionary): ships.append(f))
 	s.pose_received.connect(func(p: Dictionary): got.append(p))
 	s.status_changed.connect(func(p: String): statuses.append(p))
 	# Use native packet shape; synthetic frames here are NOT evidence of native custody.
 	s._accept_line("POSE|1|123|0|0|0|0|0|0|1|2|0|0")
 	s._accept_line("SHIP|1|123|0|0|0|2|0|1|0|0|0|0|0|0|0|1")
-	if got.size() != 1 or s._sequence != 0 or ships.size() != 1 or ships[0]["dock"] != 1:
+	s._accept_line("ROCKNONE|1|123|0|2|0|1|0|0|0")
+	s._accept_line("NAV|1|123|0|2|0|1|77|2000|0|0")
+	if got.size() != 1 or s._sequence != 0 or ships.size() != 1 or ships[0]["dock"] != 1 or \
+			navs.size() != 1 or not navs[0]["found"] or int(navs[0]["station"]) != 77:
 		push_error("FP3D02F: did not accept an initial native pose")
 		quit(1)
 		return
@@ -33,7 +38,10 @@ func _initialize() -> void:
 	s._pending = 3
 	s._pending_kind = "FLIGHT"
 	s._accept_line("SHIP|1|123|3|1152921504606846979|0|2|3|4|250|0|0|250|0|0|345|0")
-	if ships.size() != 2 or ships[1]["heading"] != 345 or ships[1]["vx"] != 250 or s._tick != 3:
+	s._accept_line("ROCKNONE|1|123|3|2|3|4|0|0|0")
+	s._accept_line("NAV|1|123|3|2|3|4|77|-20000|0|0")
+	if ships.size() != 2 or ships[1]["heading"] != 345 or ships[1]["vx"] != 250 or s._tick != 3 or \
+			navs.size() != 2 or int(navs[1]["dx_mm"]) != -20000 or s._last_nav_request != 3:
 		push_error("FP3D03B: original ship flight frame not accepted")
 		quit(1)
 		return

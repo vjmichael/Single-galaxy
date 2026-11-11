@@ -186,6 +186,10 @@ def send(p, payload, needs_rock=False):
     if needs_rock and first[0] == "SHIP":
         rock = bounded_line(p, "native ROCK").split("|")
         assert rock[0] in ("ROCK","ROCKNONE"),rock
+        nav = bounded_line(p, "same-tick native station NAV").split("|")
+        assert len(nav)==11 and nav[:5]==["NAV","1",first[2],first[3],first[6]],nav
+        assert nav[5:7]==first[7:9] and int(nav[7])>0,nav
+        assert sum(int(v)**2 for v in nav[8:11])<=1000000000**2,nav
     return first,rock
 
 def start_original(save):
@@ -195,6 +199,9 @@ def start_original(save):
     pose=bounded_line(p, "original POSE").split("|")
     ship=bounded_line(p, "original SHIP").split("|")
     rock=bounded_line(p, "original initial ROCK").split("|")
+    nav=bounded_line(p, "original initial NAV").split("|")
+    assert len(nav)==11 and nav[:5]==["NAV","1",pose[2],"0",pose[10]],nav
+    assert nav[5:7]==ship[7:9] and int(nav[7])>0,nav
     assert pose[:2] == ["POSE","1"] and ship[:2] == ["SHIP","1"] and rock[0] in (
         "ROCK","ROCKNONE"),(pose,ship,rock)
     assert ship[2] == pose[2] == rock[2]
@@ -244,8 +251,11 @@ def check_original_world(root):
                              input="QUIT\n",capture_output=True,text=True,timeout=15)
     assert resumed.returncode == 0, (resumed.returncode,resumed.stderr[:600])
     records = resumed.stdout.splitlines()
-    assert len(records) >= 3 and records[0].startswith("POSE|1|") and (
+    assert len(records) >= 4 and records[0].startswith("POSE|1|") and (
         "ROCK|1|" in records[2]), records[:4]
+    nav=records[3].split("|")
+    assert len(nav)==11 and nav[:5]==["NAV","1",records[0].split("|")[2],"0",records[1].split("|")[6]],nav
+    assert nav[5:7]==records[1].split("|")[7:9],nav
     restored = records[2].split("|")
     assert restored[7] == rock and restored[8] == stock
     with closing(sqlite3.connect(save)) as con:

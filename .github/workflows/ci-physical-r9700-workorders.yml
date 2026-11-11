@@ -1,0 +1,163 @@
+name: FP3D R9700 physical-candidate complete WO3-WO5 Windows and Linux
+on:
+  push:
+    branches: [sg/fp3d-r9700-physical-evidence-20261110]
+permissions:
+  contents: read
+concurrency:
+  group: fp3d-physical-candidate-WO5
+  cancel-in-progress: true
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    outputs:
+      sha: ${{ steps.pin.outputs.sha }}
+      group: ${{ steps.pin.outputs.group }}
+      pr_number: ${{ steps.pin.outputs.pr_number }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - id: pin
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = "refs/heads/sg/fp3d-r9700-physical-evidence-20261110"
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          git merge-base --is-ancestor 6a0a51d5f7e23d9768c4fe1b2d13fd55e1a18250 "$GITHUB_SHA"
+          echo "sha=$GITHUB_SHA" >> "$GITHUB_OUTPUT"
+          echo "group=WO5" >> "$GITHUB_OUTPUT"
+          echo "pr_number=131" >> "$GITHUB_OUTPUT"
+  native:
+    needs: validate
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2022]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 100
+    env:
+      WORK_GROUP: ${{ needs.validate.outputs.group }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.validate.outputs.sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      # Source-pinned compiler-repaired original pre-v109 kernel. Only its 2026 vintage test
+      # is instrumented to observe a real v85 SQLite journal; no core edits.
+      - uses: actions/checkout@v4
+        if: env.WORK_GROUP == 'WO3' || env.WORK_GROUP == 'WO4' || env.WORK_GROUP == 'WO5' || env.WORK_GROUP == 'STAGE6'
+        with:
+          repository: vjmichael/Single-galaxy
+          ref: 23bad9be38936d61b8c29b5be5f3900bec87fa6d
+          path: historical-original-v86
+          persist-credentials: false
+      - name: Verify canonical industry and optional WO2 generated data
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/validate_industry01.js
+          node scripts/generate_industry01_cpp.js --check
+          node --test tests/INDUSTRY01_CatalogTests.js
+          if [[ "$WORK_GROUP" == "WO2" ]]; then
+            node scripts/validate_wo2_professions.js
+            node scripts/generate_wo2_professions.js --check
+            node --test tests/WO2_ProfessionCatalogTests.js
+          fi
+      - name: Install SQLite Linux
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libsqlite3-dev ninja-build
+      - name: Install SQLite Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $vcpkg=$env:VCPKG_INSTALLATION_ROOT
+          if(-not $vcpkg){$vcpkg='C:\vcpkg'}
+          & (Join-Path $vcpkg 'vcpkg.exe') install sqlite3:x64-windows --classic
+          if($LASTEXITCODE -ne 0){throw 'SQLite SDK install failed'}
+          "SG_TOOLCHAIN=$(Join-Path $vcpkg 'scripts\buildsystems\vcpkg.cmake')" >> $env:GITHUB_ENV
+      - name: Configure Linux original C++
+        if: runner.os == 'Linux'
+        run: cmake -S . -B build/original-wo -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON -DBUILD_BENCHMARKS=OFF
+      - name: Configure Windows original C++
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          cmake -S . -B build/original-wo -G "Visual Studio 17 2022" -A x64 "-DCMAKE_TOOLCHAIN_FILE=$env:SG_TOOLCHAIN" -DBUILD_TESTING=ON -DBUILD_BENCHMARKS=OFF
+          if($LASTEXITCODE -ne 0){throw 'C++ configure failed'}
+      - name: Produce source-pinned real historical v85 SQLite journal
+        if: env.WORK_GROUP == 'WO3' || env.WORK_GROUP == 'WO4' || env.WORK_GROUP == 'WO5' || env.WORK_GROUP == 'STAGE6'
+        shell: bash
+        run: |
+          set -euo pipefail
+          python tests/WO3HistoricalNativeProducer.py prepare historical-original-v86
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            cmake -S historical-original-v86 -B build/wo3-vintage -G "Visual Studio 17 2022" -A x64 "-DCMAKE_TOOLCHAIN_FILE=$SG_TOOLCHAIN" -DBUILD_TESTING=ON -DBUILD_BENCHMARKS=OFF
+            exe="build/wo3-vintage/Release/galaxy_play13d_regional_facilities_tests.exe"
+          else
+            cmake -S historical-original-v86 -B build/wo3-vintage -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON -DBUILD_BENCHMARKS=OFF
+            exe="build/wo3-vintage/galaxy_play13d_regional_facilities_tests"
+          fi
+          cmake --build build/wo3-vintage --config Release --parallel 2 --target galaxy_play13d_regional_facilities_tests
+          export SG_WO3_HISTORICAL_CAPTURE_OUTPUT="$(python -c 'from pathlib import Path;print(Path("build/wo3-historical-v85.sqlite").resolve())')"
+          "$exe"
+          python tests/WO3HistoricalNativeProducer.py attest historical-original-v86 --binary "$exe" --sqlite "$SG_WO3_HISTORICAL_CAPTURE_OUTPUT" --manifest build/wo3-historical-v85-attestation.json --github-env "$GITHUB_ENV"
+      - name: Compile industry, original NPC work and selected dependent work order
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake --build build/original-wo --config Release --parallel 2 --target galaxy_industry01_native_tests galaxy_econ02b1a_outpost_tests galaxy_econ02b2_inventory_tests galaxy_econ02b0_quantified_tests
+          if [[ "$WORK_GROUP" != "WO1" ]]; then
+            cmake --build build/original-wo --config Release --parallel 2 --target galaxy_wo2_industry_workforce_tests galaxy_econ02b1b_connected_tests galaxy_work01b2_native_capacity_tests v59_medical_care v59_medical_recovery
+          fi
+          if [[ "$WORK_GROUP" == "WO3" || "$WORK_GROUP" == "WO4" || "$WORK_GROUP" == "WO5" || "$WORK_GROUP" == "STAGE6" ]]; then
+            cmake --build build/original-wo --config Release --parallel 2 --target galaxy_wo3_colony_operations_tests galaxy_wo3_planetary_housing_tests galaxy_wo3_historical_sqlite_import_tests galaxy_wo3_planetary_utility_tests galaxy_b70_colony_core_tests galaxy_b70e_colony_farms_tests galaxy_b70f_habitation_tests galaxy_b70l_waterworks_tests galaxy_econ02a_workshop_tests galaxy_play13d_planetary_agriculture_tests
+          fi
+          if [[ "$WORK_GROUP" == "WO4" || "$WORK_GROUP" == "WO5" || "$WORK_GROUP" == "STAGE6" ]]; then
+            cmake --build build/original-wo --config Release --parallel 2 --target galaxy_wo4_resource_demand_tests galaxy_wo4_material_allocation_tests
+          fi
+          if [[ "$WORK_GROUP" == "WO5" || "$WORK_GROUP" == "STAGE6" ]]; then
+            cmake --build build/original-wo --config Release --parallel 2 --target galaxy_econ03c7modeauthoritytests galaxy_econ03c8bworldreconciliationtests v59_region_scoped_handoff v59_multi_destination_host v59_third_party_custody v59_world_finished_goods_logistics galaxy_shipping_status_bridge galaxy_wo5_physical_logistics_tests galaxy_play13d_regional_facilities_tests
+          fi
+          if [[ "$WORK_GROUP" == "STAGE6" ]]; then
+            cmake --build build/original-wo --config Release --parallel 2 --target galaxy_stage6_godot_export galaxy_stage6_original_planet_surface_tests galaxy_stage6_authorized_landing_tests galaxy_play13d_planetary_geography_tests galaxy_play13d_planetary_watershed_tests galaxy_play13d_live_planet_survey_tests
+          fi
+      - name: Run exact-head physical original-world and SQLite recovery tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          pattern='^galaxy_(industry01_native_binding|econ02b1a_outpost_tests|econ02b2_inventory_tests|econ02b0_quantified_tests)$'
+          if [[ "$WORK_GROUP" == "WO2" ]]; then
+            pattern='^galaxy_(wo2_industry_workforce|industry01_native_binding|econ02b1a_outpost_tests|econ02b1b_connected_tests|econ02b2_inventory_tests|econ02b0_quantified_tests|work01b2_native_capacity)$|^v59_medical_(care|recovery)$'
+          elif [[ "$WORK_GROUP" == "WO3" ]]; then
+            pattern='^galaxy_(wo3_planetary_utility|wo3_planetary_housing|wo3_historical_sqlite_import|wo3_colony_operations|b70_colony_core_tests|b70e_colony_farms_tests|b70f_habitation_tests|b70l_waterworks_tests|econ02a_workshop_tests|play13d_planetary_agriculture|industry01_native_binding|wo2_industry_workforce)$'
+          elif [[ "$WORK_GROUP" == "WO4" ]]; then
+            pattern='^galaxy_(wo4_resource_demand|wo4_material_allocation|wo3_colony_operations|wo3_planetary_housing|wo3_historical_sqlite_import|wo3_planetary_utility|wo2_industry_workforce|industry01_native_binding)$'
+          elif [[ "$WORK_GROUP" == "WO5" || "$WORK_GROUP" == "STAGE6" ]]; then
+            # Group WO5 runs original WO3/WO4/WO5 custody and facility checks.
+            # Authentic historical v86 SQLite import remains mandatory.
+            pattern='^(v59_(multi_destination_host|region_scoped_handoff|third_party_custody|world_finished_goods_logistics|medical_care|medical_recovery)|galaxy_(econ03c7modeauthoritytests|econ03c8bworldreconciliationtests|shipping_transport_real_world_tests|work01c_native_transport_executors|work01b2_native_capacity|wo5_physical_logistics|wo4_resource_demand|wo4_material_allocation|wo3_colony_operations|wo3_planetary_utility|wo3_planetary_housing|wo3_historical_sqlite_import|wo2_industry_workforce|industry01_native_binding|econ02b1a_outpost_tests|econ02b1b_connected_tests|econ02b2_inventory_tests|econ02b0_quantified_tests|econ02a_workshop_tests|b70_colony_core_tests|b70e_colony_farms_tests|b70f_habitation_tests|b70l_waterworks_tests|play13d_planetary_agriculture|play13d_regional_facilities|ship01c_manufactured_freight|flight04b_real_freight))$'
+          fi
+          if [[ "$WORK_GROUP" == "STAGE6" ]]; then
+            pattern='^(galaxy_stage6_(original_planet_surface|authorized_landing)|galaxy_play13d_(planetary_geography|planetary_watershed|live_planet_survey)|v59_(multi_destination_host|region_scoped_handoff|third_party_custody|world_finished_goods_logistics)|galaxy_(econ03c7modeauthoritytests|econ03c8bworldreconciliationtests|work01c_native_transport_executors|shipping_transport_real_world_tests|wo5_physical_logistics|wo4_resource_demand|wo4_material_allocation|wo3_planetary_utility|wo3_planetary_housing|wo3_historical_sqlite_import|wo2_industry_workforce|industry01_native_binding|ship01c_manufactured_freight|flight04b_real_freight))$'
+          fi
+          ctest --test-dir build/original-wo -C Release --no-tests=error --timeout 360 --output-on-failure --output-junit workorder-native.xml -R "$pattern"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: original-${{ needs.validate.outputs.group }}-${{ matrix.os }}-${{ needs.validate.outputs.sha }}
+          path: |
+            build/original-wo/workorder-native.xml
+            build/original-wo/Testing/Temporary/LastTest.log
+            build/wo3-historical-v85.sqlite
+            build/wo3-historical-v85-attestation.json
+          if-no-files-found: warn

@@ -20,6 +20,9 @@ with tempfile.TemporaryDirectory() as directory:
         assert pose[:2]==["POSE","1"] and int(pose[10])==ship,pose
         assert original_ship[:2]==["SHIP","1"] and original_ship[2]==pose[2],original_ship
         assert contact[:2]==["ROCKNONE","1"] if original_ship[16]!="0" else contact[:2]==["ROCK","1"],contact
+        nav=child.stdout.readline().strip().split("|")
+        assert len(nav)==11 and nav[:5]==["NAV","1",pose[2],"0",str(ship)],nav
+        assert nav[5:7]==original_ship[7:9] and int(nav[7])>0,nav
         return child,pose,original_ship,contact
     def cmd(p,command,session,req):
         time.sleep(.065)
@@ -31,6 +34,10 @@ with tempfile.TemporaryDirectory() as directory:
             contact=p.stdout.readline().strip().split("|")
             assert contact[0] in ("ROCK","ROCKNONE") and contact[2]==session and int(contact[3])==req,contact
             assert int(contact[5])==int(primary[7]) and int(contact[6])==int(primary[8]),contact
+            nav=p.stdout.readline().strip().split("|")
+            assert len(nav)==11 and nav[:5]==["NAV","1",session,str(req),str(ship)],nav
+            assert nav[5:7]==primary[7:9] and int(nav[7])>0,nav
+            assert sum(int(v)**2 for v in nav[8:11])<=1000000000**2,nav
         return primary,contact
     child,pose,initial,none=start()
     session=pose[2]
