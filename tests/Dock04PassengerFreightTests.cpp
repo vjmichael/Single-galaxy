@@ -2,6 +2,7 @@
 // staff reservations, and million-scale demand WITHOUT imaginary residents.
 // Staged for the consolidated native matrix; no tests executed here.
 #include "galaxy/Dock04Traffic.hpp"
+#include "galaxy/Dock06Corridor.hpp"
 #include "galaxy/PopulationCohorts.hpp"
 #include <filesystem>
 #include <iostream>
@@ -80,7 +81,26 @@ int main(int argc,char** argv) {
             CHECK(traffic.enqueue(world.world(),station,7,passenger,ferry));
             CHECK(!traffic.enqueue(world.world(),station,7,passenger,ferry));
             CHECK(traffic.snapshot(world.world(),station,7).waiting==1);
-            CHECK(traffic.serve_one(world,station,7,worker));
+            dock06::Corridor corridor(path);
+            CHECK(dock06::Corridor::all_route_points_clear());
+            corridor.synchronize(world.world(),station,7,world.generation());
+            for(int i=0;i<128 && !corridor.worker_ready(
+                world.world(),station,7,worker);++i){
+                CHECK(corridor.advance(world.world(),station,7));
+            }
+            CHECK(corridor.worker_ready(world.world(),station,7,worker));
+            const auto gate=[&](std::uint64_t named){
+                return corridor.boarding_ready(world.world(),station,7,named);
+            };
+            CHECK(!traffic.serve_one(world,station,7,worker,gate));
+            CHECK(world.world().npc_records().at(passenger).location==station);
+            corridor.synchronize(world.world(),station,7,world.generation());
+            for(int i=0;i<128 && !corridor.boarding_ready(
+                    world.world(),station,7,passenger);++i){
+                CHECK(corridor.advance(world.world(),station,7));
+            }
+            CHECK(corridor.boarding_ready(world.world(),station,7,passenger));
+            CHECK(traffic.serve_one(world,station,7,worker,gate));
             CHECK(traffic.snapshot(world.world(),station,7).waiting==0);
             CHECK(traffic.snapshot(world.world(),station,7).boarded==1);
             CHECK(traffic.streak(station,7)==1);
