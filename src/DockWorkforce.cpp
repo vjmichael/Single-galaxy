@@ -94,7 +94,9 @@ bool Simulation::station_visitor_transfer(
                             v->second.passengers.end(),npc_id) ||
        n==npcs_.end())return false;
     auto& person=n->second;
-    if(person.role!=NpcRole::Ship || person.home_ship==receiver ||
+    const auto* home=find(person.home_ship);
+    if(!home || home->owner_id!=owner ||
+       person.role!=NpcRole::Ship || person.home_ship==receiver ||
        person.transport_id || person.mentor_id ||
        person.assigned_site!=person.home_ship ||
        person.location!=(ashore?receiver:station))return false;
