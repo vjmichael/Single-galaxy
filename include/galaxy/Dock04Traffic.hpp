@@ -39,7 +39,7 @@ public:
     static constexpr std::uint64_t kMaxPending=32;
     static constexpr std::uint64_t kGangways=2;
     static constexpr std::uint64_t kFerrySeats=16;
-    explicit Traffic(const std::string& path) {
+    explicit Traffic(const std::string& path):file_(path) {
         if(sqlite3_open_v2(path.c_str(),&db_,
             SQLITE_OPEN_READWRITE|SQLITE_OPEN_FULLMUTEX,nullptr)!=SQLITE_OK){
             const std::string error=db_?sqlite3_errmsg(db_):"dock traffic SQLite open";
@@ -57,6 +57,7 @@ public:
              "phase INTEGER NOT NULL CHECK(phase BETWEEN 0 AND 7),"
              "command_id INTEGER NOT NULL DEFAULT 0,"
              "transport_id INTEGER NOT NULL DEFAULT 0,"
+             "worker_id INTEGER NOT NULL DEFAULT 0,"
              "created_tick INTEGER NOT NULL)");
         exec("CREATE INDEX IF NOT EXISTS dock04_station_jobs_v1 "
              "ON dock04_boarding_v1(station,owner,phase,priority,id)");
@@ -69,6 +70,7 @@ public:
         exec("CREATE TABLE IF NOT EXISTS dock04_embark_evidence_v1("
              "command_id INTEGER PRIMARY KEY CHECK(command_id>0),"
              "job_id INTEGER NOT NULL UNIQUE,npc_id INTEGER NOT NULL,"
+             "worker_id INTEGER NOT NULL,"
              "ferry INTEGER NOT NULL,transport_id INTEGER NOT NULL UNIQUE)");
     }
     ~Traffic(){sqlite3_close(db_);}
@@ -100,7 +102,9 @@ public:
             it->second.assigned_site!=it->second.home_ship) ||
            !(it->second.location==station ?
              world.npc_available_for_shore_duty(npc_id,station):
-             world.npc_available_for_duty(npc_id)))return false;
+             world.npc_available_for_duty(npc_id)) ||
+           workforce02::already_on_named_duty(world,npc_id,world.tick()))
+           return false;
         const auto& npc=it->second;
         const auto* source=world.find(npc.home_ship);
         const auto* vessel=world.find(ferry);
@@ -231,8 +235,14 @@ public:
     // One verified boarding is up to three original durable physical steps:
     // home ship -> local check-in -> source hatch -> real ferry voyage.
     // Each crossing is idempotently reserved in SQLite before original STEP.
-    bool serve_one(PersistentWorld& world,EntityId station,PlayerId owner){
-        if(!physical_gangways(world.world(),station,owner))return false;
+    bool serve_one(PersistentWorld& world,EntityId station,PlayerId owner,
+                   std::uint64_t worker){
+        if(!worker || !physical_gangways(world.world(),station,owner))
+            return false;
+        dock::Ledger original_staff(file_);
+        const auto roster=original_staff.service_roster(world.world(),station,owner);
+        if(std::find(roster.begin(),roster.end(),worker)==roster.end())
+            return false;
         dock::Statement q(db_,"SELECT id,npc_id,source_ship,ferry,phase "
             "FROM dock04_boarding_v1 WHERE station=? AND owner=? "
             "AND phase IN(0,2,4) ORDER BY priority DESC,id ASC LIMIT 1");
@@ -276,7 +286,7 @@ public:
             hold(id);return false;
         }
         const auto cmd=command_id(id),voyage=voyage_id(id);
-        reserve_board(id,cmd,voyage);
+        reserve_board(id,cmd,voyage,worker);
         Command embark{};
         embark.id=cmd;embark.sequence=cmd;
         embark.execute_tick=current.tick()+1;
@@ -302,6 +312,7 @@ public:
         return true;
     }
 private:
+    std::string file_;
     sqlite3* db_=nullptr;
     static std::uint64_t move_receipt(std::uint64_t job,bool outward) {
         return 0x5200000000000000ULL|(job<<8)|(outward?1ULL:2ULL);
@@ -369,10 +380,11 @@ private:
         q.bind(1,id);q.next();
     }
     void reserve_board(std::uint64_t id,std::uint64_t cmd,
-                       std::uint64_t voyage) {
+                       std::uint64_t voyage,std::uint64_t worker) {
         dock::Statement q(db_,"UPDATE dock04_boarding_v1 SET phase=5,"
-                             "command_id=?,transport_id=? WHERE id=? AND phase=4");
-        q.bind(1,cmd);q.bind(2,voyage);q.bind(3,id);q.next();
+                             "command_id=?,transport_id=?,worker_id=? "
+                             "WHERE id=? AND phase=4");
+        q.bind(1,cmd);q.bind(2,voyage);q.bind(3,worker);q.bind(4,id);q.next();
         if(sqlite3_changes(db_)!=1)throw std::runtime_error("boarding reservation changed");
     }
     void complete(std::uint64_t id,std::uint64_t cmd,
@@ -380,10 +392,17 @@ private:
                   EntityId station,PlayerId owner) {
         exec("BEGIN IMMEDIATE");
         try{
+            dock::Statement worker_record(db_,"SELECT worker_id FROM dock04_boarding_v1 "
+                                              "WHERE id=? AND phase=5");
+            worker_record.bind(1,id);
+            if(worker_record.next()!=SQLITE_ROW || !worker_record.number(0))
+                throw std::runtime_error("boarding lacks actual available dock worker");
+            const auto worker_id=worker_record.number(0);
             dock::Statement q(db_,"INSERT OR IGNORE INTO dock04_embark_evidence_v1 "
-                  "(command_id,job_id,npc_id,ferry,transport_id) VALUES(?,?,?,?,?)");
+                  "(command_id,job_id,npc_id,worker_id,ferry,transport_id) "
+                  "VALUES(?,?,?,?,?,?)");
             q.bind(1,cmd);q.bind(2,id);q.bind(3,npc);
-            q.bind(4,ferry);q.bind(5,voyage);q.next();
+            q.bind(4,worker_id);q.bind(5,ferry);q.bind(6,voyage);q.next();
             dock::Statement done(db_,"UPDATE dock04_boarding_v1 SET phase=6 "
                                     "WHERE id=? AND phase=5 AND command_id=? "
                                     "AND transport_id=?");
