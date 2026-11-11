@@ -43,7 +43,8 @@ class Statement {
   sqlite3_stmt* stmt_=nullptr;
 };
 struct Snapshot {
-  std::uint64_t station=0,staff=0,passengers=0,freight_tonnes=0;
+  std::uint64_t station=0,staff=0,qualified_staff=0,service_capacity=0;
+  std::uint64_t passengers=0,freight_tonnes=0;
   std::uint64_t freight_jobs=0,held_jobs=0,completed_passengers=0,completed_tonnes=0;
 };
 class Ledger {
@@ -104,7 +105,9 @@ class Ledger {
       const auto it=sim.npc_records().find(id);
       if(it==sim.npc_records().end())continue;
       const auto* home=sim.find(it->second.home_ship);
-      if(home && home->owner_id==owner && it->second.location==station &&
+      if(home && home->owner_id==owner &&
+         home->dock_state==DockState::Docked &&
+         home->dock_station==station && it->second.location==station &&
          it->second.role==NpcRole::Ship &&
          (it->second.assigned_site==0 ||
           it->second.assigned_site==it->second.home_ship) &&
@@ -123,7 +126,9 @@ class Ledger {
        (it->second.assigned_site && it->second.assigned_site!=it->second.home_ship) ||
        !sim.npc_available_for_duty(npc_id))return false;
     const auto* home=sim.find(it->second.home_ship);
-    if(!home || home->owner_id!=owner)return false;
+    if(!home || home->owner_id!=owner ||
+       home->dock_state!=DockState::Docked ||
+       home->dock_station!=station)return false;
     // An expired shift can be renewed without claiming a second worker.
     {Statement expire(db_,"DELETE FROM dock_staff_v1 WHERE npc_id=? AND shift_end_tick<=?");
      expire.bind(1,npc_id);expire.bind(2,sim.tick());expire.next();}
@@ -158,7 +163,9 @@ class Ledger {
           it->second.assigned_site!=it->second.home_ship) ||
          occupied.count(id) || !sim.npc_available_for_duty(id))continue;
       const auto* ship=sim.find(it->second.home_ship);
-      if(!ship||ship->owner_id!=owner)continue;
+      if(!ship||ship->owner_id!=owner ||
+         ship->dock_state!=DockState::Docked ||
+         ship->dock_station!=station)continue;
       roster.push_back(id);
       if(documented_cargo_units(id)>=3 && roster.size()<4)
         roster.push_back(id);
@@ -185,6 +192,12 @@ class Ledger {
   }
   Snapshot snapshot(const Simulation& sim,EntityId station,PlayerId owner) const {
     Snapshot v{};v.station=station;v.staff=active_staff(sim,station,owner);
+    const auto qualified=service_roster(sim,station,owner);
+    v.service_capacity=qualified.size();
+    std::set<std::uint64_t> experienced;
+    for(const auto id:qualified)
+      if(documented_cargo_units(id)>=3)experienced.insert(id);
+    v.qualified_staff=experienced.size();
     Statement a(db_,"SELECT kind,requested-completed,state FROM dock_jobs_v1 "
                     "WHERE station=? AND owner=? AND state IN(0,1,3)");
     a.bind(1,station);a.bind(2,owner);
