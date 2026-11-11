@@ -149,11 +149,12 @@ static int run_host(int argc,char** argv){
    const bool dock_route=f.size()==7&&f[0]=="DOCKROUTE";
    const bool dock_cancel=f.size()==5&&f[0]=="DOCKCANCEL";
    const bool dock_region_view=f.size()==5&&f[0]=="DOCKREGIONS";
+   const bool dock_renew=f.size()==5&&f[0]=="DOCKRENEW";
    const bool dock_bind=f.size()==8&&f[0]=="DOCKBIND";
    const bool dock_action=dock_view||dock_assign||dock_release||
                           dock_passenger||dock_freight||dock_work||
                           dock_destinations||dock_route||dock_cancel||
-                          dock_region_view||dock_bind;
+                          dock_region_view||dock_bind||dock_renew;
    if(!walking&&!boarding&&!exiting&&!view&&!refine&&!unload&&!colony_console&&!population&&!dock_action){deny(0,"malformed");continue;}
    std::uint64_t requested_session=0,req=0,expected=0,
                  ship=0,quantity=0,extra=0,more=0;
@@ -263,6 +264,16 @@ static int run_host(int argc,char** argv){
         deny(req,"route-has-original-movement-or-needs-review");continue;
       }
       result=8;
+    }else if(dock_renew){
+      // Explicit original-owner shift renewal, capped by the original
+      // assignment horizon. No hidden indefinite labor credit.
+      const auto candidate=ship?ship:
+          dock_ledger.first_assigned(local_station,kOwner);
+      if(!candidate || !dock_ledger.renew(
+             world.world(),local_station,kOwner,candidate)){
+        deny(req,"no-eligible-original-shift-to-renew");continue;
+      }
+      result=11;
     }else if(dock_assign){
       bool appointed=false;
       // The original ship NPC crosses the same real docked berth. No
@@ -439,6 +450,10 @@ static int run_host(int argc,char** argv){
         if(!dock_routes.advance(world,local_station,kOwner))break;
         ++travel_steps;
       }
+      // Retire only verified terminal scheduling rows; source-world
+      // inventory and immutable passenger/worker receipts remain intact.
+      (void)dock_ledger.archive_completed(world.world(),local_station,kOwner);
+      (void)dock_routes.archive_delivered(world.world(),local_station,kOwner);
       result=completed?5:(travel_steps?9:6);
       if(completed||travel_steps)
         galaxy::server_dx::committed_breadcrumb(
