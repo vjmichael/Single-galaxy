@@ -408,11 +408,41 @@ public:
         const auto j=load_route(route);
         if(j.id!=route || j.owner!=owner || j.origin!=origin ||
            (j.stage!=0 && j.stage!=7 && j.stage!=9))return false;
-        if(world.world().npc_flight_orders().count(local_flight(route)) ||
+        const auto* ferry=world.world().find(j.ferry);
+        if(!ferry || ferry->dock_state!=DockState::Docked ||
+           ferry->dock_station!=origin ||
+           world.world().npc_flight_orders().count(local_flight(route)) ||
            world.world().npc_flight_orders().count(celestial_flight(route)))
             return false;
-        set_route(route,j.stage,8);
-        return true;
+        dock::Statement q(db_,"SELECT npc,voyage FROM dock05_route_people_v1 "
+                              "WHERE route=?");
+        q.bind(1,route);
+        std::uint64_t count=0;
+        while(q.next()==SQLITE_ROW){
+            const auto npc=q.number(0),voyage=q.number(1);
+            const auto it=world.world().npc_records().find(npc);
+            if(it==world.world().npc_records().end() ||
+               it->second.location!=j.ferry ||
+               it->second.transport_id!=voyage ||
+               world.world().voyage_status(voyage)!=1)return false;
+            ++count;
+        }
+        if(!count || count>16)return false;
+        exec("BEGIN IMMEDIATE");
+        try{
+            dock::Statement audit(db_,"INSERT INTO dock05_terminal_audit_v1 "
+                "(route,owner,origin,destination,ferry,receiver,people,"
+                "completed_tick,outcome) VALUES(?,?,?,?,?,?,?,?,8)");
+            audit.bind(1,route);audit.bind(2,owner);audit.bind(3,origin);
+            audit.bind(4,j.destination);audit.bind(5,j.ferry);
+            audit.bind(6,j.receiver);audit.bind(7,count);
+            audit.bind(8,world.world().tick());audit.next();
+            dock::Statement remove(db_,"DELETE FROM dock05_route_people_v1 "
+                                   "WHERE route=?");
+            remove.bind(1,route);remove.next();
+            set_route(route,j.stage,8);
+            exec("COMMIT");return true;
+        }catch(...){exec("ROLLBACK");throw;}
     }
 private:
     struct Route {
