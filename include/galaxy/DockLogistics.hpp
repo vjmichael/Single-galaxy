@@ -260,15 +260,16 @@ class Ledger {
     }
   }
   bool serve_one(PersistentWorld& world,EntityId station,PlayerId owner,
-                 std::uint64_t worker) {
+                 std::uint64_t worker,bool freight_only=false) {
     reconcile(world,station,owner);
     if(!worker)return false;
     const auto eligible=service_roster(world.world(),station,owner);
     if(std::find(eligible.begin(),eligible.end(),worker)==eligible.end())
       return false;
     Statement q(db_,"SELECT id,kind,source_id,requested,completed FROM dock_jobs_v1 "
-                    "WHERE station=? AND owner=? AND state=0 ORDER BY id LIMIT 1");
-    q.bind(1,station);q.bind(2,owner);
+                    "WHERE station=? AND owner=? AND state=0 AND "
+                    "(?=0 OR kind=2) ORDER BY id LIMIT 1");
+    q.bind(1,station);q.bind(2,owner);q.bind(3,freight_only?1:0);
     if(q.next()!=SQLITE_ROW)return false;
     const auto id=q.number(0),kind=q.number(1),source=q.number(2);
     const auto requested=q.number(3),done=q.number(4);
