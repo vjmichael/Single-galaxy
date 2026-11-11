@@ -183,6 +183,7 @@ func _ready() -> void:
 	native_station_session.colony_population_received.connect(_on_native_colony_population)
 	native_station_session.dock_received.connect(_on_native_dock_status)
 	native_station_session.dock_destinations_received.connect(_on_dock_destinations)
+	native_station_session.regional_sources_received.connect(_on_dock_regional_source)
 	native_station_session.status_changed.connect(_on_native_station_status)
 	native_station_session.connection_changed.connect(_on_native_station_connection)
 	refinery_terminal.refine_requested.connect(_on_native_refine_requested)
@@ -196,6 +197,8 @@ func _ready() -> void:
 	refinery_terminal.dock_destinations_requested.connect(_on_dock_destinations_requested)
 	refinery_terminal.dock_route_requested.connect(_on_dock_route_requested)
 	refinery_terminal.dock_cancel_requested.connect(_on_dock_cancel_requested)
+	refinery_terminal.dock_region_source_requested.connect(_on_dock_region_source_requested)
+	refinery_terminal.dock_region_bind_requested.connect(_on_dock_region_bind_requested)
 	refinery_terminal.terminal_closed.connect(_hide_refinery_terminal)
 	_player_session_autoconnect = not Engine.is_editor_hint() and DisplayServer.get_name() != "headless" and not OS.get_cmdline_args().has("--script")
 	_physical_trace = PHYSICAL_TRACE.new()
@@ -1223,6 +1226,23 @@ func _on_dock_freight_requested() -> void:
 func _on_dock_service_requested() -> void:
 	if _dock_commands_allowed():
 		native_station_session.advance_dock_services()
+
+func _on_dock_region_source_requested(index: int) -> void:
+	if _dock_commands_allowed():
+		native_station_session.request_regional_population_source(index)
+
+func _on_dock_region_bind_requested(index: int,authority_generation: int,
+		revision: int,rate: int) -> void:
+	if _dock_commands_allowed():
+		native_station_session.bind_regional_population_source(
+			index,authority_generation,revision,rate)
+
+func _on_dock_regional_source(frame: Dictionary) -> void:
+	if not _dock_commands_allowed():
+		return
+	if int(frame.get("station",-1))!=int(native_station_session._person.get("station",-2)):
+		return
+	refinery_terminal.set_regional_source(frame)
 
 func _on_dock_destinations_requested() -> void:
 	if _dock_commands_allowed():
