@@ -8,6 +8,7 @@
 #include "galaxy/Dock04Traffic.hpp"
 #include "galaxy/Dock05Voyage.hpp"
 #include "galaxy/Dock05RegionalDemand.hpp"
+#include "galaxy/Dock06Corridor.hpp"
 #include "galaxy/StationLaunch.hpp"
 #include "galaxy/StationRefineryProtocol.hpp"
 #include <algorithm>
@@ -114,6 +115,7 @@ static int run_host(int argc,char** argv){
   dock04::Traffic dock_traffic(save_utf8);
   dock05::Routes dock_routes(save_utf8);
   dock05::RegionalPopulation dock_population(save_utf8);
+  dock06::Corridor dock_corridor(save_utf8);
   const auto session=epoch();
   const auto receipt_prefix=(epoch()&((std::uint64_t{1}<<45)-1))<<14;
   std::uint64_t latest_request=0,budget=0;
@@ -140,6 +142,7 @@ static int run_host(int argc,char** argv){
    const bool colony_unload=colony_console&&f[0]=="COLUNLOAD";
    const bool population=f.size()==5&&f[0]=="POPVIEW";
    const bool dock_view=f.size()==5&&f[0]=="DOCKVIEW";
+   const bool dock_pedestrians=f.size()==5&&f[0]=="DOCKPED";
    const bool dock_assign=f.size()==5&&f[0]=="DOCKASSIGN";
    const bool dock_release=f.size()==5&&f[0]=="DOCKRELEASE";
    const bool dock_passenger=f.size()==5&&f[0]=="DOCKPASS";
@@ -151,7 +154,7 @@ static int run_host(int argc,char** argv){
    const bool dock_region_view=f.size()==5&&f[0]=="DOCKREGIONS";
    const bool dock_renew=f.size()==5&&f[0]=="DOCKRENEW";
    const bool dock_bind=f.size()==8&&f[0]=="DOCKBIND";
-   const bool dock_action=dock_view||dock_assign||dock_release||
+   const bool dock_action=dock_view||dock_pedestrians||dock_assign||dock_release||
                           dock_passenger||dock_freight||dock_work||
                           dock_destinations||dock_route||dock_cancel||
                           dock_region_view||dock_bind||dock_renew;
@@ -205,8 +208,23 @@ static int run_host(int argc,char** argv){
       deny(req,"dock-service-requires-local-owner");continue;
     }
     const EntityId local_station=person.physical_station;
-    if((dock_view||dock_work||dock_destinations) && ship!=local_station){
+    if((dock_view||dock_pedestrians||dock_work||dock_destinations) && ship!=local_station){
       deny(req,"dock-service-is-local");continue;
+    }
+    if(dock_pedestrians){
+      dock_corridor.synchronize(world.world(),local_station,kOwner,
+                               world.generation());
+      const auto present=dock_corridor.observe(world.world(),local_station,kOwner);
+      std::cout<<"DPED|1|"<<session<<'|'<<req<<'|'<<world.world().tick()
+               <<'|'<<world.generation()<<'|'<<local_station
+               <<'|'<<present.visible.size();
+      for(const auto& member:present.visible){
+        std::cout<<'|'<<member.npc<<'|'<<member.lane
+                 <<'|'<<member.x_mm<<'|'<<member.z_mm;
+      }
+      std::cout<<'\n'<<std::flush;
+      if(!std::cout)throw std::runtime_error("dock pedestrian pipe closed");
+      last=now;continue;
     }
     if(dock_destinations){
       const auto dests=dock_routes.destinations(
@@ -407,10 +425,13 @@ static int run_host(int argc,char** argv){
       // to two passenger transfers/cycle. Weighted freight turns ensure
       // urgent passenger handling cannot indefinitely starve real cargo.
       dock_traffic.reconcile(world,local_station,kOwner);
+      dock_corridor.synchronize(world.world(),local_station,kOwner,
+                               world.generation());
       const auto roster=dock_ledger.service_roster(world.world(),local_station,kOwner);
       std::uint64_t completed=0,passengers=0,freight=0;
       for(const auto worker:roster){
-        (void)worker; // roster is source-attested, not a virtual service actor
+        if(!dock_corridor.worker_ready(world.world(),local_station,kOwner,worker))
+          continue; // a real named handler has not reached native dispatch
         const auto traffic=dock_traffic.snapshot(world.world(),local_station,kOwner);
         const auto cargo=dock_ledger.snapshot(world.world(),local_station,kOwner);
         const bool passenger_ready=traffic.waiting>0 &&
@@ -426,7 +447,11 @@ static int run_host(int argc,char** argv){
               (traffic.urgent>0 || freight>0 || passengers<2)));
         bool applied=false;
         if(choose_passenger){
-          applied=dock_traffic.serve_one(world,local_station,kOwner,worker);
+          applied=dock_traffic.serve_one(world,local_station,kOwner,worker,
+              [&](std::uint64_t npc){
+                return dock_corridor.boarding_ready(
+                    world.world(),local_station,kOwner,npc);
+              });
           if(applied)++passengers;
         }
         if(!applied && freight_ready){
@@ -445,6 +470,10 @@ static int run_host(int argc,char** argv){
       }
       // A route is a lasting original physical flight plan. Advance a
       // bounded number of world ticks per foreground request, not an ETA.
+      dock_corridor.synchronize(world.world(),local_station,kOwner,
+                               world.generation());
+      const bool walking=dock_corridor.advance(
+          world.world(),local_station,kOwner);
       std::uint64_t travel_steps=0;
       for(int i=0;i<4;++i){
         if(!dock_routes.advance(world,local_station,kOwner))break;
@@ -454,13 +483,15 @@ static int run_host(int argc,char** argv){
       // inventory and immutable passenger/worker receipts remain intact.
       (void)dock_ledger.archive_completed(world.world(),local_station,kOwner);
       (void)dock_routes.archive_delivered(world.world(),local_station,kOwner);
-      result=completed?5:(travel_steps?9:6);
-      if(completed||travel_steps)
+      result=completed?5:((travel_steps||walking)?9:6);
+      if(completed||travel_steps||walking)
         galaxy::server_dx::committed_breadcrumb(
             world.world().tick(),world.generation());
     }else if(dock_view){
       dock_traffic.reconcile(world,local_station,kOwner);
       dock_routes.reconcile(world,local_station,kOwner);
+      dock_corridor.synchronize(world.world(),local_station,kOwner,
+                               world.generation());
     }
     const auto data=dock_ledger.snapshot(world.world(),local_station,kOwner);
     const auto traffic=dock_traffic.snapshot(world.world(),local_station,kOwner);
