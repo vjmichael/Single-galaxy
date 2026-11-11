@@ -2,6 +2,6 @@
   "schema": "SG-WORKORDER-GATE-01",
   "task_group": "WO5",
   "pr_number": 92,
-  "source_sha": "4cedbe9a11ca7e74599246b8e17599a058c2f202",
-  "note": "WO3–WO5 source-attested native vintage SQLite gate rerun after fixing duplicate v85 test-anchor matching; historical source d2cf352 and production core are immutable, capture only at unique visitor-arrival proof. Exact-head 33 original native CTests on Ubuntu/Windows after real historical source-generated v85 SQLite and true v86 legal residence upgrade (no fictional pre-v109 planetary homes)."
+  "source_sha": "d2ebf307ca5b5d5ebd8213a50da9e6d219504e95",
+  "note": "WO3-F real historical native source reproduction — compiler-repaired pre-v109 v108 source commit 19c58bca0b75a6899eb0a38cb79e0e0a77a37f3b; genuine original on-disk v85 journal, SHA-256 attested native binary and SQLite, unchanged production source and original genesis, v86 memory-only legal-ship upgrade, host rejection of fictitious planet residents; independent restart. Run complete 33-test exact-head WO3–WO5 matrix on Windows/Linux; do not claim archived original v86 SQLite or patch legacy production kernel."
 }
