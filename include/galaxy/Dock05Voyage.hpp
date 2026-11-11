@@ -15,7 +15,7 @@ namespace galaxy::dock05 {
 
 struct Status {
     std::uint64_t active=0,delivered=0,held=0,passengers_travelling=0;
-    std::uint64_t visitors_arrived=0;
+    std::uint64_t visitors_arrived=0,reviewable_route=0;
 };
 struct Destination {
     EntityId station=0,receiving_ship=0;
@@ -71,7 +71,7 @@ public:
         const auto* here=sim.find(origin);
         if(!here || here->type!=EntityType::Station)return out;
         for(const auto& [id,ship]:sim.entities()){
-            if(out.size()>=8)break;
+            if(out.size()>=6)break;
             if(ship.type!=EntityType::Ship || ship.owner_id!=owner ||
                ship.dock_state!=DockState::Docked ||
                !ship.dock_station || ship.dock_station==origin ||
@@ -110,7 +110,29 @@ public:
                               "WHERE origin=? AND owner=? AND outcome=6");
         a.bind(1,origin);a.bind(2,owner);
         if(a.next()==SQLITE_ROW)v.delivered+=a.number(0);
+        dock::Statement review(db_,"SELECT COALESCE(MAX(id),0) FROM "
+            "dock05_route_v1 WHERE origin=? AND owner=? AND stage IN(0,7,9)");
+        review.bind(1,origin);review.bind(2,owner);
+        if(review.next()==SQLITE_ROW)v.reviewable_route=review.number(0);
         return v;
+    }
+    EntityId first_boarded_ferry(const Simulation& sim,EntityId station,
+                                 PlayerId owner) const {
+        dock::Statement q(db_,"SELECT DISTINCT ferry FROM dock04_boarding_v1 "
+            "WHERE station=? AND owner=? AND phase=6 ORDER BY ferry LIMIT 64");
+        q.bind(1,station);q.bind(2,owner);
+        while(q.next()==SQLITE_ROW) {
+            const auto ferry=q.number(0);
+            const auto* boat=sim.find(ferry);
+            if(boat && boat->type==EntityType::Ship &&
+               boat->owner_id==owner &&
+               boat->dock_state==DockState::Docked &&
+               boat->dock_station==station &&
+               sim.original_passenger_ferry_safe_to_fly(ferry) &&
+               !has_active_ferry(ferry))
+                return ferry;
+        }
+        return 0;
     }
     std::uint64_t book(const PersistentWorld& world,EntityId origin,
         PlayerId owner,EntityId ferry,EntityId destination,
