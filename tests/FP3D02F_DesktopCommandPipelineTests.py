@@ -11,6 +11,11 @@ def connected(path):
     assert len(initial)==13 and initial[:2]==['POSE','1'], initial
     ship=p.stdout.readline().strip().split('|')
     assert len(ship)==17 and ship[:3]==['SHIP','1',initial[2]] and ship[3:5]==['0','0'] and ship[6]==initial[10],ship
+    rock=p.stdout.readline().strip().split('|')
+    assert rock[0] in ('ROCK','ROCKNONE') and rock[2:4]==[initial[2],'0'] and rock[4]==initial[10],rock
+    nav=p.stdout.readline().strip().split('|')
+    assert len(nav)==11 and nav[:5]==['NAV','1',initial[2],'0',initial[10]],nav
+    assert nav[5:7]==ship[7:9] and int(nav[7])>0,nav
     return p,int(initial[2]),int(initial[4]),tuple(map(int,initial[5:8]))
 
 def query(p,line):

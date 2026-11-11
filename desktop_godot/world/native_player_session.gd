@@ -167,11 +167,11 @@ func _accept_line(line: String) -> void:
 			rejected_verb if not rejected_verb.is_empty() else "native", request, parts[3]]
 		if parts[3] == "native-flight-refused":
 			if rejected_verb == "BRAKE":
-				message = "BRAKE not admitted: already stopped/below native braking threshold or custody check denied"
+				message = "BRAKE refused: already stopped/below native braking threshold or custody check denied"
 			elif rejected_verb == "DCK":
-				message = "DOCK not admitted: must be stationary within 2.5m of an original station in the same frame"
+				message = "DOCK refused: must be stationary within 2.5m of an original station in the same frame"
 			elif rejected_verb == "ASC" or rejected_verb == "DES":
-				message = "Vertical control not admitted: this saved world may lack native 3D physics or custody"
+				message = "Vertical control refused: this saved world may lack native 3D physics or custody"
 		_status(message)
 		return
 	if parts.size() > 0 and (parts[0] == "NAV" or parts[0] == "NAVNONE"):
