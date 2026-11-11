@@ -1,0 +1,63 @@
+name: Publish exact reviewed FP3D + WO3-WO5 merge candidate
+on:
+  push:
+    branches: [integration/fp3d-group2-wo3wo5-20261110]
+    paths:
+      - '.github/workflows/publish-fp3d-wo3wo5-candidate.yml'
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: publish-fp3d-wo3wo5-reviewed
+  cancel-in-progress: false
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+      - name: Verify pinned merge and publish separate candidate branch only
+        shell: bash
+        run: |
+          set -euo pipefail
+          G=dd86e3547cf2952d696eae27195ff2e0b2af5c64
+          W=d632ffc265df967da3c159252079787862a186d7
+          SOURCE="$GITHUB_SHA"
+          TARGET=integration/fp3d-group2-wo3wo5-merged-20261110
+          git fetch --no-tags origin "$G" "$W"
+          test "$(git merge-base "$G" "$W")" = "3467cab161fa4a091ae13e4ea05942fd089fd1b8"
+          test -f scripts/merge_fp3d_wo3wo5.py
+          cp scripts/merge_fp3d_wo3wo5.py "$RUNNER_TEMP/reconcile.py"
+          git switch --detach "$G"
+          git config user.name "Single-Galaxy Reconciliation"
+          git config user.email "sg-reconciliation@users.noreply.github.com"
+          set +e
+          git merge --no-commit --no-ff "$W"
+          status=$?
+          set -e
+          test "$status" -eq 1 || { echo "Expected real semantic conflicts; repository graph changed"; exit 1; }
+          git diff --name-only --diff-filter=U | sort >"$RUNNER_TEMP/unmerged.txt"
+          printf '%s\n' src/Persistence.cpp src/Simulation.cpp tests/V59_multi_destination_host.cpp tests/WO3PlanetaryUtilityTests.cpp tests/WO4ResourceDemandTests.cpp tests/WO5PhysicalLogisticsTests.cpp | sort >"$RUNNER_TEMP/expected.txt"
+          diff -u "$RUNNER_TEMP/expected.txt" "$RUNNER_TEMP/unmerged.txt"
+          python "$RUNNER_TEMP/reconcile.py"
+          git add -A
+          git diff --cached --check
+          test "$(git write-tree)" = "07075df941d2f24ccddcaaaf53bd822cb22c404c" || {
+            echo "Semantic merged source tree differs from independently compiled GCC source" >&2
+            exit 1
+          }
+          # Attach the unmodified, full original native acceptance workflows
+          # as branch-specific test runners; they cannot affect the tested C++.
+          for name in ci-fp3d-wo3wo5-acceptance.yml ci-fp3d-wo3wo5-godot.yml; do
+            git show "$SOURCE:.github/workflows/$name" >".github/workflows/$name"
+          done
+          git add .github/workflows
+          git diff --cached --check
+          git commit -m "merge(integration): preserve verified Group 2 and WO3-WO5 native histories" \
+            -m "Parents: Group 2 $G / WO3-WO5 $W. Semantic conflict integration is exact tree 07075df941d2f24ccddcaaaf53bd822cb22c404c before adding independent CI workflows. No original branch changed; physical Radeon acceptance pending."
+          test "$(git rev-list --parents -n 1 HEAD | wc -w)" -eq 3
+          git push origin "HEAD:refs/heads/$TARGET"
+          echo "PUBLISHED $(git rev-parse HEAD) $TARGET"
