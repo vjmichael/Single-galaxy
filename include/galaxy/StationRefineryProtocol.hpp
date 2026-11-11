@@ -19,6 +19,14 @@ static constexpr std::int64_t kTerminalZmm=0;
 static constexpr std::int64_t kTerminalRadiusMm=1200;
 static constexpr std::size_t kMaxVisibleLots=48;
 
+// A colony operations interface is a local colony console, not a second
+// inventory or permission to access a distant station. Remote here means
+// anywhere INSIDE the player's currently verified physical colony.
+inline bool colony_resident_access(const PlayerPerson& person) noexcept {
+    return person.state==PlayerPersonState::AtStation &&
+           person.owner!=0 && person.physical_station!=0;
+}
+
 inline bool accessible(const PlayerPerson& person) noexcept {
     if(person.state!=PlayerPersonState::AtStation || !person.physical_station)
         return false;
@@ -34,10 +42,13 @@ inline bool accessible(const PlayerPerson& person) noexcept {
 inline std::string make_snapshot(const PersistentWorld& world,
                                  PlayerId owner, std::uint64_t session,
                                  std::uint64_t request, int result,
-                                 std::int64_t transferred) {
+                                 std::int64_t transferred,
+                                 bool colony_console=false) {
     const auto pit=world.world().player_people().find(owner);
     if(pit==world.world().player_people().end() ||
-       !accessible(pit->second) || pit->second.owner!=owner)
+       pit->second.owner!=owner ||
+       !(colony_console?colony_resident_access(pit->second):
+                           accessible(pit->second)))
         throw std::invalid_argument("refinery terminal requires station resident");
     const auto station=pit->second.physical_station;
     const auto* site=world.world().find(station);

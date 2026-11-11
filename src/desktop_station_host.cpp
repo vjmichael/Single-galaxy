@@ -120,7 +120,14 @@ static int run_host(int argc,char** argv){
    const bool view=f.size()==5&&f[0]=="REFVIEW";
    const bool refine=f.size()==5&&f[0]=="REFINE";
    const bool unload=f.size()==5&&f[0]=="UNLOAD";
-   if(!walking&&!boarding&&!exiting&&!view&&!refine&&!unload){deny(0,"malformed");continue;}
+   // COL* is colony-local virtual access only: inventory is the SAME
+   // original station owner hangar and refinery. No item relocation.
+   const bool colony_console=f.size()==5 &&
+       (f[0]=="COLVIEW"||f[0]=="COLREFINE"||f[0]=="COLUNLOAD");
+   const bool colony_view=colony_console&&f[0]=="COLVIEW";
+   const bool colony_refine=colony_console&&f[0]=="COLREFINE";
+   const bool colony_unload=colony_console&&f[0]=="COLUNLOAD";
+   if(!walking&&!boarding&&!exiting&&!view&&!refine&&!unload&&!colony_console){deny(0,"malformed");continue;}
    std::uint64_t requested_session=0,req=0,expected=0,ship=0;
    std::int64_t dx=0,dz=0;
    if(!parse(f[1],requested_session)||!parse(f[2],req)||!parse(f[3],expected)||
@@ -133,14 +140,19 @@ static int run_host(int argc,char** argv){
    const auto now=std::chrono::steady_clock::now();
    if(now-last<std::chrono::milliseconds(45)){deny(req,"rate");continue;}
    const auto& person=world.world().player_people().at(kOwner);
-   if(view || refine || unload){
-    if(!station_refinery_protocol::accessible(person) ||
-       (view && ship!=person.physical_station)){
+   if(view || refine || unload || colony_console){
+    // The local remote terminal saves walking, NOT travel. Identity is
+    // taken from original PERSON physical_station. Never trust a remote
+    // station ID or client-claimed item/cargo quantity.
+    if(!(colony_console ?
+         station_refinery_protocol::colony_resident_access(person) :
+         station_refinery_protocol::accessible(person)) ||
+       ((view||colony_view) && ship!=person.physical_station)){
        deny(req,"refinery-terminal-distance-or-custody");continue;
     }
     int result=0;
     std::int64_t transferred=0;
-    if(refine){
+    if(refine||colony_refine){
        const auto* plant=world.world().station_refinery(person.physical_station);
        // A target lot ID is never a mass, a facility ID or client-selected actor.
        if(!plant || plant->owner!=kOwner || ship==0 ||
@@ -170,7 +182,7 @@ static int run_host(int argc,char** argv){
        result=event.result==Outcome::Applied?1:2;
        transferred=event.transferred;
     }
-    if(unload){
+    if(unload||colony_unload){
        // The original PERSON receipt identifies the owned physical station.
        // A client-supplied ship ID is only a selector: revalidate the actual
        // docked vessel, station and finite cargo on every command.
@@ -207,7 +219,8 @@ static int run_host(int argc,char** argv){
           throw std::runtime_error("invalid original single-tonne unload receipt");
     }
     last=now;
-    std::cout<<station_refinery_protocol::make_snapshot(world,kOwner,session,req,result,transferred)<<std::flush;
+    std::cout<<station_refinery_protocol::make_snapshot(
+        world,kOwner,session,req,result,transferred,colony_console)<<std::flush;
     if(!std::cout)throw std::runtime_error("refinery terminal stdout disconnected");
     continue;
    }
