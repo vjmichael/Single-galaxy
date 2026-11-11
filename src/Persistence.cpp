@@ -9994,10 +9994,31 @@ bool PersistentWorld::delegate_customer_ship_order(
 // and recovery. The delegation is not a new shipment/stock/manifest writer.
 // FLIGHT-01 is mission-neutral and journaled exactly like all other
 // original world actions: no parallel flight database or unsupervised thread.
+// DOCK-03: an original named NPC stationed ashore remains attached to its
+// finite home crew. Do not let any ordinary player or supervised cockpit
+// command depart while one of that vessel's own crew is physically at dock.
+// Native internal NPC launch paths not routed through PersistentWorld remain
+// a separate integration gate.
+static bool has_named_crew_on_station(const Simulation& world,EntityId ship_id){
+    const auto* ship=world.find(ship_id);
+    if(!ship || ship->dock_state!=DockState::Docked || !ship->dock_station)
+        return false;
+    std::uint64_t inspected=0;
+    for(const auto& [id,npc]:world.npc_records()){
+        (void)id;
+        if(++inspected>4096)return true; // fail closed on huge rosters
+        if(npc.home_ship==ship_id && npc.location==ship->dock_station &&
+           npc.role==NpcRole::Ship && !npc.transport_id)
+            return true;
+    }
+    return false;
+}
+
 bool PersistentWorld::queue_npc_flight(
     PlayerId owner,EntityId ship,std::uint64_t pilot,
     std::uint64_t destination,std::uint64_t order_id,
     std::uint64_t transit_request,NpcFlightPurpose purpose,FailPoint fail){
+    if(has_named_crew_on_station(world_,ship))return false;
     auto next=world_;
     if(!next.queue_npc_flight(owner,ship,pilot,destination,order_id,
                               transit_request,purpose))return false;
@@ -10175,6 +10196,7 @@ bool PersistentWorld::queue_npc_ship_rendezvous(
     PlayerId owner,EntityId ship,std::uint64_t pilot,
     EntityId target_ship,std::uint64_t order_id,
     NpcFlightPurpose purpose,FailPoint fail){
+    if(has_named_crew_on_station(world_,ship))return false;
     auto next=world_;
     if(!next.queue_npc_ship_rendezvous(
         owner,ship,pilot,target_ship,order_id,purpose))return false;
@@ -12927,6 +12949,8 @@ bool PersistentWorld::submit_cockpit_flight_checked(
            (flight.phase==NpcFlightPhase::Planned||
             flight.phase==NpcFlightPhase::InTransit))return false;
     }
+    if(command.action==Action::RequestUndock &&
+       has_named_crew_on_station(world_,command.actor))return false;
     // Original world command acceptance is a separate native journal commit.
     // Seat state is revalidated UNDER its SQLite BEGIN IMMEDIATE lock.
     auto next=world_;
@@ -12959,6 +12983,9 @@ bool PersistentWorld::submit_as_cell_worker(
 bool PersistentWorld::submit_with_cell_worker(
         const Command& command,const NativeCellWorkerTick* token,
         FailPoint fail) {
+    if((command.action==Action::RequestUndock ||
+        command.action==Action::RequestJump) &&
+       has_named_crew_on_station(world_,command.actor))return false;
     // Reserved native NPC and cockpit command IDs cannot be submitted via
     // ordinary client/worker APIs. Cockpit admission requires trusted seat proof.
     if((command.id & (std::uint64_t{1}<<60)) &&
