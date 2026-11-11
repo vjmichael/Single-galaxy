@@ -98,7 +98,9 @@ public:
            it->second.transport_id || it->second.mentor_id ||
            (it->second.assigned_site &&
             it->second.assigned_site!=it->second.home_ship) ||
-           !world.npc_available_for_duty(npc_id))return false;
+           !(it->second.location==station ?
+             world.npc_available_for_shore_duty(npc_id,station):
+             world.npc_available_for_duty(npc_id)))return false;
         const auto& npc=it->second;
         const auto* source=world.find(npc.home_ship);
         const auto* vessel=world.find(ferry);
@@ -149,16 +151,16 @@ public:
     TrafficView snapshot(const Simulation& world,EntityId station,
                          PlayerId owner) const {
         TrafficView v{};
-        dock::Statement q(db_,"SELECT priority,phase FROM dock04_boarding_v1 "
-                             "WHERE station=? AND owner=?");
+        dock::Statement q(db_,"SELECT priority,phase,COUNT(*) FROM dock04_boarding_v1 "
+                             "WHERE station=? AND owner=? GROUP BY priority,phase");
         q.bind(1,station);q.bind(2,owner);
         while(q.next()==SQLITE_ROW) {
-            const auto pr=q.number(0),state=q.number(1);
-            if(state==6)++v.boarded;
-            else if(state==7)++v.held;
+            const auto pr=q.number(0),state=q.number(1),count=q.number(2);
+            if(state==6)v.boarded+=count;
+            else if(state==7)v.held+=count;
             else {
-                ++v.waiting;
-                if(pr==2)++v.urgent;
+                v.waiting+=count;
+                if(pr==2)v.urgent+=count;
             }
         }
         v.passenger_gangways=physical_gangways(world,station,owner);
@@ -346,6 +348,9 @@ private:
     }
     bool move_proven(std::uint64_t receipt,EntityId station,EntityId source,
                      std::uint64_t npc,bool outward) const {
+        dock::Statement table(db_,"SELECT 1 FROM sqlite_master "
+             "WHERE type='table' AND name='sg_dock_worker_moves'");
+        if(table.next()!=SQLITE_ROW)return false;
         dock::Statement q(db_,"SELECT 1 FROM sg_dock_worker_moves "
                              "WHERE receipt=? AND station=? AND ship=? "
                              "AND npc_id=? AND direction=? LIMIT 1");
