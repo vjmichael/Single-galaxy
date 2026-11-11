@@ -2,11 +2,11 @@ extends RefCounted
 ## One-use, human-confirmed New Game archive for the native Windows/Linux
 ## station pilot. No world is deleted or fabricated by the UI: the original
 ## station host creates a fresh SQLite world ONLY after a safe archive.
-const WORLD_NAMES := PackedStringArray([
+const WORLD_NAMES = [
 	"single_galaxy_station_test.sqlite",
 	"single_galaxy_authoritative.sqlite"
-])
-const WORLD_SUFFIXES := PackedStringArray(["", "-wal", "-shm", "-journal", ".diagnostics"])
+]
+const WORLD_SUFFIXES = ["", "-wal", "-shm", "-journal", ".diagnostics"]
 const JOURNAL := "world-reset-pending.json"
 const ARCHIVE_FOLDER := "world-archives"
 const SCHEMA := "SG-WORLD-RESET-01"
@@ -43,6 +43,9 @@ static func _rollback(root: String, archive: String, entries: Array[Dictionary])
 				return false
 			if DirAccess.rename_absolute(backup, old) != OK:
 				return false
+		elif not (FileAccess.file_exists(old) or DirAccess.dir_exists_absolute(old)):
+			# A missing source AND backup is data loss, not successful recovery.
+			return false
 	return true
 
 static func recover_pending(root: String, running_pids: Array[int]) -> Dictionary:
