@@ -2,6 +2,7 @@
 // original shore worker identity -> collision-tested finite native pedestrian
 // movements -> restart, original-world custody return, no spoofed local coords.
 #include "galaxy/Dock06Corridor.hpp"
+#include "galaxy/Dock04Traffic.hpp"
 #include <filesystem>
 #include <iostream>
 #include <stdexcept>
