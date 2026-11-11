@@ -1,5 +1,5 @@
 // WO3-F: positive replay from a genuine vintage native SQLite journal.
-// The v86-era (2026-11-05) kernel did NOT provide a persisted host operation
+// The compiler-repaired pre-v109 kernel (2026-11-10) did NOT provide a persisted host operation
 // creating a legal PlanetarySite home. Its v86 migration retains the original
 // ship home for actual surface visitors. Do not forge a v86 planetary address.
 //
