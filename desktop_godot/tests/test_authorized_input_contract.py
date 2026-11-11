@@ -40,6 +40,9 @@ assert '_submit_visible_cursor_keyboard_flight("ship_thrust_forward", "FWD")' in
 assert '_submit_visible_cursor_keyboard_flight("ship_yaw_left", "LEFT")' in real
 assert '_submit_visible_cursor_keyboard_flight("ship_yaw_right", "RIGHT")' in real
 assert '_game.player.native_ship_intents.emit(intents)' in real
+assert 'native_key.physical_keycode = bound_key' in real
+assert 'InputMap.action_has_event(action, native_key)' in real
+assert 'Input.mouse_mode = Input.MOUSE_MODE_VISIBLE' in real
 assert 'session.submit_flight(PackedStringArray([' not in real
 assert 'int(_ship_frames[-1]["heading"]) != before_yaw' in real
 assert 'player.native_ship_intents.connect(' in m
