@@ -91,9 +91,9 @@ func show_original_ship(ship: Dictionary, contact: Dictionary, seated: bool) -> 
 	visible = valid
 	var flying := valid and int(ship.get("dock",-1)) == 0
 	var docked := valid and int(ship.get("dock",-1)) == 1
-	var matched_contact := valid and bool(contact.get("found",false)) and
+	var matched_contact := (valid and bool(contact.get("found",false)) and
 		int(contact.get("tick",-1)) == int(ship.get("tick",-2)) and
-		int(contact.get("ship",-1)) == int(ship.get("ship",-2))
+		int(contact.get("ship",-1)) == int(ship.get("ship",-2)))
 	var powered_drill := matched_contact and bool(contact.get("mining_tool_online",false))
 	_survey_button.disabled = not (valid and flying and seated)
 	_mine.disabled = not (flying and seated and powered_drill)
