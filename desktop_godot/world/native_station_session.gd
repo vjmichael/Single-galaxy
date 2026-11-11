@@ -36,6 +36,11 @@ var _refinery_receiving := false
 var _pending_refinery_kind := "" # VIEW, REFINE or UNLOAD; never reuse a stale receipt
 var _pending_population := false
 var _pending_dock_kind := ""
+var _dock_initial_read_done := false
+var _dock_auto_remaining := 0
+var _dock_auto_staff := 0
+var _last_dock_automation_ms := -10000
+const DOCK_AUTO_INTERVAL_MS := 900
 var _refinery_header := {}
 var _refinery_lots: Array[Dictionary] = []
 var _refinery_minerals := {}
@@ -143,6 +148,10 @@ func start() -> void:
 	_pending_refinery_kind = ""
 	_pending_population = false
 	_pending_dock_kind = ""
+	_dock_initial_read_done = false
+	_dock_auto_remaining = 0
+	_dock_auto_staff = 0
+	_last_dock_automation_ms = -10000
 	_next_request = 1
 	_last_send = -10000
 	_buffer.clear()
@@ -184,6 +193,7 @@ func poll() -> void:
 		stop(failure)
 		return
 	_dispatch_queued_hangar_if_ready()
+	_automatic_dock_service()
 
 func _integer(value: String) -> bool:
 	return not value.is_empty() and value.length() <= 19 and value.is_valid_int()
@@ -254,6 +264,10 @@ func _accept_line(line: String) -> void:
 			stop("Station acknowledgement is stale or unrequested")
 			return
 		_pending = 0
+	if state != 4:
+		_dock_initial_read_done = false
+		_dock_auto_remaining = 0
+		_dock_auto_staff = 0
 	var last_walk_confirmed: bool = req > 0 and req == _pending_walk
 	if last_walk_confirmed:
 		_pending_walk = 0
@@ -305,6 +319,9 @@ func _accept_dock(f: PackedStringArray) -> void:
 		return
 	_pending = 0
 	_pending_dock_kind = ""
+	_dock_initial_read_done = true
+	_dock_auto_remaining = passengers + tonnes
+	_dock_auto_staff = staff
 	_tick = tick
 	_generation = generation
 	var snapshot := {"station":station,"dock_staff":staff,
@@ -318,6 +335,24 @@ func _accept_dock(f: PackedStringArray) -> void:
 		"Passenger checked into local queue" if result==3 else
 		"Dock workers unavailable or queue idle" if result==6 else
 		"Dock services ready")
+
+func _automatic_dock_service() -> void:
+	# A bounded foreground worker scheduler, not a detached SQLite writer:
+	# the same active native station host commits all original-world actions.
+	# No scheduling while in flight, during boarding, during user commands,
+	# or after disconnect. No speculative NPC/cargo adjustment in Godot.
+	if not _active or _session<=0 or _pending!=0 or _queued_hangar_intent or \
+			int(_person.get("state",-1)) != 4:
+		return
+	var now := Time.get_ticks_msec()
+	if now-_last_dock_automation_ms<DOCK_AUTO_INTERVAL_MS or \
+			now-_last_send<NATIVE_HANGAR_COMMAND_GAP_MS:
+		return
+	_last_dock_automation_ms = now
+	if not _dock_initial_read_done:
+		request_dock_status()
+	elif _dock_auto_remaining>0 and _dock_auto_staff>0:
+		advance_dock_services()
 
 func request_dock_status() -> bool:
 	return _submit_dock("VIEW",0)
@@ -708,5 +743,8 @@ func stop(message: String = "Station session closed", graceful: bool = false) ->
 	_queued_hangar_ready_msec = 0
 	_pending_refinery_kind = ""
 	_pending_dock_kind = ""
+	_dock_initial_read_done = false
+	_dock_auto_remaining = 0
+	_dock_auto_staff = 0
 	connection_changed.emit(false)
 	_status(message)
