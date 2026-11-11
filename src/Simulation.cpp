@@ -4504,6 +4504,9 @@ Event Simulation::execute(const Command& c) {
             if (!station || station->type != EntityType::Station) {
                 result.result = Outcome::InvalidTarget; return result;
             }
+            if(has_original_station_guest_ashore(actor.id)) {
+                result.result=Outcome::InvalidArgument;return result;
+            }
             actor.dock_state = DockState::Undocking;
             actor.transition_ticks = kDockTransitionTicks;
             snapshot_version_ = std::max(snapshot_version_, 3);
@@ -9360,7 +9363,7 @@ bool Simulation::queue_npc_station_docking(
        (vessel->second.dock_state==DockState::Docked &&
         vessel->second.dock_station==target) ||
        pending_celestial_transits_.size()>=10000 ||
-       active_mining().count(ship))return false;
+       (active_mining().count(ship) || has_original_station_guest_ashore(ship)))return false;
     for(const auto& [id,p]:pending_celestial_transits_){
         (void)id;
         if(p.ship==ship)return false;
@@ -9696,7 +9699,7 @@ bool Simulation::begin_native_celestial_transit(
         if(p.ship==ship)return false;
     }
     const auto* carrier=find(ship);
-    if(!carrier || !carrier->fitting.exploration_scanner())return false;
+    if(has_original_station_guest_ashore(ship) || !carrier || !carrier->fitting.exploration_scanner())return false;
     const auto decision=plan_celestial_frame_arrival(*this,owner,ship,body,id);
     if(!decision.plan)return false;
     const auto frame=ship_frames_.find(ship);
@@ -16630,8 +16633,31 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                     }
                     return false;
                 }()) ||
+            const bool genuine_station_visitor=[&](){
+                if(result.snapshot_version_<120 || n.transport_id ||
+                   n.role!=NpcRole::Ship || n.assigned_site!=n.home_ship ||
+                   n.location==n.home_ship)return false;
+                const auto berth=result.entities_.find(n.location);
+                if(berth==result.entities_.end() ||
+                   berth->second.type!=EntityType::Station)return false;
+                for(const auto& [voyage_id,v]:result.voyages_){
+                    (void)voyage_id;
+                    if(v.status!=2 || !v.destination ||
+                       !std::binary_search(v.passengers.begin(),
+                                            v.passengers.end(),id))continue;
+                    const auto receiver=result.entities_.find(v.destination);
+                    if(receiver!=result.entities_.end() &&
+                       receiver->second.type==EntityType::Ship &&
+                       receiver->second.dock_state==DockState::Docked &&
+                       receiver->second.dock_station==berth->first &&
+                       receiver->second.system_id==berth->second.system_id &&
+                       receiver->second.owner_id==result.entities_.at(n.home_ship).owner_id)
+                        return true;
+                }
+                return false;
+            }();
                 (!n.transport_id && n.location!=n.assigned_site &&
-                 !shuttle_custody && !genuine_shore_duty &&
+                 !shuttle_custody && !genuine_shore_duty && !genuine_station_visitor &&
                  ![&](){for(const auto& [voyage_id,v]:result.voyages_){(void)voyage_id;
                      if((v.status==2 || v.status==5) && v.destination==n.location &&
                         std::binary_search(v.passengers.begin(),v.passengers.end(),id))return true;}
