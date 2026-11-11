@@ -2397,3 +2397,17 @@ if(BUILD_TESTING)
     COMMAND galaxy_group3_station_identity_tests)
   set_tests_properties(galaxy_group3_station_material_identity PROPERTIES TIMEOUT 90)
 endif()
+
+# GROUP3 resource-first original cockpit: no fabricated drill or other
+# automatic module, genuine source-lot 1t MINE and physical SQLite restart.
+if(BUILD_TESTING AND Python3_Interpreter_FOUND)
+  add_executable(galaxy_group3_original_resource_seed
+    tests/Group3ResourceMiningSeed.cpp)
+  target_link_libraries(galaxy_group3_original_resource_seed PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_group3_original_ore_pilot_pipe
+    COMMAND ${Python3_EXECUTABLE}
+      ${CMAKE_CURRENT_SOURCE_DIR}/tests/Group3ResourceMiningPipeTests.py
+      $<TARGET_FILE:galaxy_group3_original_resource_seed>
+      $<TARGET_FILE:galaxy_desktop_player_host>)
+  set_tests_properties(galaxy_group3_original_ore_pilot_pipe PROPERTIES TIMEOUT 180)
+endif()
