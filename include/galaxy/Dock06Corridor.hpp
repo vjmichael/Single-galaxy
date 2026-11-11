@@ -95,6 +95,7 @@ public:
                    it->second.role==NpcRole::Ship &&
                    it->second.location==station &&
                    !it->second.transport_id &&
+                   source_walking_health(sim,npc) &&
                    !active.count(npc))
                     active.emplace(npc,Lane::Boarding);
             }
@@ -118,6 +119,7 @@ public:
                 if(ship && ship->owner_id==owner &&
                    it!=sim.npc_records().end() &&
                    it->second.location==station &&
+                   source_walking_health(sim,npc) &&
                    sim.original_completed_ferry_guest(npc,receiver,voyage))
                     active.emplace(npc,Lane::Visitor);
             }
@@ -336,11 +338,20 @@ private:
         }
         return rows;
     }
+    static bool source_walking_health(const Simulation& sim,std::uint64_t npc){
+        const auto status=sim.npc_health_status(npc);
+        // A casualty is NEVER made independently ambulatory by dock AI.
+        // Original medical/rescue authority must resolve their care first.
+        return status==NpcHealthStatus::Healthy ||
+               status==NpcHealthStatus::Treated ||
+               status==NpcHealthStatus::Recovered;
+    }
     static bool still_source(const Simulation& sim,EntityId station,
                              PlayerId owner,const Walker& p){
         const auto n=sim.npc_records().find(p.npc);
         if(n==sim.npc_records().end() || n->second.location!=station ||
-           n->second.transport_id || n->second.role!=NpcRole::Ship)
+           n->second.transport_id || n->second.role!=NpcRole::Ship ||
+           !source_walking_health(sim,p.npc))
             return false;
         const auto* home=sim.find(n->second.home_ship);
         if(!home || home->owner_id!=owner)return false;
