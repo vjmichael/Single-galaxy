@@ -125,9 +125,12 @@ int main(int argc,char** argv) {
         PopulationCohorts cohorts;
         cohorts.add({station,2,1,3},1000000);
         cohorts.add({station,4,3,1},1000000);
-        CHECK(cohorts.population()==2000000);
-        CHECK(cohorts.cohort_count()==2);
-        CHECK(dock04::projected_demand(cohorts.population(),500,16)==16);
+        cohorts.add({station+10000,1,1,1},1000000);
+        CHECK(cohorts.population()==3000000);
+        CHECK(cohorts.population_at(station)==2000000);
+        CHECK(cohorts.population_at(station+10000)==1000000);
+        CHECK(cohorts.cohort_count()==3);
+        CHECK(dock04::projected_demand(cohorts.population_at(station),500,16)==16);
         CHECK(dock04::projected_demand(0,500,16)==0);
         CHECK(dock04::projected_demand(cohorts.population(),1,0)==0);
         {
@@ -135,6 +138,13 @@ int main(int argc,char** argv) {
             CHECK(world.world().npc_records().at(worker).location==home);
             CHECK(world.world().npc_records().at(passenger).location==ferry);
             CHECK(world.world().passengers_aboard(ferry)==1);
+            dock04::Traffic demand(path);
+            const auto pressure=demand.project_cohort_pressure(
+                world.world(),station,7,cohorts,500);
+            CHECK(pressure.demand==32); // two real gangways, not 3M NPCs
+            CHECK(pressure.boarded==1);
+            CHECK(demand.project_cohort_pressure(
+                world.world(),station+10000,7,cohorts,500).demand==0);
             CHECK(world.world().npc_records().size()==12);
         }
         clear(path);
