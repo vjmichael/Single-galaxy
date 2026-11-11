@@ -1,8 +1,7 @@
 #pragma once
-// GROUP3-B: bounded optical original-world asteroid observation. NOT an
-// authority to mine, teleport, collect, land or fabricate source material.
-// A passive silhouette reveals geometry only; geological composition and
-// exact remaining ore require an existing powered exploration scanner.
+// GROUP3-B: bounded 50m original PLAY-11 powered-scanner asteroid survey.
+// Draw distance is not a sensor. No equipped powered survey hardpoint means
+// no 50m survey; the separate 30m passive contact remains unchanged.
 // All source identity, frame, 3D position and finite quantities are read
 // from the original Simulation, never generated from a Godot camera.
 #include "galaxy/SpaceMiningContact.hpp"
@@ -12,7 +11,7 @@
 #include <vector>
 
 namespace galaxy::mining_survey {
-inline constexpr std::int64_t kOpticalRangeMm=8500000; // <= High drawing clip
+inline constexpr std::int64_t kSurveyRangeMm=50000; // PLAY-11 installed scanner, not graphics draw distance
 inline constexpr std::size_t kMaxSurveyed=16;
 inline constexpr std::size_t kScanBudget=8192;
 
@@ -35,7 +34,7 @@ inline std::vector<Source> nearby_original_asteroids(
     if(!owner||!ship||ship->type!=EntityType::Ship||
        ship->owner_id!=owner||ship->dock_state!=DockState::InSpace||
        max_results==0||max_results>kMaxSurveyed)return rows;
-    const bool active_scanner=ship_sensors::powered_survey_scanner(world,*ship);
+    if(!ship_sensors::powered_survey_scanner(world,*ship))return rows;
     const auto ids=world.entity_ids_in_system(ship->system_id);
     std::size_t scanned=0;
     bool truncated=false;
@@ -48,31 +47,31 @@ inline std::vector<Source> nearby_original_asteroids(
         if(ship->physical_galactic_authoritative &&
            rock->physical_galactic_authoritative){
             dx=space_mining_view::nearby_axis_delta(
-                ship->physical_galactic.x,rock->physical_galactic.x,kOpticalRangeMm);
+                ship->physical_galactic.x,rock->physical_galactic.x,kSurveyRangeMm);
             dy=space_mining_view::nearby_axis_delta(
-                ship->physical_galactic.y,rock->physical_galactic.y,kOpticalRangeMm);
+                ship->physical_galactic.y,rock->physical_galactic.y,kSurveyRangeMm);
             dz=space_mining_view::nearby_axis_delta(
-                ship->physical_galactic.z,rock->physical_galactic.z,kOpticalRangeMm);
+                ship->physical_galactic.z,rock->physical_galactic.z,kSurveyRangeMm);
         }else if(!ship->physical_galactic_authoritative &&
                   !rock->physical_galactic_authoritative){
             const auto x=rock->position.x-ship->position.x;
             const auto y=rock->position.y-ship->position.y;
             const auto z=rock->position_z_mm-ship->position_z_mm;
-            if(x>=-kOpticalRangeMm && x<=kOpticalRangeMm &&
-               y>=-kOpticalRangeMm && y<=kOpticalRangeMm &&
-               z>=-kOpticalRangeMm && z<=kOpticalRangeMm){dx=x;dy=y;dz=z;}
+            if(x>=-kSurveyRangeMm && x<=kSurveyRangeMm &&
+               y>=-kSurveyRangeMm && y<=kSurveyRangeMm &&
+               z>=-kSurveyRangeMm && z<=kSurveyRangeMm){dx=x;dy=y;dz=z;}
         }
         if(!dx||!dy||!dz)continue;
         const auto length_sq=(*dx)*(*dx)+(*dy)*(*dy)+(*dz)*(*dz);
-        if(length_sq>kOpticalRangeMm*kOpticalRangeMm)continue;
+        if(length_sq>kSurveyRangeMm*kSurveyRangeMm)continue;
         const auto* geology=world.geology(id);
         const auto radius=geology?
             std::min<std::int64_t>(10000,geology->radius_m)*1000:500;
         rows.push_back({id,*dx,*dy,*dz,radius,
-            active_scanner?rock->ore:-1,
-            active_scanner&&geology?
+            rock->ore,
+            geology?
                 static_cast<std::uint8_t>(geology->taxonomy):std::uint8_t{3},
-            active_scanner,world.tick(),false});
+            true,world.tick(),false});
     }
     std::sort(rows.begin(),rows.end(),[](const Source& a,const Source& b){
         const auto da=a.x_mm*a.x_mm+a.y_mm*a.y_mm+a.z_mm*a.z_mm;
