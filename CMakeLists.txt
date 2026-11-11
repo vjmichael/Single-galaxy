@@ -2343,3 +2343,71 @@ if(BUILD_TESTING AND Python3_Interpreter_FOUND)
   set_tests_properties(galaxy_fp3d_win01_source_contract
     PROPERTIES TIMEOUT 20 LABELS "source-only;windows-playtest")
 endif()
+
+# GROUP3-A — genuine v126 equipped mining, unchanged original source/ore ledger.
+if(BUILD_TESTING)
+  add_executable(galaxy_group3_fitted_mining_tests tests/PLAY_STATION_04B_MiningTests.cpp)
+  target_link_libraries(galaxy_group3_fitted_mining_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_group3_original_fitted_mining
+    COMMAND galaxy_group3_fitted_mining_tests
+      ${CMAKE_CURRENT_BINARY_DIR}/group3_v126_fitting.sqlite)
+  set_tests_properties(galaxy_group3_original_fitted_mining PROPERTIES TIMEOUT 120)
+endif()
+
+# GROUP3-B read-only capped 8.5km original-space optical asteroid survey.
+if(BUILD_TESTING)
+  add_executable(galaxy_group3_asteroid_survey_tests tests/Group3AsteroidSurveyTests.cpp)
+  target_link_libraries(galaxy_group3_asteroid_survey_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_group3_original_asteroid_survey
+    COMMAND galaxy_group3_asteroid_survey_tests)
+  set_tests_properties(galaxy_group3_original_asteroid_survey PROPERTIES TIMEOUT 50)
+endif()
+
+# GROUP3-C actual child-stdio pilot/fitting/MINE and original SQLite recovery.
+if(BUILD_TESTING AND Python3_Interpreter_FOUND)
+  add_executable(galaxy_group3_native_mining_seed tests/Group3NativeMiningSeed.cpp)
+  target_link_libraries(galaxy_group3_native_mining_seed PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_group3_native_mining_pipe
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/Group3NativeMiningPipeTests.py
+      $<TARGET_FILE:galaxy_group3_native_mining_seed>
+      $<TARGET_FILE:galaxy_desktop_player_host>)
+  set_tests_properties(galaxy_group3_native_mining_pipe PROPERTIES TIMEOUT 180)
+endif()
+
+# GROUP3-D/E: actual v126 drill -> finite 1t rock -> original ship/hangar
+# -> real staffed/powered refinery -> mineral custody and provenance. The
+# INDUSTRY-01 catalogue prevents claiming unapproved drill manufacturing.
+if(BUILD_TESTING)
+  add_executable(galaxy_group3_station_custody_tests tests/Group3StationCustodyE2E.cpp)
+  target_link_libraries(galaxy_group3_station_custody_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_group3_original_station_custody
+    COMMAND galaxy_group3_station_custody_tests
+      ${CMAKE_CURRENT_BINARY_DIR}/group3_station_custody.sqlite)
+  set_tests_properties(galaxy_group3_original_station_custody PROPERTIES TIMEOUT 200)
+endif()
+
+# GROUP3-RESOURCE — read-only original station mineral identities and
+# conservation against the existing INDUSTRY-01 legacy-unit register.
+# Does NOT turn station concentrate into manufacturing feed.
+if(BUILD_TESTING)
+  add_executable(galaxy_group3_station_identity_tests
+    tests/Group3StationMaterialIdentityTests.cpp)
+  target_link_libraries(galaxy_group3_station_identity_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_group3_station_material_identity
+    COMMAND galaxy_group3_station_identity_tests)
+  set_tests_properties(galaxy_group3_station_material_identity PROPERTIES TIMEOUT 90)
+endif()
+
+# GROUP3 resource-first original cockpit: no fabricated drill or other
+# automatic module, genuine source-lot 1t MINE and physical SQLite restart.
+if(BUILD_TESTING AND Python3_Interpreter_FOUND)
+  add_executable(galaxy_group3_original_resource_seed
+    tests/Group3ResourceMiningSeed.cpp)
+  target_link_libraries(galaxy_group3_original_resource_seed PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_group3_original_ore_pilot_pipe
+    COMMAND ${Python3_EXECUTABLE}
+      ${CMAKE_CURRENT_SOURCE_DIR}/tests/Group3ResourceMiningPipeTests.py
+      $<TARGET_FILE:galaxy_group3_original_resource_seed>
+      $<TARGET_FILE:galaxy_desktop_player_host>)
+  set_tests_properties(galaxy_group3_original_ore_pilot_pipe PROPERTIES TIMEOUT 180)
+endif()

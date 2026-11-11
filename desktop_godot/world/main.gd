@@ -16,6 +16,7 @@ const WORLD_RESET := preload("res://world/world_reset_manager.gd")
 const INDUSTRIAL_SHIP := preload("res://world/industrial_ship_design.gd")
 const VISUAL_QUALITY := preload("res://world/visual_quality_profile.gd")
 const SGDX_DIAG := preload("res://world/sgdx_operator_diagnostics.gd")
+const GROUP3_MINING_UI := preload("res://world/group3_mining_panel.gd")
 const STATION_GRAY := Color(0.47, 0.51, 0.55, 1.0)
 const SHIP_WHITE := Color(0.96, 0.97, 0.99, 1.0)
 # Visual capsule center for 1.75 m tall collider; original C++ X/Z unchanged.
@@ -60,6 +61,8 @@ var flight_instrument_label: Label
 var _verified_flight_ship: Dictionary = {}
 var _verified_flight_rock: Dictionary = {}
 var _verified_station_nav: Dictionary = {}
+var _mining_panel
+var _mining_survey_markers: Node3D
 # The actual hull yaw is always set immediately from the committed C++ SHIP
 # receipt; ONLY the rendered exterior camera eases back toward its mount.
 var _exterior_camera_rest := Transform3D.IDENTITY
@@ -139,6 +142,9 @@ func _ready() -> void:
 	_build_ship_interior()
 	_geometry_parent = null
 	_build_native_space_preview()
+	_mining_survey_markers = Node3D.new()
+	_mining_survey_markers.name = "OriginalAsteroidSurveyReadOnly_NONCOLLIDING"
+	space_preview.add_child(_mining_survey_markers)
 	_show_native_location(true) # station first; only native PERSON/POSE chooses later
 	_build_player()
 	_apply_visual_quality()
@@ -160,6 +166,8 @@ func _ready() -> void:
 	native_player_session.connection_changed.connect(_on_native_player_connection)
 	native_player_session.flight_command_sent.connect(_on_physical_flight_sent)
 	native_player_session.flight_command_result.connect(_on_physical_flight_result)
+	native_player_session.equipment_result_received.connect(_on_group3_equipment_receipt)
+	native_player_session.asteroid_survey_received.connect(_on_group3_asteroid_survey)
 	player.native_motion_intent.connect(_on_native_player_intent)
 	player.native_seat_intent.connect(_on_native_player_seat_intent)
 	player.native_ship_intents.connect(_on_native_ship_intents)
@@ -870,6 +878,14 @@ func _build_hud() -> void:
 	sgdx_dx_dialog.dialog_autowrap = true
 	sgdx_dx_dialog.ok_button_text = "Close diagnostics"
 	hud.add_child(sgdx_dx_dialog)
+	_mining_panel = GROUP3_MINING_UI.new()
+	hud.add_child(_mining_panel)
+	_mining_panel.survey_requested.connect(func(): native_player_session.request_asteroid_survey())
+	_mining_panel.mine_requested.connect(func(): native_player_session.request_mine_one_tonne())
+	_mining_panel.fabricate_requested.connect(func(): native_player_session.request_fabricate_drill())
+	_mining_panel.fit_requested.connect(func(): native_player_session.request_fit_drill())
+	_mining_panel.unfit_requested.connect(func(): native_player_session.request_unfit_drill())
+	_mining_panel.power_requested.connect(func(on: bool): native_player_session.request_drill_power(on))
 
 	flight_panel = PanelContainer.new()
 	flight_panel.name = "FlightTelemetryPanel"
@@ -1054,6 +1070,14 @@ func _advance_native_handoff() -> void:
 		player.use_native_authority(_player_session_autoconnect)
 
 func _unhandled_input(event: InputEvent) -> void:
+	if event is InputEventKey and event.pressed and not event.echo and event.keycode in [KEY_J,KEY_M]:
+		if native_player_session != null and native_player_session.is_active():
+			if event.keycode == KEY_J:
+				native_player_session.request_asteroid_survey()
+			else:
+				native_player_session.request_mine_one_tonne()
+			get_viewport().set_input_as_handled()
+			return
 	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_F5:
 		_show_sgdx_diagnostics()
 		get_viewport().set_input_as_handled()
@@ -1376,6 +1400,9 @@ func _on_native_player_connection(connected: bool) -> void:
 	if connected:
 		_pilot_auto_seat_attempted = false
 	if not connected:
+		_clear_group3_survey_markers()
+		if is_instance_valid(_mining_panel):
+			_mining_panel.disconnect_native()
 		_verified_flight_ship.clear()
 		_verified_flight_rock.clear()
 		_verified_station_nav.clear()
@@ -1460,6 +1487,7 @@ func _on_native_ship_state(ship: Dictionary) -> void:
 			"vz":int(ship.get("vz", 0)), "outcome":int(ship.get("outcome", -1)),
 			"camera_exterior":is_instance_valid(exterior_camera) and exterior_camera.current})
 	_verified_flight_ship = ship.duplicate(true)
+	_clear_group3_survey_markers()
 	_verified_flight_rock.clear()
 	_verified_station_nav.clear()
 	_refresh_station_visual_target()
@@ -1501,12 +1529,68 @@ func _on_native_ship_state(ship: Dictionary) -> void:
 			speed, int(ship["heading"])]
 	_apply_technical_hud()
 
+func _on_group3_equipment_receipt(kind: String, request: int,
+		outcome: int, command_id: int) -> void:
+	if is_instance_valid(_mining_panel):
+		_mining_panel.note_original_outcome(kind,request,outcome,command_id)
+	if _physical_trace != null and _physical_trace.enabled():
+		_physical_trace.record("group3_original_equipment", {
+			"kind":kind,"request":request,"outcome":outcome,
+			"original_journal_command":command_id})
+
+func _clear_group3_survey_markers() -> void:
+	if is_instance_valid(_mining_survey_markers):
+		for child in _mining_survey_markers.get_children():
+			_mining_survey_markers.remove_child(child)
+			child.queue_free()
+
+func _on_group3_asteroid_survey(result: Dictionary) -> void:
+	# Native Godot parser already checks the SHEAD/SROW/SEND join. The UI
+	# repeats ship/tick/generation pairing before drawing one passive marker.
+	if (int(result.get("ship",-1)) != int(_verified_flight_ship.get("ship",-2)) or
+			int(result.get("tick",-1)) != int(_verified_flight_ship.get("tick",-2)) or
+			int(result.get("gen",-1)) != int(_verified_flight_ship.get("gen",-2))):
+		return
+	if is_instance_valid(_mining_panel):
+		_mining_panel.show_original_survey(result)
+	_clear_group3_survey_markers()
+	if not is_instance_valid(_mining_survey_markers):
+		return
+	for source in result.get("sources",[]):
+		var offset := Vector3(float(source["dx_mm"]),float(source["dy_mm"]),
+			float(source["dz_mm"]))
+		var dist := offset.length()/1000.0
+		if dist <= 30.0 or dist > VISUAL_QUALITY.distance_m(_visual_high_quality):
+			continue # 30m ROCK contact has its own independent renderer
+		var marker := MeshInstance3D.new()
+		marker.name = "VerifiedOriginalAsteroid_%d_NOT_RESOURCE_AUTHORITY" % int(source["rock"])
+		var mesh := SphereMesh.new()
+		mesh.radius = maxf(0.3,float(source["radius_mm"])/1000.0)
+		mesh.height = mesh.radius*2.0
+		mesh.radial_segments = 12
+		mesh.rings = 6
+		marker.mesh = mesh
+		marker.position = Vector3(offset.x/1000.0,offset.z/1000.0,-offset.y/1000.0)
+		var material_rock := StandardMaterial3D.new()
+		material_rock.albedo_color = Color(0.43,0.40,0.35)
+		material_rock.roughness = 0.93
+		marker.material_override = material_rock
+		_mining_survey_markers.add_child(marker)
+	if _physical_trace != null and _physical_trace.enabled():
+		_physical_trace.record("group3_original_source_survey", {
+			"ship":int(result.get("ship",0)),"tick":int(result.get("tick",-1)),
+			"count":result.get("sources",[]).size(),
+			"truncated":bool(result.get("truncated",false))})
+
 func _on_native_asteroid_contact(contact: Dictionary) -> void:
 	# Real original ship snapshot, never a client-spawned resource.
 	if native_player_session == null or not native_player_session.is_active():
 		return
 	_record_native_projection("ROCK", contact)
 	_verified_flight_rock = contact.duplicate(true)
+	if is_instance_valid(_mining_panel):
+		_mining_panel.show_original_ship(_verified_flight_ship,contact,
+			native_player_session != null and native_player_session._seated)
 	_refresh_native_flight_instruments()
 	if not is_instance_valid(native_asteroid_mesh):
 		return

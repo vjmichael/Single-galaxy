@@ -1,0 +1,85 @@
+name: Group3 Resource Collection and Refining Native Exact Head
+on:
+  push:
+    branches: [sg/group3-mining-industry-20261111]
+    paths: [".github/workflows/group3-native.yml", "src/**", "include/**", "tests/**", "CMakeLists.txt"]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: group3-native-exact-head
+  cancel-in-progress: true
+jobs:
+  group3-native:
+    name: Group3 resource refinery ${{ matrix.os }} exact-head original SQLite
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 55
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2022]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Exact source and accepted ancestry
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          git merge-base --is-ancestor b5d7057928d87d3cb1a05e07ff1d784a9425ad5f "$GITHUB_SHA"
+          git log -1 --format='GROUP3 PINNED SOURCE: %H %s'
+      - name: Install original SQLite on Linux
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libsqlite3-dev ninja-build
+      - name: Install original SQLite on Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $root=$env:VCPKG_INSTALLATION_ROOT
+          if(-not $root){$root='C:\vcpkg'}
+          & (Join-Path $root 'vcpkg.exe') install sqlite3:x64-windows --classic
+          if($LASTEXITCODE -ne 0){throw 'SQLite install failure'}
+          "SG_VCPKG_ROOT=$root" >> $env:GITHUB_ENV
+          "SG_TOOLCHAIN=$(Join-Path $root 'scripts\buildsystems\vcpkg.cmake')" >> $env:GITHUB_ENV
+          (Join-Path $root 'installed\x64-windows\bin') >> $env:GITHUB_PATH
+      - name: Configure + compile true native kernel and regression (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake -S . -B build/group3 -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON -DBUILD_BENCHMARKS=OFF
+          cmake --build build/group3 --parallel 2 --target galaxy_group3_fitted_mining_tests galaxy_group3_asteroid_survey_tests galaxy_group3_native_mining_seed galaxy_desktop_player_host galaxy_group3_station_custody_tests galaxy_industry01_native_tests galaxy_play_station03b_persistent_refinery_tests galaxy_play_station04a_original_asteroid_contact_tests galaxy_group3_station_identity_tests galaxy_desktop_station_host galaxy_group3_original_resource_seed
+      - name: Configure + compile true native kernel and regression (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          cmake -S . -B build/group3 -G "Visual Studio 17 2022" -A x64 -DBUILD_TESTING=ON -DBUILD_BENCHMARKS=OFF "-DCMAKE_TOOLCHAIN_FILE=$env:SG_TOOLCHAIN" -DVCPKG_TARGET_TRIPLET=x64-windows
+          if($LASTEXITCODE -ne 0){throw 'MSVC configuration failure'}
+          cmake --build build/group3 --config Release --parallel 2 --target galaxy_group3_fitted_mining_tests galaxy_group3_asteroid_survey_tests galaxy_group3_native_mining_seed galaxy_desktop_player_host galaxy_group3_station_custody_tests galaxy_industry01_native_tests galaxy_play_station03b_persistent_refinery_tests galaxy_play_station04a_original_asteroid_contact_tests galaxy_group3_station_identity_tests galaxy_desktop_station_host galaxy_group3_original_resource_seed
+          if($LASTEXITCODE -ne 0){throw 'MSVC compilation failure'}
+      - name: Original resource-to-refinery, owner/ledger/identity and prototype regression (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          ctest --test-dir build/group3 --no-tests=error -R '^(galaxy_group3_(original_(fitted_mining|asteroid_survey|station_custody)|native_mining_pipe)|galaxy_industry01_native_binding|galaxy_play_station03b_persistent_refinery|galaxy_play_station04a_original_asteroid_contact|galaxy_group3_station_material_identity|galaxy_play_station02_native_pipe|galaxy_play_station03c_refinery_native_pipe|galaxy_play_station04c_native_unload_pipe|galaxy_group3_original_ore_pilot_pipe)$' --output-on-failure --output-junit group3-linux.xml --timeout 120
+      - name: Original resource-to-refinery, owner/ledger/identity and prototype regression (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          ctest --test-dir build/group3 -C Release --no-tests=error -R '^(galaxy_group3_(original_(fitted_mining|asteroid_survey|station_custody)|native_mining_pipe)|galaxy_industry01_native_binding|galaxy_play_station03b_persistent_refinery|galaxy_play_station04a_original_asteroid_contact|galaxy_group3_station_material_identity|galaxy_play_station02_native_pipe|galaxy_play_station03c_refinery_native_pipe|galaxy_play_station04c_native_unload_pipe|galaxy_group3_original_ore_pilot_pipe)$' --output-on-failure --output-junit group3-windows.xml --timeout 120
+          if($LASTEXITCODE -ne 0){throw 'Original ore/refinery material/owner provenance, and existing prototype tests failed'}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: group3-native-${{ matrix.os }}-${{ github.sha }}
+          path: |
+            build/group3/Testing/Temporary/LastTest.log
+            build/group3/group3-*.xml
+          if-no-files-found: warn

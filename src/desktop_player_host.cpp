@@ -6,6 +6,7 @@
 // Every accepted MOVE commits world STEP, receipt, pose in one original transaction.
 #include "galaxy/NativeInteriorMovement.hpp"
 #include "galaxy/SpaceMiningContact.hpp"
+#include "galaxy/SpaceMiningSurvey.hpp"
 #include <charconv>
 #include <chrono>
 #include <cstdint>
@@ -204,6 +205,9 @@ static int run_host(int argc,char** argv){
         // propulsion. Existing SQLite worlds load their own original format;
         // they are never silently upgraded or reset by the desktop host.
         seed.enable_native_3d_physics();
+        // Preserve source-lot authority; future mining tool manufacturing
+        // is explicitly deferred and never installed at game genesis.
+        seed.enable_station_ore_provenance();
         PersistentWorld world(save_utf8,std::move(seed));
         InteriorMovement person(save_utf8,world);
         if(world.world().has_pending_cockpit_flight())
@@ -229,13 +233,26 @@ static int run_host(int argc,char** argv){
             const bool walking=fields.size()==6&&fields[0]=="MOVE";
             const bool seating=fields.size()==5&&fields[0]=="SEAT";
             const bool flying=fields.size()==5&&fields[0]=="FLIGHT";
-            if(!walking&&!seating&&!flying){deny(0,"malformed");continue;}
+            const bool mining=fields.size()==5&&fields[0]=="MINE";
+            const bool fitting=fields.size()==5&&(fields[0]=="FIT"||fields[0]=="UNFIT");
+            const bool fabricating=fields.size()==5&&fields[0]=="FAB";
+            const bool powering=fields.size()==5&&fields[0]=="POWER";
+            const bool surveying=fields.size()==5&&fields[0]=="SURVEY";
+            if(!walking&&!seating&&!flying&&!mining&&!fitting&&!fabricating&&!powering&&!surveying){
+                deny(0,"malformed");continue;
+            }
             std::uint64_t supplied_session=0,req=0,expected=0,desired=0;
             std::int64_t dx=0,dz=0;
             if(!number(fields[1],supplied_session)||!number(fields[2],req)||
                !number(fields[3],expected)||
                (walking&&(!number(fields[4],dx)||!number(fields[5],dz)))||
-               (seating&&(!number(fields[4],desired)||desired>1))){
+               ((seating||fitting||fabricating||powering||mining||surveying)&&
+                (!number(fields[4],desired)||
+                 (seating&&desired>1)||
+                 (fitting&&desired!=1)||
+                 (fabricating&&desired!=1)||
+                 (powering&&desired>1)||
+                 (surveying&&desired!=1)))){
                 deny(0,"bad-integer");continue;
             }
             if(supplied_session!=session){deny(req,"session");continue;}
@@ -268,6 +285,110 @@ static int run_host(int argc,char** argv){
                 last_move=now;
                 galaxy::server_dx::committed_breadcrumb(world.world().tick(),world.generation());
                 send_ship(session,req,command_id,*outcome,person.flight_state(kLocalOwner));
+                send_rock_contact(session,req,world,previous.ship);
+                send_original_station_nav(session,req,world,previous.ship);
+                continue;
+            }
+            if(surveying){
+                if(!previous.seated || expected!=previous.seat_sequence ||
+                   !world.world().find(previous.ship) ||
+                   req>10000){
+                    deny(req,"survey-requires-verified-original-pilot");continue;
+                }
+                // PLAY-11: the 50m geological survey requires an actual
+                // installed, effective native survey scanner. Never infer
+                // sensor capability from the 8.5km Godot draw distance.
+                const auto* survey_ship=world.world().find(previous.ship);
+                if(!survey_ship ||
+                   !ship_sensors::powered_survey_scanner(world.world(),*survey_ship)){
+                    deny(req,"no-powered-original-survey-scanner");continue;
+                }
+                const auto rows=mining_survey::nearby_original_asteroids(
+                    world.world(),kLocalOwner,previous.ship);
+                // One bounded observation across a stable source generation;
+                // not a mining authorization, world step or hidden ore reward.
+                const auto tick=world.world().tick();
+                const auto generation=world.generation();
+                const bool truncated=!rows.empty() && rows.front().scan_truncated;
+                std::cout<<"SHEAD|1|"<<session<<'|'<<req<<'|'<<previous.ship<<'|'
+                         <<tick<<'|'<<generation<<'|'<<rows.size()<<'|'
+                         <<(truncated?1:0)<<'\n';
+                for(const auto& row:rows){
+                    std::cout<<"SROW|1|"<<session<<'|'<<req<<'|'<<previous.ship<<'|'
+                             <<tick<<'|'<<generation<<'|'<<row.rock<<'|'
+                             <<row.x_mm<<'|'<<row.y_mm<<'|'<<row.z_mm<<'|'
+                             <<row.radius_mm<<'|'<<row.ore_tonnes<<'|'
+                             <<unsigned(row.taxonomy)<<'|'
+                             <<(row.geological_detail?1:0)<<'\n';
+                }
+                std::cout<<"SEND|1|"<<session<<'|'<<req<<'|'<<previous.ship<<'|'
+                         <<tick<<'|'<<generation<<'\n'<<std::flush;
+                if(!std::cout)throw std::runtime_error("native survey pipe closed");
+                last_move=now;
+                continue;
+            }
+            if(mining||fitting||fabricating||powering){
+                if(!previous.seated || expected!=previous.seat_sequence ||
+                   !world.world().player_people().count(kLocalOwner)){
+                    deny(req,"not-seated-or-stale-seat");continue;
+                }
+                if(req>10000){deny(req,"equipment-request-budget");continue;}
+                const auto* ship_entity=world.world().find(previous.ship);
+                if(!ship_entity || ship_entity->type!=EntityType::Ship ||
+                   ship_entity->owner_id!=kLocalOwner){
+                    deny(req,"missing-owned-ship");continue;
+                }
+                Command c{};
+                c.id=flight_base|req;
+                c.sequence=c.id;
+                c.execute_tick=world.world().tick()+1;
+                c.issuer=kLocalOwner;c.actor=previous.ship;
+                if(mining){
+                    // Client-provided rock is only a selector. The ORIGINAL
+                    // physical ship/rock proximity sensor independently
+                    // identifies it before the simulation checks hull range.
+                    const auto contact=space_mining_view::nearest_original_asteroid(
+                        world.world(),kLocalOwner,previous.ship);
+                    if(!contact || contact->rock!=desired) {
+                        deny(req,"no-matching-original-rock-contact");continue;
+                    }
+                    // The authoritative original Simulation::mine_status
+                    // performs ALL actual eligibility, position, inventory
+                    // and (in opt-in v126 only) fitted-tool power checks.
+                    // A rendering-side advisory is never a second miner.
+                    c.action=Action::Mine;c.target=desired;c.amount=1;
+                }else if(fitting){
+                    c.action=Action::ConfigureMiningTool;
+                    c.amount=fields[0]=="FIT"?1:-1;
+                }else if(fabricating){
+                    // The original action consumes 2 finite refined tonnes;
+                    // a generic cockpit cannot fabricate tools in flight.
+                    if(ship_entity->dock_state!=DockState::Docked){
+                        deny(req,"fabrication-requires-docked-ship");continue;
+                    }
+                    c.action=Action::FabricateModule;c.amount=1;
+                }else{
+                    // Power request cannot choose an arbitrary rack: the
+                    // original installed tool determines its actual slot.
+                    std::uint8_t slot=2;
+                    for(std::uint8_t i=0;i<2;++i)
+                        if(ship_entity->fitting.hardpoints[i]==
+                           space_mining_view::kMiningToolHardpoint)slot=i;
+                    if(slot>=2){deny(req,"no-installed-original-drill");continue;}
+                    c.action=Action::SetHardpointPower;
+                    c.amount=static_cast<std::int64_t>(slot)*2+
+                             (desired==1?1:0);
+                }
+                if(!world.submit(c)){deny(req,"original-equipment-command-not-authorized");continue;}
+                const auto earlier=world.world().events().size();
+                world.step();
+                const auto& events=world.world().events();
+                if(events.size()<=earlier || events.back().command_id!=c.id)
+                    throw std::runtime_error("original equipment STEP lacks exact immutable command receipt");
+                const auto outcome=events.back().result;
+                galaxy::server_dx::committed_breadcrumb(world.world().tick(),world.generation());
+                last_move=now;
+                send_ship(session,req,c.id,outcome,person.flight_state(kLocalOwner));
                 send_rock_contact(session,req,world,previous.ship);
                 send_original_station_nav(session,req,world,previous.ship);
                 continue;

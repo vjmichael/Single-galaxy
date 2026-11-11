@@ -3,6 +3,7 @@
 // This code has NO mutation authority. Actor/lot validation and SQLite writes
 // are performed only via PersistentWorld::submit/step by the native host.
 #include "galaxy/Persistence.hpp"
+#include "galaxy/StationMineralIdentityAudit.hpp"
 #include <algorithm>
 #include <cstdint>
 #include <limits>
@@ -57,6 +58,17 @@ inline std::string make_snapshot(const PersistentWorld& world,
             throw std::runtime_error("invalid original station mineral stock");
         mineral_total+=kg;
         if(kg)++mineral_count;
+    }
+    if(present){
+        // Validate the actual stored concentrate identity and kilogram unit
+        // against the pre-existing original INDUSTRY-01 legacy registry.
+        // This is a *read-only* audit: NO candidate item conversion, no
+        // phantom workshop materials and no second inventory.
+        const auto audit=station_material_identity::audit_original_station(
+            world.world(),station,owner);
+        if(!audit || audit->stock_kilograms!=mineral_total ||
+           audit->stock.size()!=mineral_count)
+            throw std::runtime_error("unrecognized original station mineral identity");
     }
     std::size_t visible=0, all=0;
     for(const auto& [id,lot]:world.world().station_ore_lots()){
