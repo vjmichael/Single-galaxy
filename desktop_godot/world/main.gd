@@ -113,6 +113,7 @@ func _ready() -> void:
 	material.albedo_color = STATION_GRAY
 	material.roughness = 1.0
 	material.metallic = 0.0
+	COLONY_DOCK_LAYOUT.apply_station_material(material)
 	ship_material = StandardMaterial3D.new()
 	ship_material.albedo_color = SHIP_WHITE
 	ship_material.roughness = 0.78
@@ -267,6 +268,7 @@ func _advance_world_reset() -> void:
 	_verified_flight_ship.clear()
 	_verified_flight_rock.clear()
 	_verified_station_nav.clear()
+	_refresh_station_visual_target()
 	_show_native_location(true)
 	var archive: String = str(archived.get("archive", ""))
 	_on_native_player_status("Old original world archived (not deleted): " +
@@ -355,7 +357,9 @@ func _setup_environment() -> void:
 	var sun := DirectionalLight3D.new()
 	sun.rotation_degrees = Vector3(-52.0, -38.0, 0.0)
 	sun.light_energy = 1.5
-	sun.shadow_enabled = false
+	# Actual Radeon quality: geometry shadows on the physical GPU, with
+	# a lower-cost Balanced fallback for CPU/VM/headless acceptance.
+	sun.shadow_enabled = _visual_high_quality
 	add_child(sun)
 
 func _solid_box(label: String, pos: Vector3, dimensions: Vector3) -> StaticBody3D:
@@ -761,7 +765,7 @@ func _build_hud() -> void:
 	contents.add_theme_constant_override("separation", 4)
 	panel.add_child(contents)
 	var title := Label.new()
-	title.text = "SINGLE-GALAXY  |  COLONY / DEPARTURES  |  F3 DETAILS"
+	title.text = "SINGLE-GALAXY  |  COLONY / DEPARTURES  |  F3 HUD  F4 VIEW  F6 NEW GAME"
 	title.add_theme_font_size_override("font_size", 17)
 	contents.add_child(title)
 	scope_label = Label.new()
