@@ -7,6 +7,7 @@
 #include "galaxy/DockLogistics.hpp"
 #include "galaxy/Dock04Traffic.hpp"
 #include "galaxy/Dock05Voyage.hpp"
+#include "galaxy/Dock05RegionalDemand.hpp"
 #include "galaxy/StationLaunch.hpp"
 #include "galaxy/StationRefineryProtocol.hpp"
 #include <algorithm>
@@ -112,6 +113,7 @@ static int run_host(int argc,char** argv){
   dock::Ledger dock_ledger(save_utf8);
   dock04::Traffic dock_traffic(save_utf8);
   dock05::Routes dock_routes(save_utf8);
+  dock05::RegionalPopulation dock_population(save_utf8);
   const auto session=epoch();
   const auto receipt_prefix=(epoch()&((std::uint64_t{1}<<45)-1))<<14;
   std::uint64_t latest_request=0,budget=0;
@@ -146,17 +148,22 @@ static int run_host(int argc,char** argv){
    const bool dock_destinations=f.size()==5&&f[0]=="DOCKDESTS";
    const bool dock_route=f.size()==7&&f[0]=="DOCKROUTE";
    const bool dock_cancel=f.size()==5&&f[0]=="DOCKCANCEL";
+   const bool dock_region_view=f.size()==5&&f[0]=="DOCKREGIONS";
+   const bool dock_bind=f.size()==8&&f[0]=="DOCKBIND";
    const bool dock_action=dock_view||dock_assign||dock_release||
                           dock_passenger||dock_freight||dock_work||
-                          dock_destinations||dock_route||dock_cancel;
+                          dock_destinations||dock_route||dock_cancel||
+                          dock_region_view||dock_bind;
    if(!walking&&!boarding&&!exiting&&!view&&!refine&&!unload&&!colony_console&&!population&&!dock_action){deny(0,"malformed");continue;}
-   std::uint64_t requested_session=0,req=0,expected=0,ship=0,quantity=0,extra=0;
+   std::uint64_t requested_session=0,req=0,expected=0,
+                 ship=0,quantity=0,extra=0,more=0;
    std::int64_t dx=0,dz=0;
    if(!parse(f[1],requested_session)||!parse(f[2],req)||!parse(f[3],expected)||
       (walking&&(!parse(f[4],dx)||!parse(f[5],dz)))||
       (!walking&&!parse(f[4],ship))||
-      ((dock_freight||dock_route)&&!parse(f[5],quantity))||
-      (dock_route&&!parse(f[6],extra))){deny(0,"integer");continue;}
+      ((dock_freight||dock_route||dock_bind)&&!parse(f[5],quantity))||
+      ((dock_route||dock_bind)&&!parse(f[6],extra))||
+      (dock_bind&&!parse(f[7],more))){deny(0,"integer");continue;}
    if(requested_session!=session){deny(req,"session");continue;}
    if(req<=latest_request||req>10000){deny(req,"replay");continue;}
    latest_request=req;
@@ -212,8 +219,36 @@ static int run_host(int argc,char** argv){
       if(!std::cout)throw std::runtime_error("dock destination pipe closed");
       last=now;continue;
     }
+    if(dock_region_view){
+      const auto candidates=dock_population.options();
+      const auto index=ship;
+      const bool selected=index>=1 && index<=candidates.size();
+      const auto candidate=selected?candidates[index-1]:
+          dock05::PopulationOption{};
+      const auto label=[](const std::string& name){
+        return name.empty()?std::string("none"):name.substr(0,12);
+      };
+      std::cout<<"DREG|1|"<<session<<'|'<<req<<'|'
+               <<world.world().tick()<<'|'<<world.generation()
+               <<'|'<<local_station<<'|'<<candidates.size()
+               <<'|'<<(selected?index:0)
+               <<'|'<<candidate.population<<'|'
+               <<candidate.authority_generation<<'|'
+               <<candidate.revision<<'|'
+               <<label(candidate.scope)<<'|'<<label(candidate.colony)
+               <<'\n'<<std::flush;
+      if(!std::cout)throw std::runtime_error("regional population pipe closed");
+      last=now;continue;
+    }
     std::uint64_t result=0;
-    if(dock_route){
+    if(dock_bind){
+      if(more>1000000 || !dock_population.bind(
+          world,local_station,kOwner,ship,quantity,extra,
+          static_cast<std::uint32_t>(more))){
+        deny(req,"regional-source-stale-or-not-authorized");continue;
+      }
+      result=10;
+    }else if(dock_route){
       // Physical station owner authorizes one existing passenger ferry and
       // one actual receiving berth, never remote direct stock or NPC edits.
       const auto ferry=extra?extra:dock_routes.first_boarded_ferry(
@@ -415,6 +450,10 @@ static int run_host(int argc,char** argv){
     const auto data=dock_ledger.snapshot(world.world(),local_station,kOwner);
     const auto traffic=dock_traffic.snapshot(world.world(),local_station,kOwner);
     const auto trips=dock_routes.status(local_station,kOwner);
+    const auto cold=dock_population.projection(
+        world.world(),local_station,kOwner,
+        std::min<std::uint64_t>(128,
+            traffic.passenger_gangways*dock04::Traffic::kFerrySeats));
     std::cout<<"DOCK|1|"<<session<<'|'<<req<<'|'<<world.world().tick()
              <<'|'<<world.generation()<<'|'<<local_station
              <<'|'<<data.staff<<'|'<<data.passengers<<'|'<<data.freight_tonnes
@@ -429,6 +468,8 @@ static int run_host(int argc,char** argv){
              <<'|'<<trips.active<<'|'<<trips.delivered
              <<'|'<<trips.held<<'|'<<trips.passengers_travelling
              <<'|'<<trips.visitors_arrived<<'|'<<trips.reviewable_route
+             <<'|'<<cold.population<<'|'<<cold.demand
+             <<'|'<<(cold.source_bound?1:0)
              <<'\n'<<std::flush;
     if(!std::cout)throw std::runtime_error("dock service response pipe closed");
     last=now;continue;
