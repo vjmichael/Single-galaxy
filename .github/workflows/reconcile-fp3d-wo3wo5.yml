@@ -50,6 +50,8 @@ jobs:
           if [ "$result" -ne 0 ]; then
             echo "Explicit merge conflicts: preserved both accepted branches; no synthetic merge commit." >&2
             cat reconciliation-evidence/unmerged-paths.txt >&2
+            git diff --cc >reconciliation-evidence/conflict-hunks.diff
+            sed -n '1,400p' reconciliation-evidence/conflict-hunks.diff >&2
             exit 1
           fi
           git diff --check
