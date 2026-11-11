@@ -21,7 +21,7 @@ bool Simulation::station_dock_worker_transfer(
        vessel->type!=EntityType::Ship || vessel->owner_id!=owner ||
        vessel->dock_station!=station || vessel->dock_state!=DockState::Docked ||
        vessel->system_id!=berth->system_id || crew==colony_ships_.end() ||
-       crew->second.crew<=1 || it==npcs_.end())return false;
+       (disembark && crew->second.crew<=1) || it==npcs_.end())return false;
     auto& npc=it->second;
     if(npc.home_ship!=ship || npc.role!=NpcRole::Ship ||
        npc.transport_id || npc.mentor_id ||
