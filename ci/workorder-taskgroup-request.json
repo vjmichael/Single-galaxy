@@ -2,6 +2,6 @@
   "schema": "SG-WORKORDER-GATE-01",
   "task_group": "WO5",
   "pr_number": 92,
-  "source_sha": "3d4493ecc69481e70aa4583bfd5926f2afb0d78a",
-  "note": "Pinned original pre-v109 historical native producer source now 23bad9be38936d61b8c29b5be5f3900bec87fa6d, including actual 2026-11-10 typed-cyber compiler repair, without altering historical source kernel. Capture native v85 SQLite at original committed visitor receipt; attest original native executable and SQLite SHA-256, source test blob, original operation journal+genesis; assert real v86 in-memory migration retains ColonyShip legal homes and denies invented planet homes, independent SQLite restart, full WO3/WO4/WO5 33 CTests on Windows/Ubuntu."
+  "source_sha": "bb3907b4c6457a1a7c4c12abf630201dc6f0b96c",
+  "note": "WO3-F historical original pre-v109 source 23bad9be, observer-only capture via SQLite online backup of real committed v85 source journal (old vintage recover_copy unable to reconstruct same-tick checkpoint); modern independent verified PersistentWorld::recover_copy, original native legal-home v86 upgrade, precise binary/db SHA256 attestation, fail-closed corrupt/forged state checks. Rerun exact WO5 stack head 33 CTests Windows/Linux."
 }
