@@ -400,7 +400,7 @@ func _accept_dock(f: PackedStringArray) -> void:
 	var source_bound := int(f[31])
 	var expected_result := {"VIEW":[0],"ASSIGN":[1],"RELEASE":[2],
 		"PASS":[3],"FREIGHT":[4],"WORK":[5,6,9],
-		"ROUTE":[7],"CANCEL":[8],"BIND":[10]}
+		"ROUTE":[7],"CANCEL":[8],"BIND":[10],"RENEW":[11]}
 	if session != _session or req != _pending or tick < _tick or generation < _generation or \
 			int(_person.get("state",-1)) != 4 or station != int(_person.get("station",-1)) or \
 			staff < 0 or staff > 16 or passengers < 0 or passengers > 128 or \
@@ -446,6 +446,7 @@ func _accept_dock(f: PackedStringArray) -> void:
 	_status("Dock assignment changed" if result in [1,2] else
 		"Freight service updated" if result in [4,5] else
 		"Passenger booked against an actual local ferry berth" if result==3 else
+		"Dock shift extended for a bounded period" if result==11 else
 		"Verified regional population source linked" if result==10 else
 		"Ferry journey scheduled from original ships" if result==7 else
 		"Unstarted ferry route withdrawn" if result==8 else
@@ -476,6 +477,9 @@ func request_dock_status() -> bool:
 
 func assign_available_dock_worker() -> bool:
 	return _submit_dock("ASSIGN",0)
+
+func renew_available_dock_shift() -> bool:
+	return _submit_dock("RENEW",0)
 
 func end_dock_worker_shift() -> bool:
 	return _submit_dock("RELEASE",0)
@@ -525,7 +529,7 @@ func _submit_dock(kind: String, source: int, quantity: int = 0,
 		return false
 	var op := {"VIEW":"DOCKVIEW","ASSIGN":"DOCKASSIGN",
 		"RELEASE":"DOCKRELEASE","PASS":"DOCKPASS","FREIGHT":"DOCKFREIGHT",
-		"WORK":"DOCKWORK","DESTS":"DOCKDESTS",
+		"WORK":"DOCKWORK","DESTS":"DOCKDESTS","RENEW":"DOCKRENEW",
 		"ROUTE":"DOCKROUTE","CANCEL":"DOCKCANCEL",
 		"REGIONS":"DOCKREGIONS","BIND":"DOCKBIND"}.get(kind,"")
 	if op.is_empty():
