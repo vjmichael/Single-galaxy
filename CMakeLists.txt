@@ -2219,6 +2219,13 @@ if(BUILD_TESTING)
 endif()
 
 # PLAY-STATION-02 standalone native station/boarding test fixture.
+# Dock services are compiled into the original native station host.
+# This focused source test is staged for the eventual consolidated native gate.
+if(BUILD_TESTING)
+  add_executable(galaxy_dock_logistics_tests tests/DockLogisticsTests.cpp)
+  target_link_libraries(galaxy_dock_logistics_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_dock_logistics_baseline COMMAND galaxy_dock_logistics_tests)
+endif()
 add_executable(galaxy_desktop_station_host src/desktop_station_host.cpp)
 target_link_libraries(galaxy_desktop_station_host PRIVATE galaxy_kernel)
 if(BUILD_TESTING AND Python3_Interpreter_FOUND)
