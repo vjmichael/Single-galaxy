@@ -294,6 +294,14 @@ static int run_host(int argc,char** argv){
                    req>10000){
                     deny(req,"survey-requires-verified-original-pilot");continue;
                 }
+                // PLAY-11: the 50m geological survey requires an actual
+                // installed, effective native survey scanner. Never infer
+                // sensor capability from the 8.5km Godot draw distance.
+                const auto* survey_ship=world.world().find(previous.ship);
+                if(!survey_ship ||
+                   !ship_sensors::powered_survey_scanner(world.world(),*survey_ship)){
+                    deny(req,"no-powered-original-survey-scanner");continue;
+                }
                 const auto rows=mining_survey::nearby_original_asteroids(
                     world.world(),kLocalOwner,previous.ship);
                 // One bounded observation across a stable source generation;
