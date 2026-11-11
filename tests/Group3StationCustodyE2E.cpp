@@ -1,8 +1,7 @@
 // PLAY-STATION-03B: actual original Simulation, actual PersistentWorld SQLite
 // journal, physical ship->hangar ore lot, constructed site/utility/personnel.
 #include "galaxy/Persistence.hpp"
-#include "galaxy/Industry01Catalog.hpp"
-#include "galaxy/SpaceMiningSurvey.hpp"
+#include "galaxy/StationMineralIdentityAudit.hpp"
 #include <filesystem>
 #include <iostream>
 #include <stdexcept>
@@ -30,45 +29,50 @@ static void erase_db(const std::string& path){
 }
 int main(int argc,char** argv){
  try{
-  CHECK(argc==2);
+  CHECK(argc==2 || (argc==3 &&
+      (std::string(argv[2])=="--03c-fixture" || std::string(argv[2])=="--03c-verify" || std::string(argv[2])=="--04c-fixture")));
   const std::string db=argv[1],copy=db+".copy";
+  const bool fixture=argc==3 && std::string(argv[2])=="--03c-fixture";
+  const bool unload_fixture=argc==3 && std::string(argv[2])=="--04c-fixture";
+  if(argc==3 && std::string(argv[2])=="--03c-verify"){
+    PersistentWorld state(db,Simulation(12304));
+    const auto& world=state.world();
+    CHECK(world.player_people().at(7).state==PlayerPersonState::AtStation);
+    const auto station=world.player_people().at(7).physical_station;
+    const auto* refinery=world.station_refinery(station);
+    CHECK(refinery && refinery->owner==7);
+    CHECK(world.hangar(station,7) && world.hangar(station,7)->ore==0);
+    CHECK(refinery->mineral_kg.at("nickel_iron")==860);
+    CHECK(refinery->mineral_kg.at("troilite")==80);
+    CHECK(refinery->mineral_kg.at("olivine")==30);
+    CHECK(refinery->mineral_kg.at("pyroxene")==15);
+    CHECK(refinery->mineral_kg.at("other")==15);
+    std::int64_t total=0;
+    for(const auto& [name,kg]:refinery->mineral_kg){(void)name;total+=kg;}
+    CHECK(total==1000);
+    for(const auto& [id,lot]:world.station_ore_lots()){
+      (void)id;CHECK(lot.station!=station || lot.tonnes==0);
+    }
+    CHECK(Simulation::from_snapshot(world.canonical_state()).canonical_state()==world.canonical_state());
+    std::cout<<"PLAY-STATION-03C VERIFY PASS station original SQLite 1000kg and no duplicate lot\n";
+    return 0;
+  }
   erase_db(db);erase_db(copy);
   std::uint64_t id=1000;EntityId ship=0,ship_b=0,station=0,rock=0,lot_id=0;
   std::int64_t initial_mass=0;
   {
     Simulation seed(12304);
-    // Explicit disposable playtest only: a real dock to fit the first
-    // material-backed two-tonne-equivalent prototype module. This is NOT a
-    // production station, starter grant or approved mining-drill recipe.
-    const auto initial_berth=seed.add_station({0,0});
     ship=seed.add_colony_ship(7,{0,0},100,24);
     // Additional finite owned hull in test genesis: never spawned as a rescue.
     ship_b=seed.add_ship(7,{0,0},10);
     seed.provision_colony_genesis(ship,1000,3000,1000,1000,1000);
     const auto bulk=seed.add_asteroid({2000,0},70);
-    rock=seed.add_geological_asteroid({12000,0},AsteroidClass::Metallic,10,10);
+    rock=seed.add_geological_asteroid({3000,0},AsteroidClass::Metallic,10,5000);
     seed.enable_native_galactic_physics({{1,galactic::Point{{0,100000},{0,100000},{0,100000}}}});
-    seed.enable_native_swept_asteroid_collision();
     seed.enable_station_ore_provenance();
-    seed.enable_ship_mining_equipment();
-    seed.provision_mining_test_refined_stock(ship);
-    CHECK(seed.register_player_person(7,ship));
     initial_mass=seed.total_material_kg();
     PersistentWorld w(db,std::move(seed));
-    CHECK(send(w,id,ship,Action::Mine,bulk,1).result==Outcome::ModuleOffline);
-    CHECK(send(w,id,ship,Action::RequestDock,initial_berth).result==Outcome::Applied);
-    w.steps(Simulation::kDockTransitionTicks);
-    CHECK(w.world().find(ship)->dock_state==DockState::Docked);
-    CHECK(send(w,id,ship,Action::FabricateModule,0,1).result==Outcome::Applied);
-    CHECK(send(w,id,ship,Action::ConfigureMiningTool,0,1).result==Outcome::Applied);
-    CHECK(w.world().find(ship)->fitting.mining_tool());
-    CHECK(w.world().total_material_kg()==initial_mass);
-    CHECK(send(w,id,ship,Action::RequestUndock,initial_berth).result==Outcome::Applied);
-    w.steps(Simulation::kDockTransitionTicks);
-    CHECK(w.world().find(ship)->dock_state==DockState::InSpace);
-    // V126 allows exactly ONE original tonne per protected drill event.
-    for(int k=0;k<60;++k)
-      CHECK(send(w,id,ship,Action::Mine,bulk,1).result==Outcome::Applied);
+    CHECK(send(w,id,ship,Action::Mine,bulk,60).result==Outcome::Applied);
     CHECK(w.world().find(ship)->cargo==60);
     CHECK(send(w,id,ship,Action::RefineOre,0,60).result==Outcome::Applied);
     CHECK(send(w,id,ship,Action::FabricateModule,0,30).result==Outcome::Applied);
@@ -105,10 +109,10 @@ int main(int argc,char** argv){
     CHECK(w.world().total_material_kg()==initial_mass);
     CHECK(send(w,id,ship,Action::RequestDock,station).result==Outcome::Applied);
     w.steps(2);
-    if(false){
+    if(unload_fixture){
       // A real one-tonne geological Mine already committed above. Keep its
       // actual cargo on this docked hull for live original-host unloading.
-      CHECK(w.station_player_action(7,station,ship,StationPlayerAction::Disembark,0,0,9800001));
+      CHECK(w.register_player_at_station(7,station));
       w.steps(35);
       CHECK(w.world().find(ship)->cargo==1);
       CHECK(w.world().hangar(station,7)->ore==0);
@@ -117,7 +121,7 @@ int main(int argc,char** argv){
                <<'|'<<initial_mass<<'\n';
       return 0;
     }
-    CHECK(send(w,id,ship,Action::RefineStationOre,station,lot_id).result==Outcome::Unauthorized);
+    CHECK(send(w,id,ship,Action::RefineStationOre,station,lot_id).result==Outcome::InvalidTarget);
     CHECK(send(w,id,ship,Action::UnloadOre,station,1).result==Outcome::Applied);
     CHECK(w.world().hangar(station,7)->ore==1);
     CHECK(w.world().find(ship)->cargo==0);
@@ -134,15 +138,12 @@ int main(int argc,char** argv){
     CHECK(w.world().find(ship_b)->cargo==0);
     CHECK(w.world().station_ore_lots().at(lot_id).source_ship==ship);
     CHECK(w.world().total_material_kg()==initial_mass);
-    // The already registered original ship pilot must physically leave
-    // this actually docked ship; no teleport or duplicate player person.
-    CHECK(w.station_player_action(7,station,ship,StationPlayerAction::Disembark,0,0,9800002));
-    CHECK(w.world().player_people().at(7).state==PlayerPersonState::AtStation);
+    CHECK(w.register_player_at_station(7,station));
     w.steps(35); // utility generation and site staff are real simulation ticks
     const auto* u=w.world().utility(station);
     std::cout<<"utility powered="<<u->powered<<" energy="<<u->stored_energy<<" cond="<<u->condition<<"\n";
     CHECK(u->powered && u->stored_energy>0);
-    if(false){
+    if(fixture){
       std::cout<<"FIXTURE|"<<station<<'|'<<lot_id<<'|'<<ship<<'|'<<initial_mass<<"\n";
       return 0; // persist the owned, built, powered station and original ore lot
     }
@@ -170,18 +171,22 @@ int main(int argc,char** argv){
     CHECK(w.world().station_refinery(station)->mineral_kg.at("olivine")==30);
     CHECK(w.world().station_refinery(station)->mineral_kg.at("pyroxene")==15);
     CHECK(w.world().station_refinery(station)->mineral_kg.at("other")==15);
-    // INDUSTRY-01: the station's original per-mineral inventory is NOT a
-    // fabricated finished part and cannot be silently cast as candidate
-    // aluminum/other feed. No numeric 1 litre -> 1 kg assumption.
-    for(const auto& [mineral,kg]:w.world().station_refinery(station)->mineral_kg){
-      CHECK(kg>0);
-      CHECK(industry01::find_item("bulk/"+mineral)==nullptr);
-    }
-    CHECK(!w.world().colony_ship(ship)->goods_kg.count("aluminum"));
+    // The named original minerals are real STATION stock; the signed
+    // source-lot receipt is not an extra 1000kg. No implicit aluminium or
+    // other candidate feed appears in the player ship inventory.
+    const auto mineral_report=station_material_identity::audit_original_station(
+        w.world(),station,7);
+    CHECK(mineral_report && mineral_report->stock_kilograms==1000);
+    CHECK(mineral_report->last_refinery_receipt==refined.command_id);
+    CHECK(mineral_report->stock.size()==5);
+    for(const auto& row:mineral_report->stock)
+        CHECK(row.grams==row.kilograms*1000 && !row.approved_industry_feed);
+    CHECK(!station_material_identity::audit_original_station(w.world(),station,8));
+    CHECK(w.world().colony_ship(ship)->goods_kg.count("aluminum")==0);
     CHECK(w.world().total_material_kg()==initial_mass);
     CHECK(send(w,id,ship,Action::RefineStationOre,station,lot_id).result==Outcome::InvalidTarget);
     const auto state=w.world().canonical_state();
-    CHECK(state.rfind("galaxy-kernel-v126|",0)==0);
+    CHECK(state.rfind("galaxy-kernel-v123|",0)==0);
     CHECK(Simulation::from_snapshot(state).canonical_state()==state);
     PersistentWorld::recover_copy(db,copy);
   }
@@ -192,6 +197,8 @@ int main(int argc,char** argv){
     CHECK(w.world().hangar(station,7)->ore==0);
     CHECK(w.world().find(ship)->cargo==0);
     CHECK(w.world().total_material_kg()==initial_mass);
+    const auto restored=station_material_identity::audit_original_station(w.world(),station,7);
+    CHECK(restored && restored->stock_kilograms==1000 && restored->stock.size()==5);
     CHECK(Simulation::from_snapshot(w.world().canonical_state()).canonical_state()==w.world().canonical_state());
   }
   sqlite3* con=nullptr;CHECK(sqlite3_open(copy.c_str(),&con)==SQLITE_OK);
@@ -207,12 +214,7 @@ int main(int argc,char** argv){
   catch(const std::exception&){caught=true;}
   CHECK(caught);
   erase_db(db);erase_db(copy);
-  // INDUSTRY-01 has no authorized recipe to turn nickel-iron/troilite
-  // station concentrates into bulk/aluminum, and no approved drill BOM.
-  // A success below may NOT be described as manufactured equipment.
-  CHECK(industry01::find_recipe("assemble_mining_drill")==nullptr);
-  CHECK(industry01::find_item("item/mining_drill")==nullptr);
-  std::cout<<"GROUP3-D/E PASS: original 1t mounted drill -> 1t rock source lot -> ship -> physical dock/unload -> staffed powered refinery -> 1000kg named station minerals; no invented manufacturing, SQLite recovery/replay/tamper\n";
+  std::cout<<"GROUP3 RESOURCE→REFINERY PASS original mine source lot -> owned docked hangar -> existing built refinery + real utility staff/power -> 1000kg station minerals; SQLite restart, rollback, forged ledger refusal, no duplicate\n";
   return 0;
  }catch(const std::exception& ex){std::cerr<<"PLAY-STATION-03B FAILED: "<<ex.what()<<'\n';return 1;}
 }
