@@ -2235,6 +2235,13 @@ endif()
 add_executable(galaxy_desktop_station_host src/desktop_station_host.cpp)
 target_link_libraries(galaxy_desktop_station_host PRIVATE galaxy_kernel)
 if(BUILD_TESTING AND Python3_Interpreter_FOUND)
+  add_test(NAME galaxy_dock03_original_native_pipe
+    COMMAND ${Python3_EXECUTABLE}
+      ${CMAKE_CURRENT_SOURCE_DIR}/tests/Dock03NativeStationPipe.py
+      $<TARGET_FILE:galaxy_desktop_station_host>)
+  set_tests_properties(galaxy_dock03_original_native_pipe PROPERTIES TIMEOUT 75)
+endif()
+if(BUILD_TESTING AND Python3_Interpreter_FOUND)
   add_test(NAME galaxy_play_station02_native_pipe
     COMMAND ${Python3_EXECUTABLE}
       ${CMAKE_CURRENT_SOURCE_DIR}/tests/PLAY_STATION_02_DesktopPipeTests.py
