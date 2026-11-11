@@ -10235,6 +10235,56 @@ bool PersistentWorld::station_dock_worker_transfer(
     return true;
 }
 
+bool PersistentWorld::station_visitor_transfer(
+    PlayerId owner,EntityId receiver,EntityId station,std::uint64_t npc,
+    std::uint64_t voyage,bool ashore,std::uint64_t receipt,FailPoint fail){
+    if(!receipt || receipt>=static_cast<std::uint64_t>(
+           std::numeric_limits<sqlite3_int64>::max()))return false;
+    // Original voyage is independently completed BEFORE a visitor can be
+    // entered into the destination physical station. Never infer arrival
+    // from a ticket, AI intention or flight's predicted ETA.
+    auto preview=world_;
+    if(!preview.station_visitor_transfer(owner,receiver,station,npc,voyage,ashore) ||
+       store_->named_worker_has_dependent_link(npc))return false;
+    const auto expected=generation_;
+    step_with_cell_worker(nullptr,fail,
+        [&](sqlite3* db,std::uint64_t generation){
+            if(generation!=expected+1 ||
+               store_->named_worker_has_dependent_link(npc))
+                throw std::runtime_error("visitor custody or family authority changed");
+            run(db,"CREATE TABLE IF NOT EXISTS sg_dock05_visitor_moves("
+                   "receipt INTEGER PRIMARY KEY CHECK(receipt>0),"
+                   "owner INTEGER NOT NULL,receiving_ship INTEGER NOT NULL,"
+                   "station INTEGER NOT NULL,npc_id INTEGER NOT NULL,"
+                   "voyage INTEGER NOT NULL,direction INTEGER NOT NULL "
+                   "CHECK(direction IN(1,2)),"
+                   "tick INTEGER NOT NULL,generation INTEGER NOT NULL)");
+            run(db,"CREATE INDEX IF NOT EXISTS sg_dock05_visitor_identity "
+                   "ON sg_dock05_visitor_moves(npc_id,generation DESC)");
+            Statement proof(db,"INSERT INTO sg_dock05_visitor_moves "
+                "(receipt,owner,receiving_ship,station,npc_id,voyage,"
+                "direction,tick,generation) VALUES(?,?,?,?,?,?,?,?,?)");
+            proof.i64(1,static_cast<sqlite3_int64>(receipt));
+            proof.i64(2,static_cast<sqlite3_int64>(owner));
+            proof.i64(3,static_cast<sqlite3_int64>(receiver));
+            proof.i64(4,static_cast<sqlite3_int64>(station));
+            proof.i64(5,static_cast<sqlite3_int64>(npc));
+            proof.i64(6,static_cast<sqlite3_int64>(voyage));
+            proof.i64(7,ashore?1:2);
+            proof.i64(8,static_cast<sqlite3_int64>(world_.tick()+1));
+            proof.i64(9,static_cast<sqlite3_int64>(generation));
+            proof.execute();
+            if(sqlite3_changes(db)!=1)
+                throw std::runtime_error("original visitor movement duplicate");
+        },
+        [&](Simulation& next){
+            if(!next.station_visitor_transfer(
+                owner,receiver,station,npc,voyage,ashore))
+                throw std::runtime_error("original guest destination changed");
+        });
+    return true;
+}
+
 bool PersistentWorld::grant_player_rescue_consent(
     PlayerId owner,EntityId receiver,std::uint64_t consent_id,FailPoint fail){
     auto next=world_;
