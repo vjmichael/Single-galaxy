@@ -1425,6 +1425,11 @@ public:
     bool station_player_action(PlayerId owner,EntityId station,EntityId ship,
         StationPlayerAction action,std::int64_t dx,std::int64_t dz,
         std::uint64_t receipt);
+    // DOCK-03A: trusted host-only, same-owner temporary ship-to-berth
+    // shore duty. Moves one ORIGINAL named NPC physical location; neither
+    // creates a new resident nor alters its legal home/crew contract.
+    bool station_dock_worker_transfer(PlayerId owner,EntityId ship,
+        EntityId station,std::uint64_t npc_id,bool disembark);
     bool grant_player_rescue_consent(PlayerId owner,EntityId receiving_ship,
         std::uint64_t consent_id);
     bool revoke_player_rescue_consent(PlayerId owner,std::uint64_t consent_id);
