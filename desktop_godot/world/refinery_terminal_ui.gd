@@ -7,6 +7,7 @@ signal terminal_closed()
 
 var _lots: ItemList
 var _status: Label
+var _dock_staff: Label
 var _minerals: Label
 var _refine_button: Button
 var _unload_button: Button
@@ -27,6 +28,11 @@ func _ready() -> void:
 	_status.text = "No native refinery information"
 	_status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	column.add_child(_status)
+	_dock_staff = Label.new()
+	_dock_staff.name = "OriginalDockWorkerRosterStatus"
+	_dock_staff.text = "Dock workforce: awaiting original C++ station roster"
+	_dock_staff.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	column.add_child(_dock_staff)
 	var lot_heading := Label.new()
 	lot_heading.text = "This colony's ore lots | local owner hangar"
 	column.add_child(lot_heading)
@@ -56,6 +62,21 @@ func _ready() -> void:
 	close.text = "Close colony interface (I)"
 	close.pressed.connect(func(): terminal_closed.emit())
 	column.add_child(close)
+
+func set_dock_staff_observation(frame: Dictionary) -> void:
+	# Counts are original C++ NPC presence/assignment projections, NOT
+	# a second headcount or a command to recruit/teleport workers.
+	if not is_instance_valid(_dock_staff):
+		return
+	var workers := int(frame.get("dock_staff",-1))
+	var residents := int(frame.get("source_count",-1))
+	if workers < 0 or residents < 0:
+		_dock_staff.text = "Dock workers: original roster unavailable"
+		return
+	_dock_staff.text = "DOCK (this colony): %d assigned original workers; %d present named NPCs%s" % [
+		workers,residents," (bounded scan)" if bool(frame.get("scan_truncated",false)) else ""]
+	if workers == 0:
+		_dock_staff.text += " | Dedicated dock-worker assignment remains to be built"
 
 func show_waiting() -> void:
 	visible = true
