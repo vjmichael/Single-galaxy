@@ -9,7 +9,7 @@ const PACING_INTERVAL_MS := 2000
 var _file_path := ""
 var _buffer := PackedStringArray()
 var _bytes_written := 0
-var _last_pacing_ms := 0
+var _last_pacing_ms := -PACING_INTERVAL_MS
 var _limit_reached := false
 
 func enabled() -> bool:
