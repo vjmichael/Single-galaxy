@@ -119,6 +119,19 @@ public:
            (npc.location!=station && npc.location!=npc.home_ship) ||
            world.colony_ship(npc.home_ship)->crew<=1 ||
            world.passengers_aboard(ferry)>=kFerrySeats)return false;
+        // An actual passenger is not permitted to leave the final operating
+        // crew member aboard the original vessel. DOCK-03 applies the same
+        // physical rule before any shore crossing, but refuse early at booking.
+        if(npc.location==npc.home_ship) {
+            std::uint64_t onboard=0,scanned=0;
+            for(const auto& [id,p]:world.npc_records()) {
+                (void)id;
+                if(++scanned>4096)return false;
+                if(p.home_ship==npc.home_ship && p.location==npc.home_ship &&
+                   p.role==NpcRole::Ship && !p.transport_id)++onboard;
+            }
+            if(onboard<=1)return false;
+        }
         // Physical deck occupancy + all pending bookings must fit in the
         // ORIGINAL sixteen real ferry berths. No optimistic seat claim.
         const auto booked=booked_seats(ferry);
@@ -403,6 +416,8 @@ private:
                   "VALUES(?,?,?,?,?,?)");
             q.bind(1,cmd);q.bind(2,id);q.bind(3,npc);
             q.bind(4,worker_id);q.bind(5,ferry);q.bind(6,voyage);q.next();
+            if(sqlite3_changes(db_)!=1)
+                throw std::runtime_error("boarding receipt already exists");
             dock::Statement done(db_,"UPDATE dock04_boarding_v1 SET phase=6 "
                                     "WHERE id=? AND phase=5 AND command_id=? "
                                     "AND transport_id=?");
