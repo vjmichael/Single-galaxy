@@ -71,8 +71,9 @@ static int run_host(int argc,char** argv){
   // Opt in ONLY the genesis of this explicit test station. Existing
   // SQLite worlds must load their own original rules and resources.
   seed.enable_native_swept_asteroid_collision();
+  // Default production collection/refinery uses original source custody
+  // (v123+), not the deferred v126 two-tonne mining-module prototype.
   seed.enable_station_ore_provenance();
-  seed.enable_ship_mining_equipment();
   PersistentWorld world(save_utf8,std::move(seed));
   if(fresh){
    // One genuine original ship docking command and transition in the

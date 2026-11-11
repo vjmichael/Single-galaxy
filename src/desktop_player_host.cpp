@@ -205,8 +205,9 @@ static int run_host(int argc,char** argv){
         // propulsion. Existing SQLite worlds load their own original format;
         // they are never silently upgraded or reset by the desktop host.
         seed.enable_native_3d_physics();
+        // Preserve source-lot authority; future mining tool manufacturing
+        // is explicitly deferred and never installed at game genesis.
         seed.enable_station_ore_provenance();
-        seed.enable_ship_mining_equipment();
         PersistentWorld world(save_utf8,std::move(seed));
         InteriorMovement person(save_utf8,world);
         if(world.world().has_pending_cockpit_flight())
@@ -351,9 +352,10 @@ static int run_host(int argc,char** argv){
                     if(!contact || contact->rock!=desired) {
                         deny(req,"no-matching-original-rock-contact");continue;
                     }
-                    if(!contact->mining_tool_online) {
-                        deny(req,"no-original-powered-fitted-drill");continue;
-                    }
+                    // The authoritative original Simulation::mine_status
+                    // performs ALL actual eligibility, position, inventory
+                    // and (in opt-in v126 only) fitted-tool power checks.
+                    // A rendering-side advisory is never a second miner.
                     c.action=Action::Mine;c.target=desired;c.amount=1;
                 }else if(fitting){
                     c.action=Action::ConfigureMiningTool;
