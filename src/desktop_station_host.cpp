@@ -346,7 +346,7 @@ static int run_host(int argc,char** argv){
               (traffic.urgent>0 || freight>0 || passengers<2)));
         bool applied=false;
         if(choose_passenger){
-          applied=dock_traffic.serve_one(world,local_station,kOwner);
+          applied=dock_traffic.serve_one(world,local_station,kOwner,worker);
           if(applied)++passengers;
         }
         if(!applied && freight_ready){
@@ -357,7 +357,7 @@ static int run_host(int argc,char** argv){
           }
         }
         if(!applied && !choose_passenger && passenger_ready){
-          applied=dock_traffic.serve_one(world,local_station,kOwner);
+          applied=dock_traffic.serve_one(world,local_station,kOwner,worker);
           if(applied)++passengers;
         }
         if(!applied)break;
