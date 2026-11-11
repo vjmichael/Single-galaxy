@@ -134,8 +134,9 @@ func set_dock_status(snapshot: Dictionary) -> void:
 	var passengers := int(snapshot.get("passengers",0))
 	var tonnes := int(snapshot.get("freight_tonnes",0))
 	var held := int(snapshot.get("held_jobs",0))
-	_dock_status.text = "Station #%d | %d workers on shift | %d local check-ins waiting\n%d t of physically docked freight awaiting handling | %d held jobs\n%d check-ins processed (not boarded) | %d t unloaded to local hangar" % [
-		int(snapshot.get("station",0)),staff,passengers,tonnes,held,
+	_dock_status.text = "Station #%d | %d available workers | %d experienced cargo handlers\n%d services/cycle | %d local check-ins waiting | %d t docked freight | %d held\n%d check-ins processed (not boarded) | %d t unloaded to local hangar" % [
+		int(snapshot.get("station",0)),staff,int(snapshot.get("qualified_staff",0)),
+		int(snapshot.get("service_capacity",0)),passengers,tonnes,held,
 		int(snapshot.get("checked_in",0)),int(snapshot.get("handled_tonnes",0))]
 	_dock_staff.text = "Dock workers: %d on active original-world shifts" % staff
 	_dock_serve_button.disabled = staff <= 0 or (passengers+tonnes)==0
