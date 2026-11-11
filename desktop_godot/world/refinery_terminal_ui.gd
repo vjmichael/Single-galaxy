@@ -8,6 +8,7 @@ signal dock_status_requested()
 signal dock_worker_requested()
 signal dock_release_requested()
 signal dock_freight_requested()
+signal dock_passenger_requested()
 signal dock_service_requested()
 
 var _lots: ItemList
@@ -64,6 +65,11 @@ func _ready() -> void:
 	_dock_release_button.text = "End a dock shift"
 	_dock_release_button.pressed.connect(func(): dock_release_requested.emit())
 	workers.add_child(_dock_release_button)
+	var passenger := Button.new()
+	passenger.text = "Register next available resident for passenger check-in"
+	passenger.tooltip_text = "Named resident check-in only. Physical boarding and travel are separate future actions."
+	passenger.pressed.connect(func(): dock_passenger_requested.emit())
+	column.add_child(passenger)
 	var freight := HBoxContainer.new()
 	column.add_child(freight)
 	_dock_queue_button = Button.new()
