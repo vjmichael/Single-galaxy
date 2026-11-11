@@ -5,7 +5,7 @@ config_version=5
 [application]
 config/name="Single-Galaxy — Graybox FPS"
 run/main_scene="res://world/main.tscn"
-config/description="Single-Galaxy standalone FPS input and geometry prototype; bounded native C++ person authority optional via F8; Godot scene/physics parity pending"
+config/description="Single-Galaxy graybox Windows playtest: automatically reconnect original supervised C++/SQLite station and native ship with no developer H/P startup keys"
 
 [display]
 window/size/viewport_width=1280

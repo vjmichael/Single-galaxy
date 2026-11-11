@@ -13,7 +13,9 @@
 namespace galaxy::station_refinery_protocol {
 static constexpr std::int64_t kTerminalXmm=3000;
 static constexpr std::int64_t kTerminalZmm=0;
-static constexpr std::int64_t kTerminalRadiusMm=700;
+// Pictured 0.9m crate plus native 340mm capsule require a usable approach
+// beyond the former 700mm, otherwise the real terminal is unreachable.
+static constexpr std::int64_t kTerminalRadiusMm=1200;
 static constexpr std::size_t kMaxVisibleLots=48;
 
 inline bool accessible(const PlayerPerson& person) noexcept {

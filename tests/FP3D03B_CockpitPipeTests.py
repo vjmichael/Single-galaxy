@@ -1,6 +1,7 @@
 """Real child-stdio test against the original C++ flight host (Python is test-only)."""
 import sqlite3,subprocess,sys,tempfile,time
 from pathlib import Path
+from contextlib import closing
 
 exe=Path(sys.argv[1]);assert exe.is_file(),exe
 with tempfile.TemporaryDirectory() as temp:
@@ -38,29 +39,48 @@ with tempfile.TemporaryDirectory() as temp:
     assert len(undock)==17 and undock[0]=="SHIP" and undock[3]=="5" and undock[5]=="0",undock
     assert undock[16]=="0","real ship must be in space"
     yaw=send(p,f"FLIGHT|{epoch}|6|1|LEFT")
-    assert yaw[0]=="SHIP" and yaw[5]=="0" and yaw[15]=="345",yaw
+    assert yaw[0]=="SHIP" and yaw[5]=="0" and yaw[15]=="15",yaw
     restored=send(p,f"FLIGHT|{epoch}|7|1|RIGHT")
     assert restored[5]=="0" and restored[15]=="0",restored
     forward=send(p,f"FLIGHT|{epoch}|8|1|FWD")
     assert forward[5]=="0" and int(forward[12])>0,forward
     port=send(p,f"FLIGHT|{epoch}|9|1|PORT")
-    assert port[5]=="0" and int(port[13])<0,port
+    assert port[5]=="0" and int(port[13])>0,port
     brake=send(p,f"FLIGHT|{epoch}|10|1|BRAKE")
     assert brake[5]=="0" and abs(int(brake[12]))<abs(int(port[12])) and abs(int(brake[13]))<abs(int(port[13])),brake
+    dock=send(p,f"FLIGHT|{epoch}|11|1|DCK")
+    assert dock[0]=="SHIP" and dock[5]=="0" and dock[16]=="1",dock
+    assert [int(dock[9]),int(dock[10]),int(dock[11])]==[0,0,0],dock
     # No client-given actor identity or arbitrary vector ever enters FLIGHT.
-    assert send(p,f"FLIGHT|{epoch}|11|1|X1000")==["DENY","1","11","invalid-flight-action"]
+    assert send(p,f"FLIGHT|{epoch}|12|1|X1000")==["DENY","1","12","invalid-flight-action"]
+    # Actual v119+ original STEP + SQLite: W/S must change Z, never fake
+    # height in Godot or reuse the planar forward/reverse throttle.
+    redepart=send(p,f"FLIGHT|{epoch}|13|1|UND")
+    assert redepart[5]=="0" and redepart[16]=="0",redepart
+    ascend=send(p,f"FLIGHT|{epoch}|14|1|ASC")
+    assert ascend[5]=="0" and int(ascend[14])==250 and int(ascend[11])==250,ascend
+    level=send(p,f"FLIGHT|{epoch}|15|1|DES")
+    assert level[5]=="0" and int(level[14])==0 and int(level[11])==250,level
+    descend=send(p,f"FLIGHT|{epoch}|16|1|DES")
+    assert descend[5]=="0" and int(descend[14])==-250 and int(descend[11])==0,descend
+    vertical_brake=send(p,f"FLIGHT|{epoch}|17|1|BRAKE")
+    assert vertical_brake[5]=="0" and int(vertical_brake[14])==0,vertical_brake
+    back_to_station=send(p,f"FLIGHT|{epoch}|18|1|DCK")
+    assert back_to_station[5]=="0" and back_to_station[16]=="1",back_to_station
     p.stdin.write("QUIT\n");p.stdin.flush()
     assert p.wait(timeout=4)==0,p.stderr.read()
-    with sqlite3.connect(save) as db:
+    with closing(sqlite3.connect(save)) as db:
         rows=db.execute("SELECT action,outcome FROM historical_events WHERE command_id IS NOT NULL").fetchall()
         assert len(rows)>=6,rows
         assert db.execute("SELECT seated,seq FROM sg_fp3d03a_seat WHERE owner=7").fetchone()==(1,1)
     restarted,pose2,ship2=open_host()
     assert pose2[11:]==["1","1"],pose2
-    assert ship2[15]=="0" and ship2[16]=="0" and int(ship2[9])>0,ship2
+    assert ship2[15]=="0" and ship2[16]=="1",ship2
+    depart=send(restarted,f"FLIGHT|{pose2[2]}|1|1|UND")
+    assert depart[0]=="SHIP" and depart[5]=="0" and depart[16]=="0",depart
     assert pose2[2]!=epoch,"session epoch must change across process restart"
-    stopped=send(restarted,f"SEAT|{pose2[2]}|1|1|0")
+    stopped=send(restarted,f"SEAT|{pose2[2]}|2|1|0")
     assert stopped[:2]==["ACK","1"] and stopped[11:]==["0","2"],stopped
     restarted.stdin.close()
     assert restarted.wait(timeout=4)==0,restarted.stderr.read()
-print("FP3D03B native pipe PASS: seat-gated undock, actual yaw/velocity, brake, original SQLite receipts, restart")
+print("FP3D03B native pipe PASS: seat-gated undock + return dock, original velocity/SQLite berth recovery")

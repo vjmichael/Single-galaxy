@@ -5,6 +5,7 @@
 #include <climits>
 #include <cstdint>
 #include <cstdlib>
+#include <filesystem>
 #include <iostream>
 #include <limits>
 #include <stdexcept>
@@ -34,7 +35,7 @@ using Clock=std::chrono::steady_clock;
 struct Args {
     std::string save,role,build_sha;
     int timeout_ms=60000;
-    bool record_clean=false,allow_core=false,windows_minidump=false;
+    bool record_clean=false,allow_core=false,windows_minidump=false,interactive=false;
     std::vector<std::string> command;
 };
 static Args parse(int argc,char** argv){
@@ -55,7 +56,8 @@ static Args parse(int argc,char** argv){
                 if(value_long<1 || value_long>3600000)throw std::invalid_argument("timeout out of range");
                 a.timeout_ms=static_cast<int>(value_long);
             }
-        }else if(arg=="--record-clean")a.record_clean=true;
+        }else if(arg=="--interactive")a.interactive=true;
+        else if(arg=="--record-clean")a.record_clean=true;
         else if(arg=="--allow-core")a.allow_core=true;
         else if(arg=="--windows-minidump")a.windows_minidump=true;
         else throw std::invalid_argument("invalid supervisor option");
@@ -188,7 +190,7 @@ static int run(const Args& args){
                 (void)::kill(-pid,SIGKILL);
             }else if(done<0 && errno!=EINTR)throw std::runtime_error("waitpid failed");
         }
-        if(!reaped && (elapsed_ms(started)>=static_cast<std::uint64_t>(args.timeout_ms)
+        if(!reaped && ((!args.interactive && elapsed_ms(started)>=static_cast<std::uint64_t>(args.timeout_ms))
                        || interrupted)){
             timed_out=!interrupted;cancelled=interrupted;
             (void)::kill(-pid,SIGKILL);(void)::kill(pid,SIGKILL);
@@ -217,7 +219,7 @@ static int run(const Args& args){
         return_code=incident.exit_code;
     }else incident.reason="unknown_exit";
     if(return_code!=0 || args.record_clean){
-        if(!dx::record_process_incident(args.save,incident))
+        if(!dx::record_process_incident(std::filesystem::u8path(args.save),incident))
             std::cerr<<"SGDX-02 diagnostic sidecar write failed\n";
     }
     return return_code;
@@ -326,6 +328,7 @@ static int run(const Args& args){
     }
     bool timed_out=false,crashed=false,dump_written=false;
     std::wstring dump_name;
+    std::string dump_failure;
     DWORD outcome=WAIT_OBJECT_0;
     if(args.windows_minidump){
         // Debug the DIRECT game process only. Its descendants remain in the
@@ -358,7 +361,7 @@ static int run(const Args& args){
                         crashed=true;reply=DBG_EXCEPTION_NOT_HANDLED;
                         if(!dump_written)
                             dump_written=dx::windows_dump::capture_second_chance(
-                                args.save,pi,event,dump_name);
+                                std::filesystem::u8path(args.save),pi,event,dump_name,&dump_failure);
                     }
                 }
                 if(event.dwDebugEventCode==EXIT_PROCESS_DEBUG_EVENT)
@@ -371,7 +374,7 @@ static int run(const Args& args){
                 TerminateJobObject(job,1);
                 break;
             }
-            if(!timed_out && Clock::now()>=stop_at && !exited){
+            if(!args.interactive && !timed_out && Clock::now()>=stop_at && !exited){
                 timed_out=true;outcome=WAIT_TIMEOUT;
                 TerminateJobObject(job,124);
                 stop_at=Clock::now()+std::chrono::seconds(3);
@@ -379,7 +382,7 @@ static int run(const Args& args){
             if(timed_out && Clock::now()>=stop_at)break;
         }
     }else{
-        outcome=WaitForSingleObject(pi.hProcess,static_cast<DWORD>(args.timeout_ms));
+        outcome=WaitForSingleObject(pi.hProcess,args.interactive?INFINITE:static_cast<DWORD>(args.timeout_ms));
         if(outcome==WAIT_TIMEOUT){timed_out=true;TerminateJobObject(job,124);}
         if(outcome!=WAIT_OBJECT_0 && outcome!=WAIT_TIMEOUT)
             TerminateJobObject(job,1);
@@ -395,15 +398,52 @@ static int run(const Args& args){
                   status==0?"clean_exit":"nonzero_exit";
     if(args.windows_minidump)
         incident.detail=crashed?
-            (dump_written?"crash-time minidump recorded":"crash-time minidump unavailable"):
+            (dump_written?"crash-time minidump recorded":
+              "crash-time minidump unavailable"+
+              (dump_failure.empty()?std::string{}:" ["+dump_failure+"]")):
             "no second-chance exception observed";
     CloseHandle(pi.hThread);CloseHandle(pi.hProcess);CloseHandle(job);
     if(incident.exit_code!=0 || args.record_clean)
-        if(!dx::record_process_incident(args.save,incident))
+        if(!dx::record_process_incident(std::filesystem::u8path(args.save),incident))
             std::cerr<<"SGDX-02 diagnostic sidecar write failed\n";
     return outcome==WAIT_TIMEOUT?124:static_cast<int>(status);
 }
 #endif
+#ifdef _WIN32
+// Windows CRT narrow argv uses the machine's active ANSI code page, not
+// necessarily UTF-8. Godot's normal project/user-data folder contains an
+// em dash ("Single-Galaxy — Graybox FPS"). Its narrow argv becomes CP1252
+// byte 0x97 on many physical Windows systems. Reinterpreting that as UTF-8
+// in widen() fails closed before the first original station PERSON frame.
+// Use genuine Unicode process startup, then convert ONCE to validated UTF-8.
+// Existing parse/authorization semantics are identical on both platforms.
+static std::string utf8_argument(const wchar_t* argument){
+    if(!argument)throw std::invalid_argument("null Windows argument");
+    const int needed=WideCharToMultiByte(CP_UTF8,WC_ERR_INVALID_CHARS,argument,-1,
+                                        nullptr,0,nullptr,nullptr);
+    if(needed<=0)throw std::invalid_argument("invalid Windows Unicode command argument");
+    std::string encoded(static_cast<std::size_t>(needed),'\0');
+    if(WideCharToMultiByte(CP_UTF8,WC_ERR_INVALID_CHARS,argument,-1,
+                           encoded.data(),needed,nullptr,nullptr)!=needed)
+        throw std::invalid_argument("Windows command line UTF-8 conversion failed");
+    encoded.pop_back(); // exclude terminating NUL
+    return encoded;
+}
+int wmain(int argc,wchar_t** argv){
+    try{
+        std::vector<std::string> utf8;
+        utf8.reserve(static_cast<std::size_t>(argc));
+        for(int i=0;i<argc;++i)utf8.push_back(utf8_argument(argv[i]));
+        std::vector<char*> pointers;
+        pointers.reserve(utf8.size());
+        for(auto& arg:utf8)pointers.push_back(arg.data());
+        return run(parse(argc,pointers.data()));
+    }catch(const std::exception& e){
+        std::cerr<<"SGDX-02 supervisor configuration failure: "<<e.what()<<'\n';
+        return 64;
+    }
+}
+#else
 int main(int argc,char** argv){
     try{return run(parse(argc,argv));}
     catch(const std::exception& e){
@@ -411,3 +451,4 @@ int main(int argc,char** argv){
         return 64;
     }
 }
+#endif

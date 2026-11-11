@@ -1,4 +1,5 @@
 extends RefCounted
+const SGDX_LAUNCH := preload("res://world/sgdx_process_launch.gd")
 ## FP3D-02F: local Godot child stdio, bounded MOVE request protocol.
 ## Only the C++ host commits pose and native STEP; Godot cannot write SQLite.
 signal pose_received(pose: Dictionary)
@@ -40,8 +41,12 @@ func process_id() -> int:
 	# not race its lingering SQLite WAL lock after an explicit stop.
 	if _active:
 		return _pid
-	if _last_shutdown_pid > 0 and Time.get_ticks_msec() - _last_shutdown_msec < 3000:
-		return _last_shutdown_pid
+	# Never forget a still-running guardian merely because three seconds passed.
+	# A later same-role restart must not bypass the SQLite writer handoff.
+	if _last_shutdown_pid > 0:
+		if OS.is_process_running(_last_shutdown_pid):
+			return _last_shutdown_pid
+		_last_shutdown_pid = -1
 	return -1
 
 func _status(message: String) -> void:
@@ -56,23 +61,28 @@ func _status(message: String) -> void:
 
 func _host_path() -> String:
 	var binary := "galaxy_desktop_player_host.exe" if OS.get_name() == "Windows" else "galaxy_desktop_player_host"
-	# The installed editor binary can launch a project directly (without the
-	# editor workspace). Prefer this project's freshly built source-host path
-	# whenever present; packaged exports use the adjacent native/ directory.
-	var project_host := ProjectSettings.globalize_path("res://native/" + binary)
-	if FileAccess.file_exists(project_host):
-		return project_host
-	return OS.get_executable_path().get_base_dir().path_join("native").path_join(binary)
+	return SGDX_LAUNCH.native_host_path(binary)
 
 func start(save_override: String = "") -> void:
 	if _active:
 		return
+	# A previous QUIT may be delayed by a blocked host or SQLite flush.
+	# Do not start a second writer for this role while its SGDX custodian lives.
+	if _last_shutdown_pid > 0:
+		if OS.is_process_running(_last_shutdown_pid):
+			_status("Previous SGDX writer still alive; refusing overlapping native session")
+			return
+		_last_shutdown_pid = -1
 	var path := _host_path()
 	if not FileAccess.file_exists(path):
 		_status("NATIVE PLAYER HOST MISSING: " + path)
 		return
 	var save := save_override if not save_override.is_empty() else OS.get_user_data_dir().path_join("single_galaxy_authoritative.sqlite")
-	var result := OS.execute_with_pipe(path, PackedStringArray([save]), false)
+	var spec := SGDX_LAUNCH.supervised_command(save, "godot_ship", path, PackedStringArray([save]))
+	if spec.is_empty():
+		_status("SGDX supervisor missing or invalid save path; refusing unsupervised cockpit")
+		return
+	var result := OS.execute_with_pipe(spec["path"], spec["args"], false)
 	if result.is_empty() or not result.has("stdio") or not result.has("pid"):
 		_status("NATIVE PLAYER HOST LAUNCH FAILED")
 		return
@@ -98,7 +108,7 @@ func start(save_override: String = "") -> void:
 	_last_send_msec = -10000
 	_buffer.clear()
 	connection_changed.emit(true)
-	_status("P NATIVE PLAYER: waiting for verified initial pose; no local walking")
+	_status("P SGDX-SUPERVISED PLAYER: waiting for original POSE; no local walking")
 
 func poll() -> void:
 	if not _active:
@@ -256,7 +266,9 @@ func _accept_ship(parts: PackedStringArray) -> void:
 func _accept_original_asteroid(parts: PackedStringArray) -> void:
 	# One snapshot per verified original SHIP tick; never an independent oracle.
 	var present := parts[0] == "ROCK"
-	if (present and parts.size() != 17) or (not present and parts.size() != 10) or parts[1] != "1":
+	# v125 appends 2 original-contact receipt fields; older 04A worlds keep
+	# the original packet exactly. Never infer physics merely from Godot.
+	if (present and parts.size() not in [17, 19]) or (not present and parts.size() not in [10, 12]) or parts[1] != "1":
 		stop("Malformed original-world asteroid frame")
 		return
 	for i in range(2, parts.size()):
@@ -299,6 +311,15 @@ func _accept_original_asteroid(parts: PackedStringArray) -> void:
 		cargo = int(parts[7])
 		capacity = int(parts[8])
 		installed = int(parts[9])
+	var impact_rock := 0
+	var impact_tick := 0
+	if parts.size() == 19 or parts.size() == 12:
+		var impact_index := 17 if present else 10
+		impact_rock = int(parts[impact_index])
+		impact_tick = int(parts[impact_index + 1])
+		if impact_rock < 0 or ((impact_rock == 0) != (impact_tick == 0)) or 			(impact_rock > 0 and (impact_rock == ship or impact_tick != tick or _dock_state != 0)):
+			stop("Unverifiable original solid-contact receipt")
+			return
 	if cargo < 0 or capacity < 0 or cargo > capacity or capacity > 1000000000 or installed not in [0, 1]:
 		stop("Native ore stock or mining tool status invalid")
 		return
@@ -306,7 +327,8 @@ func _accept_original_asteroid(parts: PackedStringArray) -> void:
 	asteroid_contact_received.emit({"found":present,"rock":rock_id,
 		"ore_tonnes":ore,"dx_mm":dx,"dy_mm":dy,"dz_mm":dz,"radius_mm":radius,
 		"taxonomy":taxonomy,"ship":ship,"tick":tick,"generation":generation,
-		"cargo_tonnes":cargo,"cargo_capacity":capacity,"mining_tool_online":installed})
+		"cargo_tonnes":cargo,"cargo_capacity":capacity,"mining_tool_online":installed,
+		"impact_rock":impact_rock,"impact_tick":impact_tick})
 
 func submit_flight(actions: PackedStringArray) -> void:
 	if not _active or _session <= 0 or not _seated or not _initial_ship_seen or \
@@ -367,12 +389,20 @@ func toggle_seat() -> void:
 		return
 	_stdout.flush()
 
-func stop(message: String = "Native player stopped; last committed pose retained") -> void:
+func stop(message: String = "Native player stopped; last committed pose retained", graceful: bool = false) -> void:
 	if _pid > 0:
 		_last_shutdown_pid = _pid
 		_last_shutdown_msec = Time.get_ticks_msec()
 	if _active and _pid > 0 and OS.is_process_running(_pid):
-		OS.kill(_pid)
+		if graceful and _stdout != null:
+			# The original host exits only after explicit QUIT. SGDX then
+			# records a clean exit and releases the writer/Job Object.
+			_stdout.store_line("QUIT")
+			_stdout.flush()
+		else:
+			# Malformed protocol, untrusted response or timeout: fail closed.
+			# Killing this supervisor kills the native process custody tree.
+			OS.kill(_pid)
 	_active = false
 	_pid = -1
 	_stdout = null

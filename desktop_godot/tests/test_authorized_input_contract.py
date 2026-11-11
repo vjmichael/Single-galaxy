@@ -23,13 +23,28 @@ assert 'player.native_motion_intent.connect(' in m
 assert 'player.global_position = Vector3(float(pose["x_mm"]) / 1000.0' in m
 assert 'native_player_session.pose_received.connect' in m
 assert 'KEY_P' in m and 'KEY_O' in m and 'KEY_F8' not in m and 'KEY_F7' not in m
-assert 'player.use_native_authority(connected)' in m
+assert 'player.use_native_authority(_player_session_autoconnect or connected' in m
 assert 'player.native_seat_intent.connect' in m
 assert 'player.use_native_seat(bool(pose["seated"]))' in m
 assert 'func toggle_seat()' in p and 'SEAT|%d|%d|%d|%d' in p
 assert 'seat_sequence != _seat_sequence + 1' in p
-assert 'if native_seated:' in c and 'native_seat_intent.emit()' in c
-assert 'native_ship_intents.emit(pilot_actions)' in c
+assert 'if native_seated and native_in_ship:' in c and 'native_seat_intent.emit()' in c
+assert 'native_ship_intents.emit(pilot_actions)' in c and 'if get_window().has_focus():' in c
+assert 'Input.mouse_mode == Input.MOUSE_MODE_CAPTURED' in c
+assert 'if Input.mouse_mode == Input.MOUSE_MODE_CAPTURED and \\' in c # only mouse yaw
+assert 'if native_seated and native_in_ship:' in c
+real=(root/'tests/fp3d_env01_live_scene_acceptance.gd').read_text()
+assert '_submit_visible_cursor_keyboard_flight("ship_undock", "UND")' in real
+assert '_submit_visible_cursor_keyboard_flight("ship_dock", "DCK")' in real
+assert '_submit_visible_cursor_keyboard_flight("ship_thrust_forward", "FWD")' in real
+assert '_submit_visible_cursor_keyboard_flight("ship_yaw_left", "LEFT")' in real
+assert '_submit_visible_cursor_keyboard_flight("ship_yaw_right", "RIGHT")' in real
+assert '_game.player.native_ship_intents.emit(intents)' in real
+assert 'native_key.physical_keycode = bound_key' in real
+assert 'InputMap.action_has_event(action, native_key)' in real
+assert 'Input.mouse_mode = Input.MOUSE_MODE_VISIBLE' in real
+assert 'session.submit_flight(PackedStringArray([' not in real
+assert 'int(_ship_frames[-1]["heading"]) != before_yaw' in real
 assert 'player.native_ship_intents.connect(' in m
 assert 'native_player_session.submit_flight(actions)' in m
 assert 'ship_state_received.connect' in m
@@ -40,8 +55,14 @@ keys=(root/'world/input_contract.gd').read_text()
 assert 'ship_yaw_left' in keys and 'ship_yaw_right' in keys
 assert 'ship_strafe_port' in keys and 'ship_strafe_starboard' in keys
 assert 'ship_thrust_forward' in keys and 'ship_thrust_reverse' in keys
-assert 'ship_counterthrust' in keys and 'ship_undock' in keys
+assert 'ship_counterthrust' in keys and 'ship_undock' in keys and 'ship_dock' in keys
+assert '"ship_ascend": KEY_W' in keys and '"ship_descend": KEY_S' in keys
+assert '"ship_yaw_left": KEY_A' in keys and '"ship_yaw_right": KEY_D' in keys
+assert '"ship_thrust_forward": KEY_UP' in keys and '"ship_thrust_reverse": KEY_DOWN' in keys
+assert '"ship_strafe_port": KEY_W' not in keys and '"ship_strafe_starboard": KEY_S' not in keys
+assert 'pilot_actions.append("ASC")' in c and 'pilot_actions.append("DES")' in c
+assert 'pilot_actions.append("DCK")' in c and 'PilotControl::Dock' not in m
 assert 'native-player-protocol' in b
 assert "'native-player-host' 'PASS'" in b
 assert "'native-player-host' 'SKIP'" in b
-print('FP3D03B PASS: Godot source stays untrusted; host-ACK-only movement, bounded rate, focus and local pipe lifecycle')
+print('FP3D03B PASS: Godot intent remains untrusted; native ACK-only movement, foreground keyboard flight independent of cursor capture, bounded rate and single SQLite writer')

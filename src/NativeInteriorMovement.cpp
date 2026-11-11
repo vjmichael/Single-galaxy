@@ -1,4 +1,5 @@
 #include "galaxy/NativeInteriorMovement.hpp"
+#include "galaxy/NativeDockingTarget.hpp"
 #include <algorithm>
 #include <limits>
 #include <sstream>
@@ -461,17 +462,44 @@ std::optional<Outcome> InteriorMovement::pilot(PlayerId owner,
     switch(control){
         case PilotControl::Undock:
             c.action=Action::RequestUndock;break;
-        case PilotControl::YawLeft:c.amount=-15;break;
-        case PilotControl::YawRight:c.amount=15;break;
+        case PilotControl::Dock: {
+            const auto station=docking::nearest_original_station(world_.world(),*ship);
+            if(!station)return std::nullopt;
+            c.action=Action::RequestDock;
+            c.target=*station;
+            break;
+        }
+        // Native +Y points to Godot -Z (visual left from the +X-forward
+        // rear camera). Previous LEFT=-15 reversed A/D for the human pilot.
+        case PilotControl::YawLeft:c.amount=15;break;
+        case PilotControl::YawRight:c.amount=-15;break;
+        case PilotControl::Ascend:
+            if(!world_.world().native_3d_physics())return std::nullopt;
+            c.amount=1;break;
+        case PilotControl::Descend:
+            if(!world_.world().native_3d_physics())return std::nullopt;
+            c.amount=-1;break;
         case PilotControl::Forward:
             c.thrust_x=forward_x;c.thrust_y=forward_y;break;
         case PilotControl::Reverse:
             c.thrust_x=-forward_x;c.thrust_y=-forward_y;break;
         case PilotControl::StrafePort:
-            c.thrust_x=forward_y;c.thrust_y=-forward_x;break;
-        case PilotControl::StrafeStarboard:
+            // From the +X forward rear camera, native +Y is screen-left.
             c.thrust_x=-forward_y;c.thrust_y=forward_x;break;
+        case PilotControl::StrafeStarboard:
+            c.thrust_x=forward_y;c.thrust_y=-forward_x;break;
         case PilotControl::Counterthrust:
+            // The original v119 Action::Thrust uses amount=+/-1 for Z and
+            // cannot combine Z acceleration with X/Y in one command. Brake
+            // each axis through independently journaled native steps.
+            if(world_.world().native_3d_physics() &&
+               ship->velocity_z_mm_per_tick>=Simulation::kAccelerationMmPerTick2){
+                c.amount=-1;break;
+            }
+            if(world_.world().native_3d_physics() &&
+               ship->velocity_z_mm_per_tick<=-Simulation::kAccelerationMmPerTick2){
+                c.amount=1;break;
+            }
             if(ship->velocity.x>=Simulation::kAccelerationMmPerTick2)c.thrust_x=-1;
             else if(ship->velocity.x<=-Simulation::kAccelerationMmPerTick2)c.thrust_x=1;
             if(ship->velocity.y>=Simulation::kAccelerationMmPerTick2)c.thrust_y=-1;
@@ -497,13 +525,16 @@ std::optional<Outcome> InteriorMovement::pilot(PlayerId owner,
     for(std::size_t i=before;i<events.size();++i)
         if(events[i].command_id==c.id)result=events[i].result;
     if(!result)throw std::runtime_error("flight command lacks execution receipt");
-    if(control==PilotControl::Undock&&*result==Outcome::Applied){
+    if((control==PilotControl::Undock || control==PilotControl::Dock) &&
+       *result==Outcome::Applied){
         // Original docking state transitions require two further world ticks.
         // Only advance bounded canonical simulation; never set dock_state
         // directly or fabricate a completion receipt.
         for(int i=0;i<Simulation::kDockTransitionTicks+1;++i){
             const auto* current=world_.world().find(pose.ship);
-            if(!current||current->dock_state!=DockState::Undocking)break;
+            if(!current || (control==PilotControl::Undock ?
+                current->dock_state!=DockState::Undocking :
+                current->dock_state!=DockState::Docking))break;
             world_.step();
         }
     }

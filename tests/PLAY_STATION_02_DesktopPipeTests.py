@@ -65,12 +65,18 @@ with tempfile.TemporaryDirectory() as root:
                              text=True,bufsize=1)
     pose=cockpit.stdout.readline().strip().split('|')
     physical_ship=cockpit.stdout.readline().strip().split('|')
+    initial_rock=cockpit.stdout.readline().strip().split('|')
     assert len(pose)==13 and pose[:2]==['POSE','1'] and pose[10]==str(ship),pose
     assert len(physical_ship)==17 and physical_ship[0]=='SHIP',physical_ship
+    assert initial_rock[0] in ('ROCK','ROCKNONE') and initial_rock[1:4]==['1',pose[2],'0'],initial_rock
+    assert initial_rock[4]==str(ship) and initial_rock[5:7]==physical_ship[7:9],initial_rock
     seat=send(cockpit, f'SEAT|{pose[2]}|1|0|1')
     assert seat[:2]==['ACK','1'] and seat[11:]==['1','1'],seat
     undock=send(cockpit, f'FLIGHT|{pose[2]}|2|1|UND')
     assert len(undock)==17 and undock[0]=='SHIP' and undock[5]=='0' and undock[16]=='0',undock
+    rock_after_undock=cockpit.stdout.readline().strip().split('|')
+    assert rock_after_undock[0] in ('ROCK','ROCKNONE') and rock_after_undock[1:4]==['1',pose[2],'2'],rock_after_undock
+    assert rock_after_undock[4]==str(ship) and rock_after_undock[5:7]==undock[7:9],rock_after_undock
     cockpit.stdin.write('QUIT\n');cockpit.stdin.flush()
     assert cockpit.wait(timeout=8)==0,cockpit.stderr.read()
     after, state=start_station()

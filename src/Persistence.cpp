@@ -12691,10 +12691,12 @@ bool PersistentWorld::submit_cockpit_flight_checked(
     constexpr std::uint64_t other_tags=std::uint64_t{3}<<61;
     if(!(command.id&cockpit_tag)||(command.id&other_tags)||
        !expected_seat_sequence||
-       (command.action!=Action::Thrust&&command.action!=Action::RequestUndock)||
+       (command.action!=Action::Thrust&&command.action!=Action::RequestUndock&&
+        command.action!=Action::RequestDock)||
        command.issuer==0||command.issuer==Simulation::kServerAuthority||
        !command.actor||command.execute_tick!=world_.tick()+1||
-       command.target||command.transport_id||!command.passenger_ids.empty()||
+       ((command.action==Action::RequestDock) ? !command.target : !!command.target)||
+       command.transport_id||!command.passenger_ids.empty()||
        command.secondary_receiver||command.secondary_transport||
        world_.has_pending_cockpit_flight())return false;
     const auto* ship=world_.find(command.actor);

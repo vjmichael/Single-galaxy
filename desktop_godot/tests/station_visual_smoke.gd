@@ -34,12 +34,41 @@ func _run() -> void:
         return
     var station_bodies := station.find_children("*", "StaticBody3D", true, false)
     var cabin_bodies := cabin.find_children("*", "StaticBody3D", true, false)
-    if station_bodies.size() < 10 or cabin_bodies.size() < 5:
+    if station_bodies.size() < 10 or cabin_bodies.size() < 7:
         _fail("station/cabin real collider inventory incomplete")
+        return
+    var native_crate := cabin.get_node_or_null("Native interior cargo obstruction") as StaticBody3D
+    if native_crate == null or native_crate.position.distance_to(Vector3(1.6,0.8,0.0)) > 0.001:
+        _fail("visible cabin cargo obstruction does not match native movement map")
+        return
+    # The live Godot 4.7.2 scene creates CollisionShape3D.new() without
+    # giving it a literal node name. An auto-generated @CollisionShape3D@
+    # path is not the stable identity; inspect its actual runtime TYPE.
+    var native_shape: CollisionShape3D = null
+    for child in native_crate.get_children():
+        if child is CollisionShape3D:
+            if native_shape != null:
+                _fail("original native crate has multiple physics shapes")
+                return
+            native_shape = child as CollisionShape3D
+    if native_shape == null:
+        _fail("Godot cabin obstacle collision shape absent")
+        return
+    var native_box := native_shape.shape as BoxShape3D
+    if native_box == null or native_box.size.distance_to(Vector3(0.8,1.6,1.0)) > 0.001:
+        _fail("Godot cabin collider does not match original native obstacle")
         return
     if station.get_node_or_null("Station_Hangar_Entry_At_Zero") == null:
         _fail("hangar entry hatch missing")
         return
+    var native_limit := station.get_node_or_null("NativeStationWalkEnvelope_16m_VisualOnly") as Node3D
+    if native_limit == null or native_limit.get_child_count() != 4:
+        _fail("original native station walk boundary not visible")
+        return
+    for strip in native_limit.get_children():
+        if not (strip is MeshInstance3D) or strip is CollisionObject3D:
+            _fail("native boundary strips must be visual only, not another physics writer")
+            return
     if not station.visible or cabin.visible:
         _fail("scene does not initially present station")
         return
@@ -56,23 +85,28 @@ func _run() -> void:
         return
     stage.call("_on_native_station_person", {"state":0,"station":1,"ship":2,
         "eligible_ship":2,"x_mm":0,"z_mm":0})
-    if station.visible or not cabin.visible:
-        _fail("BOARD PERSON did not switch visible location")
+    var external = stage.get_node_or_null("NativeAsteroidExternalView") as Node3D
+    if external == null or station.visible or cabin.visible or not external.visible or \
+            not stage.exterior_camera.current or player.camera.current:
+        _fail("BOARD PERSON did not switch directly into third-person ship view")
         return
-    if not _is_active(station_bodies, false) or not _is_active(cabin_bodies, true):
-        _fail("invisible station walls still block boarded player")
+    if not _is_active(station_bodies, false) or not _is_active(cabin_bodies, false):
+        _fail("either hidden station or forbidden cabin still has collisions")
         return
     stage.call("_on_native_player_pose", {"x_mm":0,"y_mm":0,"z_mm":0,"seated":true})
-    if not bool(player.get("native_seated")) or not cabin.visible:
-        _fail("ship POSE did not preserve cockpit authority projection")
+    if not bool(player.get("native_seated")) or not bool(player.get("native_in_ship")) or \
+            cabin.visible or not external.visible or not stage.exterior_camera.current:
+        _fail("ship POSE exposed walking/interior instead of permanent third-person pilot")
         return
     stage.call("_on_native_station_person", {"state":4,"station":1,"ship":0,
         "eligible_ship":2,"x_mm":0,"z_mm":0})
-    if not station.visible or cabin.visible or bool(player.get("native_seated")):
-        _fail("disembark PERSON did not restore station and clear seat")
+    if not station.visible or cabin.visible or external.visible or \
+            bool(player.get("native_seated")) or bool(player.get("native_in_ship")) or \
+            not player.camera.current:
+        _fail("disembark PERSON did not restore colony first-person or clear ship custody")
         return
     if not _is_active(station_bodies, true) or not _is_active(cabin_bodies, false):
         _fail("disembark collision layer restoration failed")
         return
-    print("PLAY-STATION-02 GODOT visual smoke PASS: station/hangar, verified-frame projection, boarding/disembark, two-way collision visibility (synthetic frames; not native runtime)")
+    print("PLAY-STATION-02 GODOT visual smoke PASS: original PERSON/POSE projections, third-person only when boarded, no active cabin collisions, first-person only after colony EXIT (synthetic frames; native runtime tested separately)")
     quit(0)

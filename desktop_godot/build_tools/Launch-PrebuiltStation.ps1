@@ -1,52 +1,130 @@
-# Precompiled original C++ station/cockpit, existing Godot 4.7.2 editor.
-# No CMake, VS, Python, download, installer or export templates on user's PC.
+# Self-contained native station/cockpit with bundled pinned Godot 4.7.2 runtime.
+# No compiler, installed Godot editor, Python, download or export templates.
+# -GodotExe is a deliberate developer override, not a default fallback.
 [CmdletBinding()]
-param([string]$GodotExe="",[switch]$SkipHeadlessSmoke)
+param([string]$GodotExe="",[switch]$SkipHeadlessSmoke,[switch]$VerifyOnly)
 Set-StrictMode -Version Latest
 $ErrorActionPreference="Stop"
+
+# Mixed pwsh 7 -> Windows PowerShell 5.1 test invocation can inherit a
+# PSModulePath without the OS's ordinary built-in modules. Restore the
+# Windows-installed module directory; no new package or network access.
+# Built-in ConvertTo-Json and Compress-Archive remain required to create
+# original-source, fail-closed local evidence.
+if($PSVersionTable.PSEdition -eq 'Desktop'){
+  $winModules=Join-Path $env:WINDIR 'System32\WindowsPowerShell\v1.0\Modules'
+  if(Test-Path -LiteralPath $winModules -PathType Container){
+    $paths=@($env:PSModulePath -split ';')
+    if($paths -notcontains $winModules){
+      $env:PSModulePath=$winModules+';'+$env:PSModulePath
+    }
+  }
+}
+
+# The single-click player path must work under Windows PowerShell 5.1 even
+# when Microsoft.PowerShell.Utility/Get-FileHash is missing. The .NET SHA-256
+# engine is built into Windows and is not a new dependency or authority.
+function Get-LocalSha256([string]$FullPath){
+  if(-not(Test-Path -LiteralPath $FullPath -PathType Leaf)){
+    throw "Required bundled file absent for SHA-256 identity check: $FullPath"
+  }
+  $stream=[System.IO.File]::OpenRead($FullPath)
+  try {
+    $hasher=[System.Security.Cryptography.SHA256]::Create()
+    try {
+      $hash=$hasher.ComputeHash($stream)
+      return ([System.BitConverter]::ToString($hash)).Replace('-','').ToLowerInvariant()
+    } finally {
+      if($hasher -ne $null){$hasher.Dispose()}
+    }
+  } finally {
+    if($stream -ne $null){$stream.Dispose()}
+  }
+}
 $project=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $station=Join-Path $project 'native\galaxy_desktop_station_host.exe'
 $pilot=Join-Path $project 'native\galaxy_desktop_player_host.exe'
+$supervisor=Join-Path $project 'native\galaxy_server_dx_supervisor.exe'
+$shaManifest=Join-Path $project 'native\SGDX_BUILD_SHA.txt'
 $logDir=Join-Path $project 'playtest-logs'
 New-Item -ItemType Directory -Force -Path $logDir | Out-Null
 $pass=$false
+if($VerifyOnly -and $SkipHeadlessSmoke){
+  throw 'Package verification cannot skip bundled-engine headless smoke tests.'
+}
 try {
-  foreach($exe in @($station,$pilot)){
+  foreach($exe in @($station,$pilot,$supervisor)){
     if(-not (Test-Path -LiteralPath $exe -PathType Leaf)){
-      throw "PREBUILT NATIVE HOST MISSING: $exe. This is the source checkout, not the compiled Windows artifact. Download the PLAY-STATION-02 Windows artifact from PR #119 GitHub Actions. No CMake installation required."
+      throw "SGDX-03 package incomplete: $exe. Use verified PR #125 Windows build; unsupervised native execution forbidden."
     }
   }
-  Write-Host 'Precompiled native hosts found. No C++ compiler needed.'
-  if(-not [string]::IsNullOrWhiteSpace($GodotExe)){
-    $GodotExe=[IO.Path]::GetFullPath($GodotExe)
-  } elseif(-not [string]::IsNullOrWhiteSpace($env:SINGLE_GALAXY_GODOT_EXE)){
-    $GodotExe=[IO.Path]::GetFullPath($env:SINGLE_GALAXY_GODOT_EXE)
+  if(-not(Test-Path -LiteralPath $shaManifest -PathType Leaf)){
+    throw "SGDX build SHA manifest missing; no unverified process."
+  }
+  $buildSha=(Get-Content -LiteralPath $shaManifest -Raw).Trim()
+  if($buildSha -notmatch '^[0-9a-fA-F]{40}$'){
+    throw "SGDX build SHA malformed; expected 40 hexadecimal digits."
+  }
+  Write-Host "Supervised native hosts found. Build: $buildSha. No compiler needed."
+  if($env:SGDX_WINDOWS_MINIDUMP -eq '1'){
+    Write-Warning 'Opt-in crash minidumps may capture private process memory.'
+  }
+  $CliGodotExe=$GodotExe
+  if([string]::IsNullOrWhiteSpace($GodotExe)){
+    # The player receives the entire engine with the exact native ZIP.
+    # No PATH/editor picker, web download, installer or silent substitute.
+    $GodotExe=Join-Path $project 'runtime\Godot_v4.7.2-stable_win64.exe'
+    $engineManifest=Join-Path $project 'runtime\GODOT_RUNTIME_SHA256.txt'
+    $CliGodotExe=Join-Path $project 'runtime\Godot_v4.7.2-stable_win64_console.exe'
+    $cliManifest=Join-Path $project 'runtime\GODOT_CONSOLE_SHA256.txt'
+    $engineLicense=Join-Path $project 'runtime\LICENSE.txt'
+    foreach($file in @($GodotExe,$engineManifest,$CliGodotExe,$cliManifest,$engineLicense)){
+      if(-not(Test-Path -LiteralPath $file -PathType Leaf)){
+        throw "Precompiled ZIP missing verified bundled Godot runtime/licensing: $file"
+      }
+    }
+    $expected=(Get-Content -LiteralPath $engineManifest -Raw).Trim().ToLowerInvariant()
+    if($expected -notmatch '^[0-9a-f]{64}$'){
+      throw "Bundled Godot SHA-256 manifest malformed"
+    }
+    $actual=(Get-LocalSha256 $GodotExe)
+    if($actual -cne $expected){
+      throw "Bundled Godot SHA-256 does not match release-derived package manifest"
+    }
+    # Official Windows Godot console wrapper owns the real child process and
+    # propagates its exit code under Windows PowerShell 5.1.
+    $cliExpected=(Get-Content -LiteralPath $cliManifest -Raw).Trim().ToLowerInvariant()
+    if($cliExpected -notmatch '^[0-9a-f]{64}$'){
+      throw "Bundled Godot console wrapper SHA-256 manifest malformed"
+    }
+    $cliActual=Get-LocalSha256 $CliGodotExe
+    if($cliActual -cne $cliExpected){
+      throw "Bundled Godot console wrapper SHA-256 does not match release-derived package manifest"
+    }
+    Write-Host "Verified bundled Godot engine SHA-256 $actual; CLI wrapper SHA-256 $cliActual"
   } else {
-    foreach($name in @('Godot.exe','godot.exe','Godot_v4.7.2-stable_win64.exe')){
-      $candidate=Get-Command $name -ErrorAction SilentlyContinue
-      if($candidate){$GodotExe=$candidate.Source;break}
-    }
-    if([string]::IsNullOrWhiteSpace($GodotExe)){
-      Add-Type -AssemblyName System.Windows.Forms
-      $dialog=New-Object System.Windows.Forms.OpenFileDialog
-      $dialog.Title='Select your EXISTING Godot 4.7.2 editor'
-      $dialog.Filter='Godot editor (*.exe)|*.exe'
-      if($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK){$GodotExe=$dialog.FileName}
-    }
+    # Explicit diagnostic override only; never silently fallback on a
+    # user's installed editor or substitute a different major engine.
+    $GodotExe=[IO.Path]::GetFullPath($GodotExe)
+    $CliGodotExe=$GodotExe
+    Write-Warning "Developer -GodotExe override selected; not self-contained package acceptance."
   }
-  if(-not (Test-Path -LiteralPath $GodotExe -PathType Leaf)){
-    throw 'Existing Godot editor not found; select the Godot 4.7.2 executable.'
+  if(-not(Test-Path -LiteralPath $GodotExe -PathType Leaf)){
+    throw "Bundled Godot 4.7.2 engine missing: $GodotExe"
   }
   $version=(& $GodotExe --version 2>&1 | Out-String).Trim()
   if($LASTEXITCODE -ne 0 -or $version -notmatch '^4\.7\.2\.stable'){
     throw "Expected already-installed Godot 4.7.2.stable; got $version"
   }
-  Write-Host "Using installed Godot $version"
+  Write-Host "Using Windows Godot $version from $GodotExe"
   if(-not $SkipHeadlessSmoke){
     $suites=@(
       @('--headless','--path',('"' + $project + '"'),'--editor','--quit'),
       @('--headless','--path',('"' + $project + '"'),'--script','res://tests/godot_smoke.gd'),
       @('--headless','--path',('"' + $project + '"'),'--script','res://tests/station_visual_smoke.gd'),
+      @('--headless','--path',('"' + $project + '"'),'--script','res://tests/colony_dock_smoke.gd'),
+      @('--headless','--path',('"' + $project + '"'),'--script','res://tests/interaction_prompt_smoke.gd'),
+      @('--headless','--path',('"' + $project + '"'),'--script','res://tests/boarding_action_pipe_smoke.gd'),
       @('--headless','--path',('"' + $project + '"'),'--script','res://tests/native_player_protocol_smoke.gd'),
       @('--headless','--path',('"' + $project + '"'),'--script','res://tests/native_station_protocol_smoke.gd'),
       @('--headless','--path',('"' + $project + '"'),'--script','res://tests/native_station_refinery_protocol_smoke.gd')
@@ -56,26 +134,104 @@ try {
       $index++
       $stdout=Join-Path $logDir "godot-$index-stdout.log"
       $stderr=Join-Path $logDir "godot-$index-stderr.log"
-      $p=Start-Process -FilePath $GodotExe -ArgumentList $suite -NoNewWindow -Wait -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr
-      $errorText=Get-Content -LiteralPath $stderr -Raw -ErrorAction SilentlyContinue | Out-String
-      if($p.ExitCode -ne 0 -or $errorText -match '(?m)^(SCRIPT ERROR|ERROR:|Parser Error:)'){
-        throw "Installed Godot parser or scene smoke #$index failed. See $stdout and $stderr. Game was not launched."
+      # The exact extracted ZIP's engine must execute each real parser/scene
+      # check under a bounded lifetime. Godot may return exit 0 despite
+      # reporting GDScript parser errors, so inspect BOTH real output streams.
+      # WinPS5 Start-Process returns a Process wrapper that we observed
+      # report HasExited=True yet expose a NULL ExitCode, even with an
+      # explicit WaitForExit. Own a FRESH System.Diagnostics.Process
+      # directly, never infer success from stdout or an absent status.
+      $info=New-Object System.Diagnostics.ProcessStartInfo
+      $info.FileName=$CliGodotExe
+      $info.Arguments=[string]::Join(' ',$suite)
+      $info.WorkingDirectory=[IO.Path]::GetDirectoryName($CliGodotExe)
+      $info.UseShellExecute=$false
+      $info.CreateNoWindow=$true
+      $info.RedirectStandardOutput=$true
+      $info.RedirectStandardError=$true
+      $child=New-Object System.Diagnostics.Process
+      $child.StartInfo=$info
+      try {
+        if(-not $child.Start()){throw "Godot CLI process did not start"}
+        # Drain both pipes concurrently to prevent Windows stdout/stderr
+        # deadlocks before waiting for bounded process completion.
+        $outTask=$child.StandardOutput.ReadToEndAsync()
+        $errTask=$child.StandardError.ReadToEndAsync()
+        if(-not [bool]$child.WaitForExit(90000)){
+          try {$child.Kill()} catch {}
+          throw "Godot headless smoke #$index exceeded 90-second limit"
+        }
+        $child.WaitForExit()
+        $outputText=$outTask.GetAwaiter().GetResult()
+        $errorText=$errTask.GetAwaiter().GetResult()
+        [IO.File]::WriteAllText($stdout,$outputText)
+        [IO.File]::WriteAllText($stderr,$errorText)
+        if(-not $child.HasExited){throw "Godot process still live after wait"}
+        $exitValue=$child.ExitCode
+        if($null -eq $exitValue){throw "Actual .NET Process.ExitCode unexpectedly absent"}
+        $code=[int]$exitValue
+      } catch {
+        throw "Bundled Godot headless smoke #$index process execution failed: $_. See $stdout and $stderr. Game was not launched."
+      } finally {
+        $child.Dispose()
+      }
+      $output=$outputText+$errorText
+      $errors=($output -match '(?im)SCRIPT ERROR:|ERROR: Failed to load script|Parse Error:|Error at \(')
+      if($code -ne 0 -or $errors){
+        throw "Bundled Godot console smoke #$index failed: code=$code parser_error=$errors executable=$CliGodotExe. See $stdout and $stderr. Game was not launched."
       }
     }
-    Write-Host 'Actual installed-Godot parser/scene checks passed.'
+    Write-Host 'Bundled Godot 4.7.2 parser/scene checks passed.'
   }
-  Write-Host 'Game controls: H station, WASD walk, E board, P cockpit, E sit, U undock.'
-  $game=Start-Process -FilePath $GodotExe -ArgumentList @('--path',('"' + $project + '"')) -Wait -PassThru
-  Write-Host "Godot exited code $($game.ExitCode). This is not yet manual 3D-play acceptance."
-  $pass=$game.ExitCode -eq 0
+  if($VerifyOnly){
+    # Run ONLY the actual extracted ZIP's bundled engine and smoke suites.
+    # No Godot window / user input, and no physical-GPU PASS asserted.
+    Write-Host 'Verified packaged native host, bundled Godot SHA/version and actual Godot headless scenes. Physical 3D still unapproved.'
+    $pass=$true
+  } else {
+    # Screenshot key is opt-in; captures ONLY the game viewport plus read-only
+    # verified original C++ frames. No Windows desktop/screen recording.
+    $env:SG_FP3D_OPERATOR_CAPTURE_DIR=$logDir
+    Write-Host 'Original saved colony starts automatically: WASD walk to cyan hatch, E board (auto native pilot seat and permanent third-person camera), mouse/A,D steer, U undock, B brake, G dock near colony, ONE E disembark after return docking, F11 capture. No cabin exploration or V toggle. H retries a failed station connection only.'
+    Write-Host 'For physical playtest evidence, press F11 at native station, docked cockpit, exterior flight, asteroid contact and after restart.'
+    $game=Start-Process -FilePath $GodotExe -ArgumentList @('--path',('"' + $project + '"')) -Wait -PassThru
+    Write-Host "Godot exited code $($game.ExitCode). Window close is NOT proof of physical gameplay acceptance."
+    $pass=$game.ExitCode -eq 0
+  }
 } catch {
   Write-Host "PLAYTEST BLOCKED: $_" -ForegroundColor Red
 } finally {
+  Remove-Item Env:SG_FP3D_OPERATOR_CAPTURE_DIR -ErrorAction SilentlyContinue
+  $nativeReceipts=Join-Path $logDir 'operator-viewport-receipts.jsonl'
+  $captureCount=0
+  $verifiedCaptureCount=0
+  if(Test-Path -LiteralPath $nativeReceipts -PathType Leaf){
+    foreach($line in (Get-Content -LiteralPath $nativeReceipts -ErrorAction SilentlyContinue)){
+      try {
+        $record=$line | ConvertFrom-Json -ErrorAction Stop
+        $picture=Join-Path $logDir $record.image
+        if($record.schema -eq 'SG-FP3D-OPERATOR-01' -and
+           (Test-Path -LiteralPath $picture -PathType Leaf) -and
+           (Get-LocalSha256 $picture) -ieq $record.image_sha256){
+          $captureCount++
+          if($record.native_flight_joined -or $record.station_person.state -eq 4){$verifiedCaptureCount++}
+        }
+      } catch { Write-Warning 'Invalid operator screenshot receipt; not counted as evidence.' }
+    }
+  }
   $manifest=[ordered]@{
-    task='PLAY-STATION-02';godot=$GodotExe
-    native_station_hash=if(Test-Path $station){(Get-FileHash $station -Algorithm SHA256).Hash}else{''}
-    native_cockpit_hash=if(Test-Path $pilot){(Get-FileHash $pilot -Algorithm SHA256).Hash}else{''}
-    result=if($pass){'WINDOW-CLOSED-NEEDS-MANUAL-OBSERVATION'}else{'BLOCKED'}
+    task='FP3D-WIN02-BUNDLED-RUNTIME';godot=$GodotExe
+    engine_mode=if($GodotExe -eq (Join-Path $project 'runtime\Godot_v4.7.2-stable_win64.exe')){'BUNDLED-VERIFIED'}else{'EXPLICIT-DEVELOPER-OVERRIDE'}
+    engine_sha256=if(Test-Path -LiteralPath $GodotExe -PathType Leaf){(Get-LocalSha256 $GodotExe)}else{''}
+    godot_console_sha256=if($CliGodotExe -and (Test-Path -LiteralPath $CliGodotExe -PathType Leaf)){(Get-LocalSha256 $CliGodotExe)}else{''}
+    native_station_hash=if(Test-Path $station){(Get-LocalSha256 $station).ToUpperInvariant()}else{''}
+    native_cockpit_hash=if(Test-Path $pilot){(Get-LocalSha256 $pilot).ToUpperInvariant()}else{''}
+    sgdx_supervisor_hash=if(Test-Path $supervisor){(Get-LocalSha256 $supervisor).ToUpperInvariant()}else{''}
+    build_sha=if(Test-Path $shaManifest){(Get-Content -LiteralPath $shaManifest -Raw).Trim()}else{''}
+    verified_game_viewport_screenshots=$captureCount
+    verified_native_frame_screenshots=$verifiedCaptureCount
+    operator_visual_acceptance='NOT ATTESTED: review actual PNGs and original SQLite receipts'
+    result=if(-not $pass){'BLOCKED'}elseif($VerifyOnly){'BUNDLED-PACKAGE-HEADLESS-PREFLIGHT-VERIFIED-NO-GPU-CLAIM'}else{'WINDOW-CLOSED-NEEDS-MANUAL-OBSERVATION'}
   }
   $manifest | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $logDir 'result.json') -Encoding UTF8
   $zip=Join-Path $project 'SingleGalaxy_Station_Playtest_Evidence.zip'

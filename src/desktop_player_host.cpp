@@ -1,4 +1,6 @@
 #include "galaxy/NativeWriterLease.hpp"
+#include "galaxy/NativeWindowsUtf8Argv.hpp"
+#include "galaxy/ServerBreadcrumb.hpp"
 // FP3D-02F: no-browser, no-Python native desktop command ingress.
 // Stdio is an OS-local child pipe; host owns the fixed single-player authority.
 // Every accepted MOVE commits world STEP, receipt, pose in one original transaction.
@@ -69,6 +71,23 @@ void send_rock_contact(std::uint64_t session,std::uint64_t req,
         throw std::runtime_error("original owned ship missing for rock telemetry");
     const auto rock=space_mining_view::nearest_original_asteroid(
         world.world(),kLocalOwner,ship_id);
+    EntityId contact_rock=0;
+    std::uint64_t contact_tick=0;
+    const bool swept=world.world().native_swept_asteroid_collision_enabled();
+    // Only a genuine current original STEP contact; no replay on reconnect.
+    if(swept && req) {
+        const auto& history=world.world().activity_events();
+        for(auto it=history.rbegin();it!=history.rend();++it) {
+            if(it->tick<world.world().tick())break;
+            if(it->tick==world.world().tick() &&
+               it->kind==ActivityKind::ShipAsteroidContact &&
+               it->actor==ship_id && it->result==Outcome::Applied) {
+                contact_rock=it->target;
+                contact_tick=it->tick;
+                break;
+            }
+        }
+    }
     if(rock) {
         std::cout<<"ROCK|1|"<<session<<'|'<<req<<'|'<<ship_id<<'|'
                  <<world.world().tick()<<'|'<<world.generation()<<'|'
@@ -76,24 +95,30 @@ void send_rock_contact(std::uint64_t session,std::uint64_t req,
                  <<rock->x_mm<<'|'<<rock->y_mm<<'|'<<rock->z_mm<<'|'
                  <<rock->radius_mm<<'|'<<unsigned(rock->taxonomy)<<'|'
                  <<rock->cargo_tonnes<<'|'<<rock->cargo_capacity_tonnes<<'|'
-                 <<(rock->mining_tool_online?1:0)<<'\n'<<std::flush;
+                 <<(rock->mining_tool_online?1:0);
+        if(swept)std::cout<<'|'<<contact_rock<<'|'<<contact_tick;
+        std::cout<<'\n'<<std::flush;
     } else {
         std::cout<<"ROCKNONE|1|"<<session<<'|'<<req<<'|'<<ship_id<<'|'
                  <<world.world().tick()<<'|'<<world.generation()<<'|'
                  <<ship->cargo<<'|'<<ship->cargo_capacity<<'|'
-                 <<(space_mining_view::tool_online(world.world(),*ship)?1:0)
-                 <<'\n'<<std::flush;
+                 <<(space_mining_view::tool_online(world.world(),*ship)?1:0);
+        if(swept)std::cout<<'|'<<contact_rock<<'|'<<contact_tick;
+        std::cout<<'\n'<<std::flush;
     }
     if(!std::cout)throw std::runtime_error("Godot original-rock observation pipe closed");
 }
 bool flight_action(std::string_view name,PilotControl& out){
     if(name=="UND")out=PilotControl::Undock;
+    else if(name=="DCK")out=PilotControl::Dock;
     else if(name=="LEFT")out=PilotControl::YawLeft;
     else if(name=="RIGHT")out=PilotControl::YawRight;
     else if(name=="FWD")out=PilotControl::Forward;
     else if(name=="REV")out=PilotControl::Reverse;
     else if(name=="PORT")out=PilotControl::StrafePort;
     else if(name=="STAR")out=PilotControl::StrafeStarboard;
+    else if(name=="ASC")out=PilotControl::Ascend;
+    else if(name=="DES")out=PilotControl::Descend;
     else if(name=="BRAKE")out=PilotControl::Counterthrust;
     else return false;
     return true;
@@ -103,11 +128,15 @@ void deny(std::uint64_t id,const char* reason){
     std::cout<<"DENY|1|"<<id<<'|'<<reason<<'\n'<<std::flush;
 }
 }
-int main(int argc,char** argv){
+static int run_host(int argc,char** argv){
     if(argc!=2){std::cerr<<"Usage: galaxy_desktop_player_host SQLITE_PATH\n";return 2;}
     try{
-        const fs::path save(argv[1]);
-        if(save.empty()||save.string().size()>1024||
+        const std::string save_utf8(argv[1]);
+   // sqlite3_open_v2 takes UTF-8; NativeWriterLease uses an accurately
+   // decoded Windows filesystem path. Never round-trip via path.string(),
+   // which may convert it back into a non-UTF8 active code page.
+   const fs::path save=fs::u8path(save_utf8);
+        if(save.empty()||save_utf8.size()>1024||
            (!save.parent_path().empty()&&!fs::exists(save.parent_path())))
             throw std::invalid_argument("invalid native world save path");
         NativeWriterLease custody(save);
@@ -116,8 +145,12 @@ int main(int argc,char** argv){
         const auto ship=seed.spawn_ship_docked(kLocalOwner,station,24,60);
         if(!seed.register_player_person(kLocalOwner,ship))
             throw std::runtime_error("player-person bootstrap refused");
-        PersistentWorld world(save.string(),std::move(seed));
-        InteriorMovement person(save.string(),world);
+        // A genuinely NEW standalone cockpit fixture has native vertical
+        // propulsion. Existing SQLite worlds load their own original format;
+        // they are never silently upgraded or reset by the desktop host.
+        seed.enable_native_3d_physics();
+        PersistentWorld world(save_utf8,std::move(seed));
+        InteriorMovement person(save_utf8,world);
         if(world.world().has_pending_cockpit_flight())
             throw std::runtime_error("Interrupted cockpit flight command pending in original journal; refusing silent replay");
         const std::uint64_t session=new_epoch();
@@ -177,6 +210,7 @@ int main(int argc,char** argv){
                 const auto outcome=person.pilot(kLocalOwner,expected,command_id,action);
                 if(!outcome){deny(req,"native-flight-refused");continue;}
                 last_move=now;
+                galaxy::server_dx::committed_breadcrumb(world.world().tick(),world.generation());
                 send_ship(session,req,command_id,*outcome,person.flight_state(kLocalOwner));
                 send_rock_contact(session,req,world,previous.ship);
                 continue;
@@ -190,6 +224,7 @@ int main(int argc,char** argv){
                 deny(req,"seat-or-custody");continue;
             }
             last_move=now;
+            galaxy::server_dx::committed_breadcrumb(world.world().tick(),world.generation());
             send_pose("ACK",session,req,person.current(kLocalOwner),world);
         }
         return 0; // stdio EOF = OS client disconnected; never invent a command
@@ -197,3 +232,18 @@ int main(int argc,char** argv){
         std::cerr<<"FP3D native player host aborted: "<<e.what()<<'\n';return 1;
     }
 }
+
+#ifdef _WIN32
+int wmain(int argc,wchar_t** argv){
+    try {
+        auto utf8=galaxy::windows_utf8_argv::convert_all(argc,argv);
+        auto pointers=galaxy::windows_utf8_argv::views(utf8);
+        return run_host(argc,pointers.data());
+    }catch(const std::exception& error){
+        std::cerr<<"Windows native host UTF-8 startup error: "<<error.what()<<'\n';
+        return 2;
+    }
+}
+#else
+int main(int argc,char** argv){return run_host(argc,argv);}
+#endif

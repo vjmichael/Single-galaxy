@@ -21,14 +21,21 @@ inline bool capture_second_chance(
     const std::filesystem::path& save,
     const PROCESS_INFORMATION& process,
     const DEBUG_EVENT& event,
-    std::wstring& saved_basename) noexcept{
+    std::wstring& saved_basename,
+    std::string* failure=nullptr) noexcept{
     try {
+        // These bounded diagnostic strings never contain a filesystem path,
+        // crash memory or exception address. A failed dump still fails CLOSED.
+        const auto fail=[&](const char* stage,DWORD win32)->bool {
+            if(failure)*failure=std::string(stage)+":"+std::to_string(win32);
+            return false;
+        };
         ScopedPrivateSecurity security;
-        if(!security.initialize())return false; // no dump without private ACL
+        if(!security.initialize())return fail("private_token_acl",GetLastError()); // no dump without private ACL
         std::filesystem::path directory=save;
         directory+=L".diagnostics";
         const std::wstring dir=directory.wstring();
-        if(!security.protect_directory(dir))return false;
+        if(!security.protect_directory(dir))return fail("private_directory_acl",GetLastError());
         FILETIME timestamp{};
         GetSystemTimeAsFileTime(&timestamp);
         ULARGE_INTEGER number{};
@@ -41,7 +48,7 @@ inline bool capture_second_chance(
         HANDLE file=CreateFileW(dest.c_str(),GENERIC_WRITE,0,
             &sa,CREATE_NEW,
             FILE_ATTRIBUTE_NORMAL|FILE_FLAG_WRITE_THROUGH,nullptr);
-        if(file==INVALID_HANDLE_VALUE)return false;
+        if(file==INVALID_HANDLE_VALUE)return fail("private_file_create",GetLastError());
 
         CONTEXT context{};
         context.ContextFlags=CONTEXT_FULL;
@@ -57,16 +64,41 @@ inline bool capture_second_chance(
         info.ThreadId=event.dwThreadId;
         info.ExceptionPointers=&pointers;
         info.ClientPointers=FALSE;
-        const BOOL written=MiniDumpWriteDump(process.hProcess,
+        // Some Windows DbgHelp installations cannot emit optional thread
+        // info for a still-debugged crashing process. Preserve a real
+        // second-chance dump by retrying once using Microsoft's minimal
+        // MiniDumpNormal format while the original crash thread is HELD.
+        // Never generate an after-exit fake dump, and never omit the private
+        // security descriptor.
+        BOOL written=MiniDumpWriteDump(process.hProcess,
             process.dwProcessId,file,
             static_cast<MINIDUMP_TYPE>(MiniDumpNormal|MiniDumpWithThreadInfo),
             has_context?&info:nullptr,nullptr,nullptr);
+        const DWORD first_error=written?ERROR_SUCCESS:GetLastError();
+        DWORD retry_error=ERROR_SUCCESS;
+        if(!written){
+            const DWORD start=SetFilePointer(file,0,nullptr,FILE_BEGIN);
+            if(start==INVALID_SET_FILE_POINTER || !SetEndOfFile(file)){
+                retry_error=GetLastError();
+            }else{
+                written=MiniDumpWriteDump(process.hProcess,
+                    process.dwProcessId,file,MiniDumpNormal,
+                    nullptr,nullptr,nullptr);
+                if(!written)retry_error=GetLastError();
+            }
+        }
         LARGE_INTEGER length{};
-        const bool size_ok=GetFileSizeEx(file,&length) &&
-            length.QuadPart>=32 && length.QuadPart<=64LL*1024*1024;
+        const BOOL length_read=GetFileSizeEx(file,&length);
+        const bool size_ok=length_read && length.QuadPart>=32 &&
+                           length.QuadPart<=64LL*1024*1024;
+        const DWORD size_error=length_read?ERROR_SUCCESS:GetLastError();
         CloseHandle(file);
         if(!written || !size_ok){
-            DeleteFileW(dest.c_str());return false;
+            DeleteFileW(dest.c_str());
+            if(!written)
+                return fail("dbghelp_threadinfo_then_normal",
+                            retry_error?retry_error:first_error);
+            return fail("dump_size_or_stat",size_error);
         }
         saved_basename=name;
         // Always cap retention, including repeated crash loops.
@@ -82,7 +114,10 @@ inline bool capture_second_chance(
             std::filesystem::remove(dumps[i],ec);
         }
         return true;
-    }catch(...){return false;}
+    }catch(...){
+        if(failure)*failure="dump_capture_exception";
+        return false;
+    }
 }
 } // namespace galaxy::server_dx::windows_dump
 #endif

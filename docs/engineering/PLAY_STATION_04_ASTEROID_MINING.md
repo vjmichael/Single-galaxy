@@ -19,7 +19,15 @@ Then compiled a separate real original `PersistentWorld` SQLite test fixture con
 
 Native tests cannot prove Godot 4.7.2 actually renders the mesh on the user's physical Windows GPU. A separate synthetic Godot parser smoke and a Windows/Linux exact-head CI workflow are added. Its precompiled Windows ZIP is **not** published until MSVC native tests, SQLite native pipe and real Godot parser checks pass.
 
-## 04B — genuine equipped ship mining (not yet complete)
+## 2026-11-08 creator order: first finish 3D, defer ship modules
+
+**This overrides the older 04B→04C dependency order below.** Do not design or expand mining-tool hardpoints, ship module crafting, slots, power, or fitting UI until the native 3D world actually works in Godot on Windows. Draft PR #124 is retained as an unaccepted **experimental proof-of-concept**, not a prerequisite to fixing the world. Native ship-only mining must remain unavailable on unfitted hulls; do not replace a proper module with free mining or hand tools.
+
+**Active next task: FP3D-ENV-01 (issue #114, PR #125):** original high-order 3D ship/asteroid physical collision, bounded swept contact, durable outcome, and Windows/Linux tests. Next: render parity, camera/interior/exterior station transitions, ship control and real installed Godot playtest. Then revisit production module design and the actual one-tonne mining/return/refining gameplay. Existing 04A work is the clean world-first ancestor; do not import experimental 04B module code into the physics branch.
+
+---
+
+## Historical 04B plan — experimental and deferred until 3D acceptance
 
 1. Introduce a **manufacturable, material-backed fitted mining module** occupying a valid ship rack, with finite consumed resources, engineering prerequisites and power/operative state. No automatic install on every hull; zero ability after all vessels are destroyed. Distinguish real mining tool from survey scanner and weapons.
 2. Bind a cockpit mining action (e.g. `M`) to a selected original asteroid ID and a valid seated, undocked, existing owned ship with the real fitted powered module and cargo space. Original `Simulation::submit` and `PersistentWorld::step` must commit **one exact tonne** of transferred ore, never a local Godot reward.
@@ -29,3 +37,95 @@ Native tests cannot prove Godot 4.7.2 actually renders the mesh on the user's ph
 ## 04C–04D — full player-visible one-tonne loop (not yet complete)
 
 Visual mining effect driven by original executed receipt, return navigation, physical docking, `UnloadOre` into the real station hangar, station terminal `REFINE` one-tonne batch, actual 1,000kg station mineral inventory, restart and mass conservation. User-built refinery and module equipment must be created from finite workforce/materials rather than free test-fixture shortcuts. Then independently test the installed Windows Godot 4.7.2 game from station spawn → board → undock → fly → mine → dock → unload → refine.
+
+## 2026-11-09 — PLAY-STATION-04C: reviewed station unloading bridge (source implemented; native acceptance open)
+
+This is **not** a reversal of the creator's world-first order. Production mining
+modules, crafting, fitting and the cockpit M-mining command remain deferred
+until physically playable Windows 3D acceptance. PR #124 remains experimental.
+No unowned ore, automatic drill or Godot-authored inventory was introduced.
+
+The SGDX-supervised original **station** host now recognizes
+`UNLOAD|session|request|expected_sqlite_generation|owned_ship_id`.
+It accepts requests only from the authenticated station resident physically
+within 1.2m of the original terminal; the selected ship must independently
+exist, be owned, intact, available in the real station berth, docked there and
+carry at least one original tonne. The host does **not** trust an amount from
+Godot: it submits one `Action::UnloadOre` against the original owned vessel,
+executes `PersistentWorld::step`, verifies the exact command journal event
+and returns the existing source-owned `REFHEAD/REFLOT/REFMIN/REFEND` snapshot.
+Result code **3** means one original tonne unloaded; **4** means a denied
+world command; unchanged **1** means 1000kg refined and **2** denied refining.
+The Godot parser does not confuse tonnes with kilograms, requires exact
+session/request/tick/generation/lot count, and does not update inventory before
+an original receipt. The terminal exposes one controlled unload action.
+A stale, forged or empty ship cannot create stock.
+
+A test-only `--04c-fixture` extends the existing independent original-world
+03B test: construct legitimate materials, refinery and utility; execute an
+actual one-tonne geological `Mine`; physically redock; retain the genuine
+tagged ore on the docked owned hull. New
+`galaxy_play_station04c_native_unload_pipe` then launches the **real C++
+station host**, checks refused remote terminal use, invalid ship ID and stale
+generation, walks a persisted person into range, performs exactly one tonne of
+original unloading, verifies the tagged source lot, denies replay and an empty
+ship, refines that same lot to exactly 1000kg named minerals, and verifies
+`PRAGMA integrity_check`, original snapshot and restart continuity.
+Godot's synthetic 03C/04C parser smoke checks distinct result types; synthetic
+frames cannot substitute for native tests.
+
+**Evidence:** this 04C bridge was independently compiled and executed in
+native GCC 14.2 Linux **Debug** and **Release**, with the complete 18/18
+group CTest passing twice (see `SGDX03_GODOT_NATIVE_SUPERVISION.md`).
+It includes actual C++/SQLite `galaxy_play_station04c_native_unload_pipe`,
+not just a synthetic Godot parser. Native Windows and real Godot scene
+execution remain open. The consolidated Windows/Linux group run
+[42679508383](https://github.com/vjmichael/Single-galaxy/actions/runs/42679508383)
+passed source authentication but its Windows and Linux jobs were still queued
+at the latest verified inspection; it is pinned to a now superseded source
+snapshot because additional FP3D-WIN02 package work occurred after dispatch.
+No Windows physical 3D GPU playtest or MSVC evidence is claimed.
+Full player mining remains unavailable because production equipment and
+authoritative mining ingress remain deferred.
+
+### Remaining 04C/04D playable loop gates
+
+1. Get actual current-head native Linux/MSVC and Godot 4.7.2 results after
+   task-group implementation review; fix demonstrated failures, preserving
+   one consolidated gate, not one CI job per commit.
+2. Complete Windows non-headless installed player flight/camera/ship-station
+   collision acceptance and prove station/cockpit host handoffs and durable
+   SQLite custody on a physical Windows machine.
+3. Only after world acceptance, integrate manufactured fitted mining equipment,
+   explicit native seated-pilot `M` action and verified one-tonne source debit,
+   while keeping missing/disabled equipment unable to mine.
+4. Run the complete live original-game `station -> board -> undock -> fly ->
+   mine -> return -> dock -> unload -> refine -> inspect persistent minerals`
+   playthrough, including crash/restart, resource conservation and no free hull.
+
+## FP3D-WIN02 self-contained alpha Windows ZIP — next unblocked delivery task
+
+The playable world must be testable without asking the creator to install
+Godot or developer tools. PR #125 now uses the official, release-digest-pinned
+MIT Godot 4.7.2 x64 engine **inside** the Windows precompiled native ZIP,
+with `runtime/GODOT_RUNTIME_SHA256.txt`, `runtime/LICENSE.txt` and
+`runtime/PROVENANCE.txt`. The double-click launcher uses only this bundled
+engine by default and refuses missing/mismatched bytes; a developer
+`-GodotExe` override is explicit and cannot pass bundled acceptance.
+No web fetch, PATH lookup or file picker is performed on the player's PC.
+
+The single central Windows CI group must re-extract that *actual* ZIP,
+validate PE64 machine and source/engine SHA, and run
+`Launch-PrebuiltStation.ps1 -VerifyOnly` **inside the extracted image**
+with the exact bundled Godot engine, live native host admission and real
+Godot parser/headless smoke tests. The following on-screen camera/rock/SQLite
+scene test also uses the copied, bundled runtime and project, rather than
+silently executing a Godot editor installed on the CI runner. The headless
+preflight result explicitly says **NO GPU CLAIM**; the physical Windows
+player validation still requires real viewport approval. The ZIP is a
+self-contained alpha, not yet an NSIS installer.
+
+**Status:** implementation and group-gate contracts committed without
+an additional per-file CI dispatch. The existing Windows runner has no
+available logs yet. This is not a successful Windows installation, and it
+does not unblock manufactured ship mining equipment.

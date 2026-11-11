@@ -1,4 +1,6 @@
 #include "galaxy/NativeWriterLease.hpp"
+#include "galaxy/NativeWindowsUtf8Argv.hpp"
+#include "galaxy/ServerBreadcrumb.hpp"
 // PLAY-STATION-02 development-native station spawn and boarding bridge.
 // Real person, original SQLite world and exact berth custody; fixture-only hull.
 #include "galaxy/Persistence.hpp"
@@ -37,13 +39,17 @@ void send(std::uint64_t session,std::uint64_t request,const PersistentWorld& w){
  if(!std::cout)throw std::runtime_error("client station pipe disconnected");
 }
 }
-int main(int argc,char** argv){
+static int run_host(int argc,char** argv){
  if(argc!=3||std::string_view(argv[2])!="--explicit-test-station"){
   std::cerr<<"Usage: galaxy_desktop_station_host SQLITE_PATH --explicit-test-station\n";return 2;
  }
  try{
-  const fs::path save(argv[1]);
-  if(save.empty()||save.string().size()>1024||
+  const std::string save_utf8(argv[1]);
+   // sqlite3_open_v2 takes UTF-8; NativeWriterLease uses an accurately
+   // decoded Windows filesystem path. Never round-trip via path.string(),
+   // which may convert it back into a non-UTF8 active code page.
+   const fs::path save=fs::u8path(save_utf8);
+  if(save.empty()||save_utf8.size()>1024||
     (!save.parent_path().empty()&&!fs::exists(save.parent_path())))
     throw std::runtime_error("invalid native station save path");
   NativeWriterLease custody(save);
@@ -57,7 +63,10 @@ int main(int argc,char** argv){
   // Existing saves ignore this seed. A visual Godot sample never adds ore.
   (void)seed.add_geological_asteroid({25000,0},AsteroidClass::Metallic,10,900);
   seed.enable_native_galactic_physics({{1,galactic::Point{{0,100000},{0,100000},{0,100000}}}});
-  PersistentWorld world(save.string(),std::move(seed));
+  // Opt in ONLY the genesis of this explicit test station. Existing
+  // SQLite worlds must load their own original rules and resources.
+  seed.enable_native_swept_asteroid_collision();
+  PersistentWorld world(save_utf8,std::move(seed));
   if(fresh){
    if(!world.register_player_at_station(kOwner,test_station))
     throw std::runtime_error("native test station registration denied");
@@ -80,7 +89,8 @@ int main(int argc,char** argv){
    const bool exiting=f.size()==5&&f[0]=="EXIT";
    const bool view=f.size()==5&&f[0]=="REFVIEW";
    const bool refine=f.size()==5&&f[0]=="REFINE";
-   if(!walking&&!boarding&&!exiting&&!view&&!refine){deny(0,"malformed");continue;}
+   const bool unload=f.size()==5&&f[0]=="UNLOAD";
+   if(!walking&&!boarding&&!exiting&&!view&&!refine&&!unload){deny(0,"malformed");continue;}
    std::uint64_t requested_session=0,req=0,expected=0,ship=0;
    std::int64_t dx=0,dz=0;
    if(!parse(f[1],requested_session)||!parse(f[2],req)||!parse(f[3],expected)||
@@ -93,7 +103,7 @@ int main(int argc,char** argv){
    const auto now=std::chrono::steady_clock::now();
    if(now-last<std::chrono::milliseconds(45)){deny(req,"rate");continue;}
    const auto& person=world.world().player_people().at(kOwner);
-   if(view || refine){
+   if(view || refine || unload){
     if(!station_refinery_protocol::accessible(person) ||
        (view && ship!=person.physical_station)){
        deny(req,"refinery-terminal-distance-or-custody");continue;
@@ -123,11 +133,48 @@ int main(int argc,char** argv){
        // Original SQLite STEP commits both the event and physical inventory.
        // Exception means the process fails closed; do not emit an ACK.
        world.step();
+       galaxy::server_dx::committed_breadcrumb(world.world().tick(),world.generation());
        const auto& event=world.world().events().back();
        if(event.command_id!=c.id)
           throw std::runtime_error("refinery world journal did not return exact command");
        result=event.result==Outcome::Applied?1:2;
        transferred=event.transferred;
+    }
+    if(unload){
+       // The original PERSON receipt identifies the owned physical station.
+       // A client-supplied ship ID is only a selector: revalidate the actual
+       // docked vessel, station and finite cargo on every command.
+       const auto eligible=station_launch::available_ship(
+           world.world(),kOwner,person.physical_station);
+       const auto* vessel=world.world().find(ship);
+       if(!eligible || *eligible!=ship || !vessel ||
+          vessel->owner_id!=kOwner || vessel->dock_state!=DockState::Docked ||
+          vessel->dock_station!=person.physical_station || vessel->cargo<1){
+          deny(req,"no-owned-docked-ship-with-ore");continue;
+       }
+       Command c{};
+       c.id=receipt_prefix|req;
+       c.sequence=c.id;
+       c.execute_tick=world.world().tick()+1;
+       c.action=Action::UnloadOre;
+       c.actor=ship;
+       c.target=person.physical_station;
+       c.issuer=kOwner;
+       c.amount=1; // one physical tonne; never accept client-supplied mass
+       if(!world.submit(c)){
+          deny(req,"original-unload-not-authorized");continue;
+       }
+       // No optimistic Godot cargo update; the SQLite STEP and original
+       // lot-provenance ledger are authoritative after a durable commit.
+       world.step();
+       galaxy::server_dx::committed_breadcrumb(world.world().tick(),world.generation());
+       const auto& event=world.world().events().back();
+       if(event.command_id!=c.id)
+          throw std::runtime_error("unload world journal did not return exact command");
+       result=event.result==Outcome::Applied?3:4;
+       transferred=event.result==Outcome::Applied?event.transferred:0;
+       if(transferred<0 || transferred>1)
+          throw std::runtime_error("invalid original single-tonne unload receipt");
     }
     last=now;
     std::cout<<station_refinery_protocol::make_snapshot(world,kOwner,session,req,result,transferred)<<std::flush;
@@ -147,6 +194,7 @@ int main(int argc,char** argv){
     deny(req,"station-custody-or-distance");continue;
    }
    last=now;
+   galaxy::server_dx::committed_breadcrumb(world.world().tick(),world.generation());
    send(session,req,world);
   }
   return 0;
@@ -154,3 +202,18 @@ int main(int argc,char** argv){
   std::cerr<<"PLAY-STATION-02 native host failed: "<<e.what()<<'\n';return 1;
  }
 }
+
+#ifdef _WIN32
+int wmain(int argc,wchar_t** argv){
+    try {
+        auto utf8=galaxy::windows_utf8_argv::convert_all(argc,argv);
+        auto pointers=galaxy::windows_utf8_argv::views(utf8);
+        return run_host(argc,pointers.data());
+    }catch(const std::exception& error){
+        std::cerr<<"Windows native host UTF-8 startup error: "<<error.what()<<'\n';
+        return 2;
+    }
+}
+#else
+int main(int argc,char** argv){return run_host(argc,argv);}
+#endif

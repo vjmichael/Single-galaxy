@@ -29,9 +29,10 @@ static void erase_db(const std::string& path){
 int main(int argc,char** argv){
  try{
   CHECK(argc==2 || (argc==3 &&
-      (std::string(argv[2])=="--03c-fixture" || std::string(argv[2])=="--03c-verify")));
+      (std::string(argv[2])=="--03c-fixture" || std::string(argv[2])=="--03c-verify" || std::string(argv[2])=="--04c-fixture")));
   const std::string db=argv[1],copy=db+".copy";
   const bool fixture=argc==3 && std::string(argv[2])=="--03c-fixture";
+  const bool unload_fixture=argc==3 && std::string(argv[2])=="--04c-fixture";
   if(argc==3 && std::string(argv[2])=="--03c-verify"){
     PersistentWorld state(db,Simulation(12304));
     const auto& world=state.world();
@@ -107,6 +108,18 @@ int main(int argc,char** argv){
     CHECK(w.world().total_material_kg()==initial_mass);
     CHECK(send(w,id,ship,Action::RequestDock,station).result==Outcome::Applied);
     w.steps(2);
+    if(unload_fixture){
+      // A real one-tonne geological Mine already committed above. Keep its
+      // actual cargo on this docked hull for live original-host unloading.
+      CHECK(w.register_player_at_station(7,station));
+      w.steps(35);
+      CHECK(w.world().find(ship)->cargo==1);
+      CHECK(w.world().hangar(station,7)->ore==0);
+      CHECK(w.world().station_ore_lots().at(lot_id).station==0);
+      std::cout<<"UNLOAD_FIXTURE|"<<station<<'|'<<lot_id<<'|'<<ship
+               <<'|'<<initial_mass<<'\n';
+      return 0;
+    }
     CHECK(send(w,id,ship,Action::RefineStationOre,station,lot_id).result==Outcome::InvalidTarget);
     CHECK(send(w,id,ship,Action::UnloadOre,station,1).result==Outcome::Applied);
     CHECK(w.world().hangar(station,7)->ore==1);

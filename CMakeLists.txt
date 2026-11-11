@@ -2235,6 +2235,19 @@ if(BUILD_TESTING AND Python3_Interpreter_FOUND)
     PROPERTIES TIMEOUT 180)
 endif()
 
+# PLAY-STATION-04C: a real previously mined geological tonne still aboard
+# a docked owned ship; host verifies terminal range, original one-tonne
+# UNLOAD, lot identity, subsequent 1000kg refinery and SQLite restart.
+if(BUILD_TESTING AND Python3_Interpreter_FOUND)
+  add_test(NAME galaxy_play_station04c_native_unload_pipe
+    COMMAND ${Python3_EXECUTABLE}
+      ${CMAKE_CURRENT_SOURCE_DIR}/tests/PLAY_STATION_04C_UnloadPipeTests.py
+      $<TARGET_FILE:galaxy_play_station03b_persistent_refinery_tests>
+      $<TARGET_FILE:galaxy_desktop_station_host>)
+  set_tests_properties(galaxy_play_station04c_native_unload_pipe
+    PROPERTIES TIMEOUT 180 LABELS "native;sqlite;physical-unload")
+endif()
+
 # PLAY-STATION-04A: original 3D rock-contact and finite unmined-ore snapshot
 # without any Godot-side asteroid authority or default mining equipment.
 if(BUILD_TESTING)
@@ -2262,4 +2275,52 @@ if(BUILD_TESTING)
     set_tests_properties(galaxy_play_station04a_original_rock_native_pipe
       PROPERTIES TIMEOUT 90)
   endif()
+endif()
+
+# FP3D-ENV-01: real v125 3D asteroid obstacle sweep and SQLite restart.
+if(BUILD_TESTING)
+  add_executable(galaxy_fp3d_env01_swept_collision_tests tests/FP3D_ENV01_SweptCollisionTests.cpp)
+  target_link_libraries(galaxy_fp3d_env01_swept_collision_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_fp3d_env01_swept_collision COMMAND galaxy_fp3d_env01_swept_collision_tests
+    ${CMAKE_CURRENT_BINARY_DIR}/fp3d_env01_collision.sqlite)
+  set_tests_properties(galaxy_fp3d_env01_swept_collision PROPERTIES TIMEOUT 120)
+  if(Python3_Interpreter_FOUND)
+    add_test(NAME galaxy_fp3d_env01_native_collision_pipe
+      COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/FP3D_ENV01_NativeCollisionPipeTests.py
+        $<TARGET_FILE:galaxy_play_station04a_native_rock_seed>
+        $<TARGET_FILE:galaxy_desktop_player_host>)
+    set_tests_properties(galaxy_fp3d_env01_native_collision_pipe PROPERTIES TIMEOUT 150)
+  endif()
+endif()
+
+# SGDX-03: exact original Godot -> SGDX -> native C++ bidirectional pipe;
+# induced crash, externally killed child/supervisor, Linux SQLite recovery and
+# opt-in Windows second-chance private MDMP, independently from UI/snapshots.
+if(BUILD_TESTING AND Python3_Interpreter_FOUND)
+  add_test(NAME galaxy_sgdx03_godot_native_bridge
+    COMMAND ${Python3_EXECUTABLE}
+      ${CMAKE_CURRENT_SOURCE_DIR}/tests/SGDX03GodotInteractiveTests.py
+      $<TARGET_FILE:galaxy_server_dx_supervisor>
+      $<TARGET_FILE:galaxy_server_dx_fault_child>
+      $<TARGET_FILE:galaxy_desktop_player_host>
+      $<TARGET_FILE:galaxy_play_station04a_native_rock_seed>)
+  set_tests_properties(galaxy_sgdx03_godot_native_bridge PROPERTIES
+    TIMEOUT 200 LABELS "sgdx;native-godot;sqlite;crash;minidump")
+  add_test(NAME galaxy_sgdx03_godot_source_admission
+    COMMAND ${Python3_EXECUTABLE}
+      ${CMAKE_CURRENT_SOURCE_DIR}/desktop_godot/tests/test_sgdx03_bridge_contract.py)
+  set_tests_properties(galaxy_sgdx03_godot_source_admission PROPERTIES
+    TIMEOUT 20 LABELS "sgdx;source-only")
+endif()
+
+# FP3D-WIN-01 source-wiring preflight: not native or GPU acceptance itself.
+# The single END-OF-GROUP Windows/Linux workflow must subsequently execute
+# MSVC, real Godot 4.7.2 on-screen viewport, package and physical-play gates.
+if(BUILD_TESTING AND Python3_Interpreter_FOUND)
+  add_test(NAME galaxy_fp3d_win01_source_contract
+    COMMAND ${Python3_EXECUTABLE}
+      ${CMAKE_CURRENT_SOURCE_DIR}/desktop_godot/tests/test_fp3d_windowed_acceptance_contract.py)
+  set_tests_properties(galaxy_fp3d_win01_source_contract
+    PROPERTIES TIMEOUT 20 LABELS "source-only;windows-playtest")
 endif()
