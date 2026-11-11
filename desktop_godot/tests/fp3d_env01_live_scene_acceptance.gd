@@ -231,14 +231,15 @@ func _run() -> void:
 		if _submit_visible_cursor_keyboard_flight("ship_dock", "DCK"):
 			if not (await _await_condition(Callable(self, "_docked"))):
 				_fail("original C++ keyboard return docking near station failed")
-		elif _game._last_native_dock != 1 or not _game.space_preview.visible or \
-				_game.ship_space.visible or not _game.exterior_camera.current or \
-				_game.player.camera.current:
-			_fail("real docking exposed explorable cabin instead of fixed third-person pilot")
-		else:
-			# Retain artifact filename for downstream pinned-package scripts.
-			# Actual rendered content is now third-person at the dock.
-			await _capture_visible("01-docked-cabin", _ship_frames[-1])
+		if _error.is_empty():
+			if _game._last_native_dock != 1 or not _game.space_preview.visible or \
+					_game.ship_space.visible or not _game.exterior_camera.current or \
+					_game.player.camera.current:
+				_fail("real docking exposed explorable cabin instead of fixed third-person pilot")
+			else:
+				# Retain artifact filename for downstream pinned-package scripts.
+				# Actual rendered content is now third-person at the dock.
+				await _capture_visible("01-docked-cabin", _ship_frames[-1])
 	if _error.is_empty():
 		await create_timer(0.13).timeout
 		if _submit_visible_cursor_keyboard_flight("ship_undock", "UND"):
