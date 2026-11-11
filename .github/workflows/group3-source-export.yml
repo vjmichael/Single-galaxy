@@ -1,0 +1,38 @@
+name: SG Group 3 pinned source bundle for offline native integration
+on:
+  push:
+    paths: [".github/workflows/group3-source-export.yml"]
+    branches: [sg/group3-mining-industry-20261111]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  source:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Export pinned original current plus experimental 04B histories
+        shell: bash
+        run: |
+          set -euo pipefail
+          ACCEPTED=b5d7057928d87d3cb1a05e07ff1d784a9425ad5f
+          PROTOTYPE=ffa7c4bcffb1492d213ea4850e83646dfd6b810d
+          test "$(git merge-base "$GITHUB_SHA" "$ACCEPTED")" = "$ACCEPTED"
+          git fetch --no-tags origin "$PROTOTYPE" "$ACCEPTED"
+          git update-ref refs/heads/group3-current "$GITHUB_SHA"
+          git update-ref refs/heads/group3-prototype "$PROTOTYPE"
+          mkdir -p export
+          git bundle create export/group3-accepted-and-prototype.bundle refs/heads/group3-current refs/heads/group3-prototype
+          git bundle verify export/group3-accepted-and-prototype.bundle
+          sha256sum export/group3-accepted-and-prototype.bundle > export/SHA256SUMS
+          git log -1 --format='%H %s' group3-current > export/HEADS.txt
+          git log -1 --format='%H %s' group3-prototype >> export/HEADS.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: group3-accepted-and-mining-prototype-sources
+          path: export/
+          if-no-files-found: error
