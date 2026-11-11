@@ -6,6 +6,7 @@
 #include <iostream>
 #include <stdexcept>
 #include <string>
+#include <sqlite3.h>
 using namespace galaxy;
 namespace fs=std::filesystem;
 #define CHECK(x) do{if(!(x))throw std::runtime_error(std::string("DOCK05 at line ")+std::to_string(__LINE__)+": " #x);}while(0)
@@ -132,6 +133,15 @@ int main(int argc,char** argv){
             CHECK(journeys.status(from,7).delivered==1);
             CHECK(world.world().npc_records().size()==original_count);
             CHECK(!journeys.cancel_unstarted(world,from,7,route));
+            const auto exact=world.world().canonical_state();
+            bool injected=false;
+            try{
+                (void)world.station_visitor_transfer(7,receiving,to,guest,
+                    manifest,false,5900001,FailPoint::AfterReceiptWrite);
+            }catch(const std::exception&){injected=true;}
+            CHECK(injected);
+            CHECK(world.world().canonical_state()==exact);
+            CHECK(world.world().npc_records().at(guest).location==to);
             // No destination visit is completed by cohort projection,
             // an arbitrary booking receipt or visual NPC position.
             dock05::RegionalPopulation cold(db);
@@ -139,6 +149,38 @@ int main(int argc,char** argv){
             CHECK(absent.population==0 && absent.demand==0 &&
                   !absent.source_bound);
         }
+        // Independently falsify the source visitor receipt in a COPY.
+        // Original world survives intact. A forged station resident must
+        // never be accepted solely because their coordinates look plausible.
+        const std::string forged=db+".forged";
+        {
+            sqlite3* from_db=nullptr,*to_db=nullptr;
+            CHECK(sqlite3_open_v2(db.c_str(),&from_db,SQLITE_OPEN_READONLY,nullptr)==SQLITE_OK);
+            CHECK(sqlite3_open_v2(forged.c_str(),&to_db,
+                SQLITE_OPEN_READWRITE|SQLITE_OPEN_CREATE,nullptr)==SQLITE_OK);
+            sqlite3_backup* backup=sqlite3_backup_init(to_db,"main",from_db,"main");
+            CHECK(backup!=nullptr);
+            CHECK(sqlite3_backup_step(backup,-1)==SQLITE_DONE);
+            CHECK(sqlite3_backup_finish(backup)==SQLITE_OK);
+            sqlite3_close(to_db);sqlite3_close(from_db);
+        }
+        {
+            sqlite3* attack=nullptr;
+            CHECK(sqlite3_open(forged.c_str(),&attack)==SQLITE_OK);
+            sqlite3_stmt* erase=nullptr;
+            CHECK(sqlite3_prepare_v2(attack,
+                "DELETE FROM sg_dock05_visitor_moves WHERE npc_id=?",
+                -1,&erase,nullptr)==SQLITE_OK);
+            CHECK(sqlite3_bind_int64(erase,1,
+                static_cast<sqlite3_int64>(guest))==SQLITE_OK);
+            CHECK(sqlite3_step(erase)==SQLITE_DONE);
+            sqlite3_finalize(erase);sqlite3_close(attack);
+            bool rejected=false;
+            try{PersistentWorld invalid(forged,Simulation(0xD058));}
+            catch(const std::exception&){rejected=true;}
+            CHECK(rejected);
+        }
+        clean(forged);
         clean(db);
         std::cout<<"DOCK05 staged native route/arrival/restart matrix PASS\n";
         return 0;
