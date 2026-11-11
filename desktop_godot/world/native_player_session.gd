@@ -519,7 +519,8 @@ func request_asteroid_survey() -> void:
 
 func request_mine_one_tonne() -> void:
 	# The last original ROCK telemetry provides a candidate, not authority.
-	# Native C++ rechecks owned pilot, fitted power, collision/range and mass.
+	# Native C++ independently checks ownership, actual proximity, remaining
+	# ore and cargo. Tool manufacturing is deferred; old source mode applies.
 	_send_equipment("MINE",_current_rock_id)
 
 func request_fabricate_drill() -> void:
@@ -538,9 +539,9 @@ func _send_equipment(kind: String, value: int) -> void:
 	if not _active or _session <= 0 or not _seated or not _initial_ship_seen or _pending != 0:
 		_status("Original fitting/mining requires seated pilot and an idle native writer")
 		return
-	if kind == "MINE" and (value <= 0 or not _drill_online or
+	if kind == "MINE" and (value <= 0 or
 			_last_contact_request != _last_ship_telemetry_request):
-		_status("Mining refused: no matching original rock and powered fitted tool")
+		_status("Mining refused: no current original rock contact")
 		return
 	if kind not in ["MINE","FAB","FIT","UNFIT","POWER"] or value < 0:
 		_status("Invalid mining/equipment request")
