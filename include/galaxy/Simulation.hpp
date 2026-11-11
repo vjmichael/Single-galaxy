@@ -1412,6 +1412,12 @@ public:
     // DOCK-05: read-only proof that every embarked traveler belongs to a
     // genuine active original voyage. Never validates rescue/stranded flights.
     bool original_passenger_ferry_safe_to_fly(EntityId ship) const;
+    // Original completed voyage is required to admit a named visitor from
+    // a receiving ship onto its dock. No residency or job is changed.
+    bool station_visitor_transfer(PlayerId owner,EntityId receiver,
+        EntityId station,std::uint64_t npc_id,std::uint64_t voyage,
+        bool ashore);
+    bool has_original_station_guest_ashore(EntityId receiving_ship) const;
     bool queue_npc_station_docking(PlayerId owner,EntityId ship,
         std::uint64_t pilot,EntityId station,std::uint64_t flight_id,
         NpcFlightPurpose purpose=NpcFlightPurpose::General);
