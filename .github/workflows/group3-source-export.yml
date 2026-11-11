@@ -1,9 +1,11 @@
 name: SG Group 3 pinned source bundle for offline native integration
 on:
   push:
-    paths: [".github/workflows/group3-source-export.yml"]
     branches: [sg/group3-mining-industry-20261111]
   workflow_dispatch:
+concurrency:
+  group: group3-current-source-export
+  cancel-in-progress: true
 permissions:
   contents: read
 jobs:
