@@ -328,6 +328,9 @@ func assign_available_dock_worker() -> bool:
 func end_dock_worker_shift() -> bool:
 	return _submit_dock("RELEASE",0)
 
+func register_local_passenger_checkin() -> bool:
+	return _submit_dock("PASS",0)
+
 func queue_docked_freight_tonne() -> bool:
 	if int(_person.get("eligible_ship",0)) <= 0:
 		_status("No original owned ship docked at this colony")
@@ -344,7 +347,7 @@ func _submit_dock(kind: String, source: int, quantity: int = 0) -> bool:
 		_status("Dock service busy; retry after current native acknowledgement")
 		return false
 	var op := {"VIEW":"DOCKVIEW","ASSIGN":"DOCKASSIGN",
-		"RELEASE":"DOCKRELEASE","FREIGHT":"DOCKFREIGHT",
+		"RELEASE":"DOCKRELEASE","PASS":"DOCKPASS","FREIGHT":"DOCKFREIGHT",
 		"WORK":"DOCKWORK"}.get(kind,"")
 	if op.is_empty():
 		return false
