@@ -81,6 +81,7 @@ var _frame_count := 0
 var _native_visual_evidence_buffer := PackedStringArray()
 var _last_visual_evidence_flush_ms := 0
 var _physical_trace
+var _physical_last_pacing_ms := 0
 const NATIVE_EVIDENCE_FLUSH_INTERVAL_MS := 500
 const NATIVE_EVIDENCE_BUFFER_LIMIT := 64
 # Former developer-only H toggle is no longer needed during normal play.
@@ -1133,7 +1134,7 @@ func _on_physical_flight_result(request_id: int, verb: String, disposition: Stri
 	_physical_trace.record("original_flight_result", {
 		"request_id":request_id, "verb":verb, "result":disposition,
 		"ack_latency_ms":elapsed_ms, "native_outcome":outcome,
-		"native_tick":int(_verified_flight_ship.get("tick", -1))})
+		"prior_native_tick":int(_verified_flight_ship.get("tick", -1))})
 	if disposition != "ACK":
 		_physical_trace.flush()
 
@@ -1310,18 +1311,22 @@ func _on_native_snapshot(frame: Dictionary) -> void:
 
 func _exit_tree() -> void:
 	_flush_native_visual_evidence()
-	if _physical_trace != null:
-		_physical_trace.finish()
 	if native_session != null:
 		native_session.stop("Native client closed")
 	if native_player_session != null:
 		native_player_session.stop("Native FPS client closed")
 	if native_station_session != null:
 		native_station_session.stop("Native station client closed")
+	if _physical_trace != null:
+		_physical_trace.finish()
 
 func _process(delta: float) -> void:
 	_record_frame_timing(delta)
-	if _physical_trace != null and _physical_trace.enabled():
+	# Do NOT sort/copy the 600-frame ring on every display frame just
+	# because physical evidence is enabled; sample only once per 2 seconds.
+	if _physical_trace != null and _physical_trace.enabled() and \
+			Time.get_ticks_msec() - _physical_last_pacing_ms >= 2000:
+		_physical_last_pacing_ms = Time.get_ticks_msec()
 		_physical_trace.pacing(_frame_timing_summary(), {
 			"focus":get_window().has_focus(),
 			"cursor_captured":Input.mouse_mode == Input.MOUSE_MODE_CAPTURED,
