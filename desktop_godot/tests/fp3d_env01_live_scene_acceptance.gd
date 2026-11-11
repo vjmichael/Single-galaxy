@@ -156,7 +156,9 @@ func _submit_visible_cursor_keyboard_flight(action: String, expected: String) ->
 		return false
 	var session = _game.native_player_session
 	var before_request: int = session._next_request
-	_game._on_native_ship_intents(intents)
+	# Use the actual player signal subscribed by main.gd, not a test-only
+	# shortcut around the game's input -> native-flight wiring.
+	_game.player.native_ship_intents.emit(intents)
 	if session._next_request != before_request + 1 or session._pending_kind != "FLIGHT":
 		_fail("Godot " + expected + " intent did not enter original supervised C++ flight pipe")
 		return false
