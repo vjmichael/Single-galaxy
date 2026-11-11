@@ -308,6 +308,12 @@ public:
             }
             set_phase(id,3,4);
         }
+        // Revalidate station worker authority after BOTH original-world
+        // physical transfers: logical ticks can expire a shift mid-service.
+        const auto fresh_roster=original_staff.service_roster(world.world(),station,owner);
+        if(std::find(fresh_roster.begin(),fresh_roster.end(),worker)==fresh_roster.end()){
+            hold(id);return false;
+        }
         const auto& current=world.world();
         person=current.npc_records().find(npc);
         if(person==current.npc_records().end() ||
