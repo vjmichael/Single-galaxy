@@ -1,5 +1,6 @@
 #include "galaxy/WO3ColonyOperations.hpp"
 #include "galaxy/WO4ResourceDemand.hpp"
+#include "galaxy/WO5PhysicalResupply.hpp"
 #include "galaxy/WO2IndustryWorkforce.hpp"
 #include "galaxy/Persistence.hpp"
 #include "galaxy/NpcAppearanceGenome.hpp"
@@ -210,6 +211,92 @@ int main() {
         return id!=builder && id!=partner;
     });
     CHECK(w.assign_planetary_shuttle_pilot(7,ship,key,pilot));
+
+    // WO5-A live integration in an independent SQLite recovery-copy.
+    // All effects use the ACTUAL built physical shuttle and original
+    // PersistentWorld transactions. The primary WO3 world remains unchanged.
+    {
+        const auto transport_db=(folder/"wo5_actual_resupply.sqlite").string();
+        PersistentWorld::recover_copy(db,transport_db);
+        PersistentWorld transport(transport_db,Simulation(93005));
+        const auto mass_before=transport.world().total_ore();
+        CHECK(transport.load_planetary_shuttle(
+            7,ship,key,ShuttleCargo::Water,5)); // native trip fuel only
+        const auto shortages=economy04::observe_regional_distribution(
+            transport.world(),7,economy04::Policy{32,1});
+        CHECK(shortages && shortages->still_current(transport.world()));
+        const auto first=std::find_if(
+            shortages->unbooked_carrier_requests.begin(),
+            shortages->unbooked_carrier_requests.end(),
+            [&](const economy04::CarrierRequest& r){
+                return r.source.kind==
+                           economy04::CompartmentKind::ColonyShip &&
+                       r.source.source_ship==ship &&
+                       r.destination.kind==
+                           economy04::CompartmentKind::PlanetarySurface &&
+                       r.destination.planetary_key==key &&
+                       r.vital==economy04::Vital::Food &&
+                       r.proposed_kg>0;
+            });
+        CHECK(first!=shortages->unbooked_carrier_requests.end());
+        const auto amount=std::min<std::int64_t>(5,first->proposed_kg);
+        const auto offer=logistics05::inspect_planetary_resupply(
+            transport.world(),7,*first,amount,economy04::Policy{32,1});
+        CHECK(offer && offer->cargo==ShuttleCargo::Food &&
+              offer->source_ship==ship && offer->kilograms==amount);
+        CHECK(!logistics05::inspect_planetary_resupply(
+            transport.world(),8,*first,amount,economy04::Policy{32,1}));
+        CHECK(!logistics05::inspect_planetary_resupply(
+            transport.world(),7,*first,first->proposed_kg+1,
+            economy04::Policy{32,1}));
+        const auto untouched=transport.world().state_hash();
+        CHECK(logistics05::commit_approved_planetary_load(
+            transport,*offer,false).result==
+                logistics05::PhysicalResult::Refused);
+        CHECK(transport.world().state_hash()==untouched);
+        bool rolled_back=false;
+        try {
+            (void)logistics05::commit_approved_planetary_load(
+                transport,*offer,true,FailPoint::AfterSnapshotWrite);
+        }catch(const std::exception&){rolled_back=true;}
+        CHECK(rolled_back && transport.world().state_hash()==untouched);
+        const auto loaded=logistics05::commit_approved_planetary_load(
+            transport,*offer,true);
+        CHECK(loaded.result==logistics05::PhysicalResult::PhysicalTransferCommitted &&
+              loaded.kilograms==amount &&
+              transport.world().planetary_shuttles().at(key).food_kg==amount);
+        CHECK(logistics05::commit_approved_planetary_load(
+            transport,*offer,true).result==
+                logistics05::PhysicalResult::Refused);
+        CHECK(transport.world().total_ore()==mass_before);
+        down(transport,ship,key,920001);
+        CHECK(logistics05::commit_approved_landed_unload(
+            transport,7,ship,key,ShuttleCargo::Food,amount,920002,true).result==
+                logistics05::PhysicalResult::Refused);
+        const auto& real_flight=transport.world().planetary_shuttles().at(key);
+        CHECK(real_flight.descent_receipt==920001 && real_flight.flight_phase==2);
+        const auto site_before=transport.world().planetary_sites().at(key).food_kg;
+        const auto unloaded=logistics05::commit_approved_landed_unload(
+            transport,7,ship,key,ShuttleCargo::Food,amount,
+            real_flight.descent_receipt,true);
+        CHECK(unloaded.result==
+                logistics05::PhysicalResult::PhysicalTransferCommitted &&
+              unloaded.kilograms==amount &&
+              transport.world().planetary_sites().at(key).food_kg==
+                  site_before+amount);
+        CHECK(logistics05::commit_approved_landed_unload(
+            transport,7,ship,key,ShuttleCargo::Food,amount,920001,true).result==
+                logistics05::PhysicalResult::Refused);
+        CHECK(transport.world().total_ore()==mass_before);
+        const auto replay_db=(folder/"wo5_resupply_restart.sqlite").string();
+        PersistentWorld::recover_copy(transport_db,replay_db);
+        PersistentWorld replay(replay_db,Simulation(93006));
+        CHECK(replay.world().state_hash()==transport.world().state_hash() &&
+              replay.world().total_ore()==mass_before &&
+              replay.world().planetary_shuttles().at(key).food_kg==0);
+        CHECK(replay.world().planetary_sites().at(key).food_kg==
+              transport.world().planetary_sites().at(key).food_kg);
+    }
     CHECK(w.load_planetary_shuttle(7,ship,key,ShuttleCargo::Water,10));
     // Deliver actual first two construction modules on two original trips.
     CHECK(w.transfer_planetary_housing_module(7,ship,key,true));
@@ -669,17 +756,26 @@ int main() {
             CHECK(audit_resident && audit_resident->admitted_households==1 &&
                   audit_resident->present_registered_children==1 &&
                   audit_resident->installed_beds==8);
-            // The actual registered ART02 child is already in the landed
-            // family's physical shuttle manifest. Legal admission changes
-            // residence but must NOT double its life-support demand.
+            // Admission consumes the one-time landing manifest and moves
+            // the exact two original adults into durable surface residence.
+            // The physically registered child survives in the SAME admitted
+            // household, not in a second passenger or phantom shuttle seat.
             const auto& landed_family=service.world().planetary_shuttles().at(key);
+            const auto& household=service.world().planetary_sites().at(key).
+                households.at(guardian);
             CHECK(landed_family.flight_phase==2 &&
-                  landed_family.family.stage==2 &&
-                  landed_family.family.child_ids.size()==1);
+                  landed_family.family.stage==0 &&
+                  landed_family.family.child_ids.empty() &&
+                  landed_family.passenger_ids.empty() &&
+                  household.child_ids==std::vector<std::uint64_t>{child} &&
+                  std::binary_search(landed_family.disembarked_ids.begin(),
+                                     landed_family.disembarked_ids.end(),guardian) &&
+                  std::binary_search(landed_family.disembarked_ids.begin(),
+                                     landed_family.disembarked_ids.end(),coparent));
             const auto unique_consumers=std::int64_t{2}+
                 static_cast<std::int64_t>(landed_family.disembarked_ids.size())+
                 1+static_cast<std::int64_t>(landed_family.passenger_ids.size())+
-                static_cast<std::int64_t>(landed_family.family.child_ids.size());
+                static_cast<std::int64_t>(household.child_ids.size());
             CHECK(audit_resident->current_surface_consumers==unique_consumers);
             const auto admitted_pressure=economy04::observe_owner_world(
                 service.world(),7,ship,economy04::Policy{4,1});

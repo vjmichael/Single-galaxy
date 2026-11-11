@@ -245,8 +245,8 @@ int main(){
   // Accelerate then decelerate exactly 25 km at 0.25 km/tick².
   // Arrival at a *system* is insufficient; the carrier must actually reach
   // the independently owned warehouse's docking radius before delivery.
-  for(int i=0;i<10;++i)send_as(w,9600+static_cast<std::uint64_t>(i),8,carrier,Action::Thrust,0,1,1);
-  for(int i=0;i<10;++i)send_as(w,9610+static_cast<std::uint64_t>(i),8,carrier,Action::Thrust,0,1,-1);
+  for(int i=0;i<10;++i)send_as(w,9600+static_cast<std::uint64_t>(i),8,carrier,Action::Thrust,0,0,1);
+  for(int i=0;i<10;++i)send_as(w,9610+static_cast<std::uint64_t>(i),8,carrier,Action::Thrust,0,0,-1);
   ck(w.world().find(carrier)->velocity.x==0,"carrier did not brake at receiving warehouse");
   for(const auto& name:{"frames-third-party","panels-third-party"}){
    const auto k=std::string(name)=="frames-third-party"?"aluminum_frames":"aluminum_panels";
@@ -296,7 +296,9 @@ int main(){
   clone(base+".forged-approval","DROP TRIGGER sg_v56_approval_immutable_update; UPDATE sg_v56_approval SET principal='8' WHERE contract_id='frames-third-party' AND role=1;");
   clone(base+".lost-approvals","DROP TABLE sg_v56_approval;");
   std::cout<<"v56 three independent owners: source warehouse -> reserved third-party carrier -> jump -> receiving warehouse; crash/replay/tamper PASS\n";
-  for(const auto& file:{path,copy,corrupt,badledger})std::filesystem::remove(file);
-  return 0;
+  // Keep every independent source/receiver and negative tamper check;
+  // release the live native SQLite owners before Windows file deletion.
  }catch(const std::exception& e){std::cerr<<"v56 third-party custody FAIL: "<<e.what()<<'\n';return 1;}
+ for(const auto& file:{path,copy,corrupt,badledger})std::filesystem::remove(file);
+ return 0;
 }

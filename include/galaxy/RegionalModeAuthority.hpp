@@ -24,6 +24,8 @@ public:
     // Existing registrations survive restart; reopening never resets ownership.
     RegionalAuthorityState enroll();
     RegionalAuthorityState state() const;
+    const std::string& scope() const noexcept {return store_.scope();}
+    std::string database_path() const {return store_.database_path();}
     // Persist an intent under BEGIN IMMEDIATE. No simulation ownership changes
     // until commit. The freeze blocks all cold-region commands while pending.
     RegionalAuthorityState prepare(const std::string& handoff_id,

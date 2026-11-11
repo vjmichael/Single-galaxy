@@ -1893,9 +1893,11 @@ if(BUILD_TESTING)
   target_link_libraries(galaxy_wo3_planetary_housing_tests PRIVATE galaxy_kernel)
   add_test(NAME galaxy_wo3_planetary_housing COMMAND galaxy_wo3_planetary_housing_tests)
   set_tests_properties(galaxy_wo3_planetary_housing PROPERTIES TIMEOUT 300)
-  # The historical migration test is fail-closed: only an independently
-  # SHA-256 verified genuine v86 saved SQLite with its original binary runs.
-  # Missing immutable input is a failed native test, never a synthetic save.
+  # WO3-F uses the genuine Nov 5 v86-era native producer to save a real
+  # v85 SQLite journal. v86's legal-home upgrade retained ship residency;
+  # pre-v109 planetary residence could not legitimately be imported.
+  # Source commit, original test blob, native binary, SQLite and full journal
+  # are attested, independently replayed and never replaced by edited genesis.
   add_executable(galaxy_wo3_historical_sqlite_import_tests
     tests/WO3HistoricalSQLiteImportTests.cpp)
   target_link_libraries(galaxy_wo3_historical_sqlite_import_tests PRIVATE galaxy_kernel)
@@ -1932,4 +1934,14 @@ if(BUILD_TESTING)
     add_executable(galaxy_wo4_material_allocation_tests tests/WO4MaterialAllocationTests.cpp)
     target_link_libraries(galaxy_wo4_material_allocation_tests PRIVATE galaxy_kernel)
     add_test(NAME galaxy_wo4_material_allocation COMMAND galaxy_wo4_material_allocation_tests)
+endif()
+
+
+# WO5 A/B original physical shuttle/resupply and intercolony booking admission.
+# The real arrival/SQLite recovery acceptance is exercised by the existing
+# WO3 planetary utility integration target, without shadow vehicle state.
+if(BUILD_TESTING)
+    add_executable(galaxy_wo5_physical_logistics_tests tests/WO5PhysicalLogisticsTests.cpp)
+    target_link_libraries(galaxy_wo5_physical_logistics_tests PRIVATE galaxy_kernel)
+    add_test(NAME galaxy_wo5_physical_logistics COMMAND galaxy_wo5_physical_logistics_tests)
 endif()

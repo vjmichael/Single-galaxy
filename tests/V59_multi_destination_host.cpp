@@ -2,6 +2,9 @@
 #include "galaxy/ShipmentManifest.hpp"
 #include "galaxy/RegionalShipmentReconciliation.hpp"
 #include "galaxy/CanonicalShippingHost.hpp"
+#include "galaxy/WO5ManufacturedFreight.hpp"
+#include "galaxy/WO5ManufacturedEvidence.hpp"
+#include "galaxy/WO5RegionalRecovery.hpp"
 #include "galaxy/ShipmentStatusView.hpp"
 #include "galaxy/ClientContract.hpp"
 #include "galaxy/NpcAppearanceGenome.hpp"
@@ -182,8 +185,10 @@ int main(){
   send_as(w,9313,10,alternate_receiver,Action::RequestJump,gate);
   w.steps(Simulation::kJumpTransitTicks+Simulation::kArrivalCloakTicks+1);
   ck(w.world().find(alternate_receiver)->system_id==2,"replacement receiver did not cross systems");
-  for(int i=0;i<1;++i)send_as(w,9320+static_cast<std::uint64_t>(i),10,alternate_receiver,Action::Thrust,0,1,1);
-  for(int i=0;i<1;++i)send_as(w,9324+static_cast<std::uint64_t>(i),10,alternate_receiver,Action::Thrust,0,1,-1);
+  // Original Thrust uses amount=0 and axis choice in thrust_x; amount=1
+  // is a yaw argument and must never be combined with strafe/translation.
+  for(int i=0;i<1;++i)send_as(w,9320+static_cast<std::uint64_t>(i),10,alternate_receiver,Action::Thrust,0,0,1);
+  for(int i=0;i<1;++i)send_as(w,9324+static_cast<std::uint64_t>(i),10,alternate_receiver,Action::Thrust,0,0,-1);
   ck(w.world().find(alternate_receiver)->velocity.x==0,"replacement warehouse founding ship did not brake");
   send_as(w,9330,10,alternate_receiver,Action::ConstructOutpost);
   EntityId alternate_site=0;
@@ -214,7 +219,83 @@ int main(){
   active=7;
   reject([&]{auto spoof=frames;spoof.factory_return_command=9106;production_host.book_factory_goods(spoof);},
     "production host accepted the wrong finished material provenance");
-  game_host.book(frames,7);game_host.book(panels,7);
+  // WO5-C: one owner-9 recipient need per finished material. These are
+  // WO4 typed resource requirements, NOT one-owner remote freight grants.
+  const economy04::MaterialNeed frames_need{
+      destination,economy04::NativeMaterial::Frames,
+      economy04::Priority::Maintenance,1};
+  const economy04::MaterialNeed panels_need{
+      destination,economy04::NativeMaterial::Panels,
+      economy04::Priority::Production,1};
+  const auto source_offer=logistics05::inspect_manufactured_consignment(
+      w.world(),frames_need,9,true,home,carrier,receiver,site,7,8,
+      frames.factory_return_command,frames.load_command,
+      frames.unload_command,frames.id,frames.quantity_kg);
+  const auto panels_offer=logistics05::inspect_manufactured_consignment(
+      w.world(),panels_need,9,true,home,carrier,receiver,site,7,8,
+      panels.factory_return_command,panels.load_command,
+      panels.unload_command,panels.id,panels.quantity_kg);
+  ck(source_offer && panels_offer && source_offer->native.require_dispatch &&
+     panels_offer->native.require_dispatch &&
+     source_offer->observed_state_hash==w.world().state_hash() &&
+     source_offer->native.item_index==2 && panels_offer->native.item_index==1,
+     "WO5-C failed to match genuine recipient needs to physical finished goods");
+  auto unshippable=frames_need;
+  unshippable.material=economy04::NativeMaterial::Aluminum;
+  ck(!logistics05::inspect_manufactured_consignment(
+      w.world(),unshippable,9,true,home,carrier,receiver,site,7,8,
+      frames.factory_return_command,9507,9508,"wo5-raw-not-finished",1),
+     "WO5 admitted an unsupported generic material");
+  ck(!logistics05::inspect_manufactured_consignment(
+      w.world(),frames_need,9,false,home,carrier,receiver,site,7,8,
+      frames.factory_return_command,9507,9508,"wo5-unverified-receiver",1),
+     "WO5 accepted nonauthenticated receiver declaration");
+  ck(!logistics05::inspect_manufactured_consignment(
+      w.world(),frames_need,9,true,home,home,receiver,site,7,7,
+      frames.factory_return_command,9507,9508,"wo5-false-owner",1),
+     "WO5 collapsed source and carrier identity");
+  ck(!logistics05::inspect_manufactured_consignment(
+      w.world(),frames_need,9,true,home,carrier,receiver,site,7,8,
+      frames.factory_return_command,9507,9508,"wo5-over-demand",2),
+     "WO5 promised more finished stock than recipient requested");
+  // A copied original-world hash is insufficient proof of a factory lot:
+  // the original ProductionShippingHost validates immutable SQLite returns.
+  auto bad_return=*source_offer;
+  bad_return.native.id="wo5-bad-factory-proof";
+  bad_return.native.factory_return_command=panels.factory_return_command;
+  bad_return.native.load_command=9507;bad_return.native.unload_command=9508;
+  reject([&]{(void)logistics05::book_manufactured_consignment(
+      game_host,w,bad_return,7,true);},
+      "WO5 book accepted panels factory return for frames");
+  ck(!logistics05::book_manufactured_consignment(
+      game_host,w,*source_offer,7,false),
+      "WO5 booked with no authenticated recipient demand");
+  ck(logistics05::book_manufactured_consignment(
+      game_host,w,*source_offer,7,true),
+      "WO5 failed original authenticated frames source booking");
+  ck(logistics05::book_manufactured_consignment(
+      game_host,w,*panels_offer,7,true),
+      "WO5 failed original authenticated panels source booking");
+  reject([&]{(void)logistics05::book_manufactured_consignment(
+      game_host,w,*source_offer,7,true);},
+      "WO5 duplicate factory-return booking bypassed native immutable ledger");
+  ck(!logistics05::book_manufactured_consignment(
+      game_host,w,*source_offer,8,true),
+      "WO5 carrier impersonated authenticated source warehouse principal");
+  ck(w.world().storage(site)->goods_kg.at("aluminum_frames")==1 &&
+     w.world().storage(site)->goods_kg.at("aluminum_panels")==1 &&
+     w.world().ship_inventory_snapshot(carrier).amount("good/aluminum_frames")==0,
+     "WO5 book falsely moved cargo without physical dispatch");
+  shipping::ShipmentStatusView wo5_status(path);
+  const auto booked=logistics05::inspect_manufactured_evidence(
+      w.world(),wo5_status,7,frames);
+  ck(booked &&
+     booked->phase==logistics05::ManufacturedPhase::AwaitingConsent &&
+     !booked->loaded_receipt && booked->original_carrier_held_kg==0,
+     "WO5 booking falsely reported cargo in transit");
+  ck(!logistics05::inspect_manufactured_evidence(
+      w.world(),wo5_status,10,frames),
+     "WO5 disclosed shipment to unrelated principal");
   if(const char* fixture=std::getenv("SG_SHIPPING_PENDING_FIXTURE")){
     sqlite3 *from=nullptr,*to=nullptr;
     ck(sqlite3_open_v2(path.c_str(),&from,SQLITE_OPEN_READONLY,nullptr)==SQLITE_OK,
@@ -241,6 +322,12 @@ int main(){
   game_host.dispatch(frames.id,8,"frames-dispatch");
   reject([&]{contracts.dispatch(frames.id,8,"frames-dispatch-duplicate");},"carrier dispatched twice");
   game_host.dispatch(panels.id,8,"panels-dispatch");
+  const auto dispatched=logistics05::inspect_manufactured_evidence(
+      w.world(),wo5_status,8,panels);
+  ck(dispatched &&
+     dispatched->phase==logistics05::ManufacturedPhase::Dispatched &&
+     !dispatched->loaded_receipt && !dispatched->unload_receipt,
+     "WO5 manufactured freight dispatch moved physical stock");
   active=7;reject([&]{game_host.load(frames.id,7);},"source-owner session moved carrier freight");
   active=9;reject([&]{game_host.load(frames.id,9);},"receiver session moved carrier freight");
   active=10;reject([&]{game_host.load(frames.id,10);},"alternate receiver session moved carrier freight");
@@ -255,10 +342,27 @@ int main(){
     game_host.load(id,8);
     ck(w.world().ship_inventory_snapshot(carrier).amount("good/"+code)==1,
        "dispatch did not physically load finished goods");
+    const auto& physical_lot=id==frames.id?frames:panels;
+    const auto loaded=logistics05::inspect_manufactured_evidence(
+        w.world(),wo5_status,8,physical_lot);
+    ck(loaded &&
+       loaded->phase==logistics05::ManufacturedPhase::PhysicallyLoaded &&
+       loaded->original_carrier_held_kg==1 &&
+       loaded->loaded_receipt && !loaded->unload_receipt,
+       "WO5 loaded claim lacks original carrier goods or ledger proof");
   }
   // v59: real owner cutovers while both physical lots are still aboard
   // the independent carrier. Ownership flips must not reissue either cargo.
   const auto loaded_mass=w.world().total_material_kg();
+  const auto original_epoch=owner.state();
+  const auto original_audit=logistics05::observe_native_regional_recovery(
+      path,w,region,owner,7,original_epoch.generation,
+      original_epoch.checkpoint_revision);
+  ck(original_audit && original_audit->mode==re::SimulationOwner::Cold &&
+     original_audit->phase==re::TransitionPhase::Stable &&
+     !original_audit->may_consider_detailed_only_work &&
+     original_audit->original_world_generation==w.generation(),
+     "WO5-E world and cold epoch are not bound to same original SQLite");
   reject([&]{(void)net.promote("v59-transit-promote",ind::NetworkFault::AfterPayload);},
          "failed cold-to-detailed commit was accepted");
   ck(owner.state().phase==re::TransitionPhase::ToDetailed,"prepared transition was not retained");
@@ -267,10 +371,37 @@ int main(){
   reject([&]{(void)game_host.transition_region("different-handoff",re::SimulationOwner::Detailed);},
          "stale conflicting host ownership transition accepted");
   (void)game_host.transition_region("v59-transit-promote",re::SimulationOwner::Detailed);
+  const auto detailed_epoch=owner.state();
+  ck(!logistics05::observe_native_regional_recovery(
+      path,w,region,owner,7,original_epoch.generation,
+      original_epoch.checkpoint_revision),
+      "WO5-E accepted a stale cold owner epoch after native detailed promotion");
+  const auto detailed_audit=logistics05::observe_native_regional_recovery(
+      path,w,region,owner,7,detailed_epoch.generation,
+      detailed_epoch.checkpoint_revision);
+  const auto still_loaded=logistics05::inspect_manufactured_evidence(
+      w.world(),wo5_status,8,frames);
+  ck(detailed_audit &&
+     detailed_audit->may_consider_detailed_only_work &&
+     detailed_audit->original_world_generation==w.generation() &&
+     still_loaded &&
+     still_loaded->phase==logistics05::ManufacturedPhase::PhysicallyLoaded,
+     "WO5-E detailed epoch lost original finished-goods carrier custody");
   reject([&]{(void)net.demote("v59-transit-demote",ind::NetworkFault::AfterEvent);},
          "failed detailed-to-cold commit was accepted");
   ck(owner.state().phase==re::TransitionPhase::ToCold,"demotion intent vanished during injected failure");
   (void)game_host.transition_region("v59-transit-demote",re::SimulationOwner::Cold);
+  const auto cold_again=owner.state();
+  const auto audited_cold=logistics05::observe_native_regional_recovery(
+      path,w,region,owner,7,cold_again.generation,
+      cold_again.checkpoint_revision);
+  ck(audited_cold &&
+     audited_cold->phase==re::TransitionPhase::Stable &&
+     audited_cold->mode==re::SimulationOwner::Cold &&
+     !audited_cold->may_consider_detailed_only_work &&
+     audited_cold->original_world_generation==w.generation() &&
+     w.world().ship_inventory_snapshot(carrier).amount("good/aluminum_frames")==1,
+     "WO5-E cold recovery lost physically in-transit original frames");
   shipping::verify_regional_shipment_boundaries(path);
   { re::CheckpointStore unrelated(path,"remote-unrelated"); region_seed(unrelated);
     re::RegionalModeAuthority remote_owner(unrelated);remote_owner.enroll();
@@ -311,8 +442,8 @@ int main(){
   w.steps(Simulation::kJumpTransitTicks+Simulation::kArrivalCloakTicks+1);
   ck(w.world().find(carrier)->system_id==2,"carrier never completed outbound jump");
   // The carrier must actually enter range of receiver 9's warehouse.
-  for(int i=0;i<10;++i)send_as(w,9600+static_cast<std::uint64_t>(i),8,carrier,Action::Thrust,0,1,-1);
-  for(int i=0;i<10;++i)send_as(w,9610+static_cast<std::uint64_t>(i),8,carrier,Action::Thrust,0,1,1);
+  for(int i=0;i<10;++i)send_as(w,9600+static_cast<std::uint64_t>(i),8,carrier,Action::Thrust,0,0,-1);
+  for(int i=0;i<10;++i)send_as(w,9610+static_cast<std::uint64_t>(i),8,carrier,Action::Thrust,0,0,1);
   ck(w.world().find(carrier)->velocity.x==0,"carrier did not brake at receiver");
   for(const auto fail:{FailPoint::AfterReceiptWrite,FailPoint::AfterSnapshotWrite}){
     const auto before=w.world().tick();
@@ -324,8 +455,24 @@ int main(){
   active=9;reject([&]{game_host.unload(panels.id,9);},"receiver owner issued carrier unload");
   active=8;game_host.unload(panels.id,8);
   ck(w.world().storage(destination)->goods_kg.at("aluminum_panels")==1,"original receiver lacks delivered panels");
+  const auto received=logistics05::inspect_manufactured_evidence(
+      w.world(),wo5_status,9,panels);
+  ck(received &&
+     received->phase==logistics05::ManufacturedPhase::PhysicallyDelivered &&
+     received->original_carrier_held_kg==0 &&
+     received->original_destination_stock_kg>=1 &&
+     received->unload_receipt && !received->settlement_receipt,
+     "WO5 delivery lacks real receiving warehouse inventory");
   active=8;game_host.acknowledge_delivery(panels.id,8,2);
   active=9;game_host.acknowledge_delivery(panels.id,9,3);
+  const auto settled=logistics05::inspect_manufactured_evidence(
+      w.world(),wo5_status,9,panels);
+  ck(settled &&
+     settled->phase==logistics05::ManufacturedPhase::Settled &&
+     settled->loaded_receipt && settled->unload_receipt &&
+     settled->settlement_receipt &&
+     settled->original_carrier_held_kg==0,
+     "WO5 final settlement lacks two original signers or physical proof");
   active=0;
   // The first destination cannot receive the redirected frames even after
   // delivery of another item: storage and settlement remain destination-scoped.
@@ -335,8 +482,8 @@ int main(){
   std::cerr<<"v58 carrier at x="<<sx<<" replacement x="<<tx<<"\n";
   // Move the carrier to replacement warehouse; cargo stays aboard until
   // local distance, finite storage capacity and the canonical world commit.
-  for(int i=0;i<10;++i)send_as(w,9630+static_cast<std::uint64_t>(i),8,carrier,Action::Thrust,0,1,1);
-  for(int i=0;i<10;++i)send_as(w,9640+static_cast<std::uint64_t>(i),8,carrier,Action::Thrust,0,1,-1);
+  for(int i=0;i<10;++i)send_as(w,9630+static_cast<std::uint64_t>(i),8,carrier,Action::Thrust,0,0,1);
+  for(int i=0;i<10;++i)send_as(w,9640+static_cast<std::uint64_t>(i),8,carrier,Action::Thrust,0,0,-1);
   std::cerr<<"v58 carrier after approach x="<<w.world().find(carrier)->position.x<<" replacement x="<<tx<<"\n";
   for(const auto fail:{FailPoint::AfterReceiptWrite,FailPoint::AfterSnapshotWrite}){
     const auto before=w.world().tick();
@@ -365,6 +512,16 @@ int main(){
   // once, not replay two historical cargo arrivals as cold macro events.
   (void)game_host.transition_region("v59-delivered-promote",re::SimulationOwner::Detailed);
   (void)game_host.transition_region("v59-delivered-demote",re::SimulationOwner::Cold);
+  const auto finished_epoch=owner.state();
+  const auto finished_audit=logistics05::observe_native_regional_recovery(
+      path,w,region,owner,7,finished_epoch.generation,
+      finished_epoch.checkpoint_revision);
+  ck(finished_audit && finished_audit->mode==re::SimulationOwner::Cold &&
+     finished_audit->phase==re::TransitionPhase::Stable &&
+     finished_audit->original_world_generation==w.generation() &&
+     !finished_audit->has_unresolved_original_freight &&
+     w.world().total_material_kg()==conserved,
+     "WO5-E settled original cargo changed after return to cold owner");
   shipping::verify_regional_shipment_boundaries(path);
   {sqlite3* db=nullptr;ck(sqlite3_open(path.c_str(),&db)==SQLITE_OK,"v59 boundary audit DB unavailable");
    sqlite3_stmt* q=nullptr;
@@ -463,7 +620,9 @@ int main(){
       "transport fixture backup incomplete");
     sqlite3_close(to);sqlite3_close(from);
   }
-  for(const auto& file:{path,copy,corrupt,badledger})std::filesystem::remove(file);
-  return 0;
+  // Windows cannot unlink an open SQLite database. World, regional
+  // checkpoint and authority objects leave scope before fixture cleanup.
  }catch(const std::exception& e){std::cerr<<"v58 alternate destination and production host FAIL: "<<e.what()<<'\n';return 1;}
+ for(const auto& file:{path,copy,corrupt,badledger})std::filesystem::remove(file);
+ return 0;
 }

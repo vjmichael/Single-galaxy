@@ -198,7 +198,10 @@ int main(){
         reject([&]{PersistentWorld broken(corrupted,Simulation(8800));},
                "activated child-region binding deletion escaped verification");
         std::filesystem::remove(corrupted);
-        std::filesystem::remove(path);
+        // Close the persistent world, appearance store and regional owners
+        // before deleting their shared SQLite file (mandatory on Windows).
         std::cout<<"PASS q6e5b3 region A child in flight, region B ownership safe, origin fenced\n";
     }catch(const std::exception& e){std::cerr<<"FAIL q6e3a: "<<e.what()<<'\n';return 1;}
+    std::filesystem::remove(path);
+    return 0;
 }

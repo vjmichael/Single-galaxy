@@ -1,4 +1,8 @@
 #include "galaxy/Persistence.hpp"
+#include "galaxy/WO5DelegatedLogistics.hpp"
+#include "galaxy/WO5RegionalRecovery.hpp"
+#include "galaxy/WO5RegionalFreightFence.hpp"
+#include "galaxy/WO5FreightEvidence.hpp"
 #include "galaxy/FleetSelection.hpp"
 #include "galaxy/OrbitalShuttleCommands.hpp"
 #include "galaxy/ShipInteractionExecutors.hpp"
@@ -23,7 +27,12 @@ static Chosen select_site(bool farm) {
             if(farm && (body.orbital_radius_milli_au<2200 ||
                         body.orbital_radius_milli_au>12000))continue;
             if(!farm) {
-                if(!sample.celestial_oasis_prospect(body.id)->candidate)continue;
+                const auto prospect=sample.celestial_oasis_prospect(body.id);
+                if(!prospect || !prospect->candidate)continue;
+                // Source lookup requires the same finite original genesis reserve
+                // that scenario() installs before PersistentWorld is created.
+                // Merely surveying a potential oasis does not create matter.
+                sample.provision_oasis_reserve_genesis(body.id,8000,4000);
                 const auto source=sample.planetary_oasis_source_region(7,ship,body.id);
                 if(source)return {system,body.id,source->latitude,source->longitude};
                 continue;
@@ -136,6 +145,7 @@ static void scenario(const fs::path& db, bool farming,
     std::uint64_t first_npc=0,second_npc=0;
     std::int64_t origin=0;
     std::string durable;
+    std::uint64_t verified_ascent_receipt=0;
     {
         Simulation seed(613,chosen.system);
         ship=seed.add_colony_ship(7,{0,0},60,manufactured?10:8);
@@ -149,7 +159,8 @@ static void scenario(const fs::path& db, bool farming,
         if(!manufactured)
             seed.provision_colony_genesis(freighter,1000,1000,1000,1000,1000);
         seed.provision_colony_genesis(receiver,1000,1000,1000,1000,1000);
-        if(autonomous)seed.provision_starter_exploration_scanner(receiver);
+        // Named crew must be materialized before scanner provisioning upgrades
+        // the original world beyond the genesis-only workforce migration.
         seed.enable_individual_workforce();
         seed.provision_starter_exploration_scanner(ship);
         if(!manufactured)seed.provision_starter_exploration_scanner(freighter);
@@ -467,9 +478,18 @@ static void scenario(const fs::path& db, bool farming,
             transport::LocationKind::ColonyShip,ship};
         CHECK(upgraded_residence.npc_records().at(passenger).legal_residence()==
               expected_home);
-        upgraded_residence.upgrade_legal_residence_snapshot_format();
+        // The ordinary v85 route needs the explicit v86 migration. The
+        // manufactured shipyard path already advanced to v92 with legal
+        // residence persisted; never downgrade its canonical world.
+        // Only historical v85 worlds require the one-time native migration.
+        // A manufactured or supervised NPC freight scenario may already be
+        // v92/v95; migration must never downgrade its original receipts.
+        const bool legacy_v85=visitor_state.rfind("galaxy-kernel-v85|",0)==0;
+        if(legacy_v85)
+            upgraded_residence.upgrade_legal_residence_snapshot_format();
         const auto v86_state=upgraded_residence.canonical_state();
-        CHECK(v86_state.rfind((manufactured?"galaxy-kernel-v92|":"galaxy-kernel-v86|"),0)==0);
+        CHECK(v86_state.rfind(legacy_v85?"galaxy-kernel-v86|":
+              visitor_state.substr(0,visitor_state.find('|')+1),0)==0);
         CHECK(Simulation::from_snapshot(v86_state).canonical_state()==v86_state);
         CHECK(Simulation::from_snapshot(v86_state).npc_records().at(passenger)
               .legal_residence()==expected_home);
@@ -705,6 +725,11 @@ static void scenario(const fs::path& db, bool farming,
             chosen.latitude,chosen.longitude,0));
         CHECK(w.world().planetary_sites().size()==1);
         CHECK(w.world().total_ore()==origin);
+        // Both farm and oasis scenarios have a real native ascent receipt.
+        // The extended freight block below only runs for the oasis route;
+        // leaving this unset made farm reopen comparisons test against zero.
+        verified_ascent_receipt=w.world().planetary_shuttles().at(key).ascent_receipt;
+        CHECK(verified_ascent_receipt!=0);
         durable=w.world().canonical_state();
         CHECK(durable.rfind((manufactured?"galaxy-kernel-v92|":"galaxy-kernel-v85|"),0)==0);
         CHECK(Simulation::from_snapshot(durable).canonical_state()==durable);
@@ -724,8 +749,21 @@ static void scenario(const fs::path& db, bool farming,
             const auto ship_before=w.world().life_support(ship)->nutrients_kg;
             CHECK(!w.load_planetary_shuttle(8,ship,key,
                 ShuttleCargo::Nutrients,500));
-            CHECK(!w.load_planetary_shuttle(7,ship,key,
-                ShuttleCargo::Nutrients,500)); // still docked in orbit
+            // Orbit-side loading from the real ship is legitimate; it does
+            // NOT withdraw one kilogram from the remote surface. Return that
+            // same cargo to the ship before requesting surface collection.
+            const auto orbit_site_nutrients=
+                w.world().planetary_sites().at(key).nutrients_kg;
+            const auto orbit_ship_nutrients=
+                w.world().life_support(ship)->nutrients_kg;
+            CHECK(w.load_planetary_shuttle(7,ship,key,
+                ShuttleCargo::Nutrients,500));
+            CHECK(w.world().planetary_sites().at(key).nutrients_kg==
+                  orbit_site_nutrients);
+            CHECK(w.unload_planetary_shuttle(7,ship,key,
+                ShuttleCargo::Nutrients,500));
+            CHECK(w.world().life_support(ship)->nutrients_kg==
+                  orbit_ship_nutrients);
             CHECK(w.launch_planetary_shuttle(7,ship,key,81006,false));
             w.steps(3);
             CHECK(w.world().planetary_shuttles().at(key).flight_phase==2);
@@ -964,6 +1002,16 @@ static void scenario(const fs::path& db, bool farming,
             CHECK(w.world().life_support(receiver)->nutrients_kg==to_before);
             CHECK(w.world().intercolony_freight().at(77003).stage==
                   IntercolonyFreightStage::Loaded);
+            // WO5-B: loaded is proved by original physically sealed cargo,
+            // not the administrative booking or a claim of remote arrival.
+            const auto freight_loaded=logistics05::inspect_original_freight_evidence(
+                w.world(),7,77003);
+            CHECK(freight_loaded &&
+                  freight_loaded->original_stage==IntercolonyFreightStage::Loaded &&
+                  freight_loaded->physically_carried_kg==200 &&
+                  !freight_loaded->actual_arrival_proved);
+            CHECK(!logistics05::inspect_original_freight_evidence(
+                w.world(),8,77003));
             CHECK(!w.deliver_intercolony_freight(7,77003)); // wrong frame
             const auto aboard=w.world().canonical_state();
             // This sealed-cargo snapshot predates navigation posting.
@@ -1110,6 +1158,16 @@ static void scenario(const fs::path& db, bool farming,
             CHECK(w.world().intercolony_freight().at(77003).arrival_receipt==99021);
             CHECK(w.world().intercolony_freight().at(77003).stage==
                   IntercolonyFreightStage::Delivered);
+            // WO5-B: destination was credited only after original
+            // celestial receipt 99021 and the sealed cargo left the carrier.
+            const auto freight_delivered=
+                logistics05::inspect_original_freight_evidence(w.world(),7,77003);
+            CHECK(freight_delivered &&
+                  freight_delivered->original_stage==
+                      IntercolonyFreightStage::Delivered &&
+                  freight_delivered->actual_arrival_proved &&
+                  freight_delivered->original_arrival_receipt==99021 &&
+                  freight_delivered->physically_carried_kg==0);
             CHECK(w.world().total_ore()==origin);
             // Single-contract path: player assigns a REAL returning carrier
             // to an unfinished NPC surface pickup. Native ticks load the
@@ -1139,11 +1197,156 @@ static void scenario(const fs::path& db, bool farming,
             }
             CHECK(w.post_intercolony_work_order(7,ship,key,
                 ShuttleCargo::Nutrients,100,77007,freighter,receiver));
+            // WO5-B: an atomically posted pickup is still NOT a loaded
+            // carrier; original freight receipts prove the distinction.
+            const auto awaiting=logistics05::inspect_original_freight_evidence(
+                w.world(),7,77007);
+            CHECK(awaiting &&
+                  awaiting->original_stage==
+                      IntercolonyFreightStage::AwaitingPickup &&
+                  !awaiting->actual_arrival_proved &&
+                  awaiting->physically_carried_kg==0);
             if(delegated){
-                CHECK(w.delegate_transport_work_order(
-                    7,ship,94007,WorkTaskKind::LocalDelivery,77007));
-                CHECK(w.delegate_transport_work_order(
-                    7,ship,94008,WorkTaskKind::IntercolonyFreight,77007,94007));
+                // WO5-E: register a real regional scheduler in this very
+                // SQLite database, not an unrelated mock regional store.
+                // The original posted intercolony shipment is still
+                // physically unresolved: cold/detailed promotion MUST fail.
+                regional_events::CheckpointStore cp(db.string(),"wo5-native-freight");
+                regional_events::Scheduler cold;
+                cold_colony::State cold_home{};
+                cold.add_colony("freight-home",cold_home);
+                CHECK(cp.save(cold,0)==1);
+                regional_events::RegionalModeAuthority authority(cp);
+                const auto state=authority.enroll();
+                CHECK(state.owner==regional_events::SimulationOwner::Cold &&
+                      state.phase==regional_events::TransitionPhase::Stable);
+                const auto audit=logistics05::observe_native_regional_recovery(
+                    db.string(),w,cp,authority,7,state.generation,
+                    state.checkpoint_revision);
+                CHECK(audit &&
+                      audit->awaiting>=1 &&
+                      audit->has_unresolved_original_freight &&
+                      !audit->may_consider_detailed_only_work &&
+                      audit->original_world_generation==w.generation());
+                bool unsafe_handoff=false;
+                try{
+                    (void)authority.prepare("wo5-unsafe-inflight",
+                        regional_events::SimulationOwner::Detailed,
+                        state.generation,state.checkpoint_revision,
+                        state.boundary_tick);
+                }catch(const std::exception&){unsafe_handoff=true;}
+                CHECK(unsafe_handoff &&
+                      authority.state().phase==
+                          regional_events::TransitionPhase::Stable);
+                // Even a perfectly matching forged counter in an unrelated
+                // SQLite file cannot borrow this world's physical cargo.
+                const auto foreign_db=db.string()+".wo5_other.sqlite";
+                regional_events::CheckpointStore unrelated(foreign_db,
+                    "wo5-native-freight");
+                CHECK(unrelated.save(cold,0)==1);
+                regional_events::RegionalModeAuthority foreign(unrelated);
+                const auto fake=foreign.enroll();
+                CHECK(!logistics05::observe_native_regional_recovery(
+                    db.string(),w,unrelated,foreign,7,fake.generation,
+                    fake.checkpoint_revision));
+            }
+            if(delegated){
+                // WO5-D: one owner-authorized contract over the actual
+                // original posted work order, 2 real finite vehicles and
+                // an existing physical NPC/pilot roster. No shadow jobs.
+                const logistics05::DelegationPolicy policy{true,true,true};
+                CHECK(!logistics05::inspect_native_contract(
+                    w.world(),8,ship,77007,94007,94008,policy));
+                CHECK(!logistics05::inspect_native_contract(
+                    w.world(),7,ship,77007,94007,94008,
+                    logistics05::DelegationPolicy{}));
+                const auto proposal=logistics05::inspect_native_contract(
+                    w.world(),7,ship,77007,94007,94008,policy);
+                CHECK(proposal &&
+                      proposal->real_carrier==freighter &&
+                      proposal->real_receiver==receiver &&
+                      proposal->kilograms==100 &&
+                      proposal->eligible_native_pilots+
+                          (proposal->currently_assigned_pilot?1:0)>0 &&
+                      !proposal->pickup_already_delegated &&
+                      !proposal->freight_already_delegated);
+                const auto prior_hash=w.world().state_hash();
+                const auto prior_mass=w.world().total_ore();
+                CHECK(logistics05::commit_native_contract(
+                    w,*proposal,false).status==
+                    logistics05::DelegationResult::Refused);
+                CHECK(w.world().state_hash()==prior_hash);
+                bool second_rolled_back=false;
+                try{
+                    (void)logistics05::commit_native_contract(
+                        w,*proposal,true,FailPoint::AfterSnapshotWrite);
+                }catch(const std::exception&){second_rolled_back=true;}
+                CHECK(second_rolled_back);
+                // First durable original directive SURVIVES second-step
+                // SQLite failure; second does not, and no cargo moves.
+                CHECK(w.world().work_directives().count(94007)==1 &&
+                      w.world().work_directives().count(94008)==0 &&
+                      w.world().total_ore()==prior_mass);
+                const auto recovery_offer=logistics05::inspect_native_contract(
+                    w.world(),7,ship,77007,94007,94008,policy);
+                CHECK(recovery_offer &&
+                      recovery_offer->pickup_already_delegated &&
+                      !recovery_offer->freight_already_delegated);
+                const auto restarted_generation=w.generation();
+                const auto finish=logistics05::commit_native_contract(
+                    w,*recovery_offer,true);
+                CHECK(finish.status==
+                    logistics05::DelegationResult::AllOriginalDirectivesCommitted &&
+                      w.generation()==restarted_generation+1 &&
+                      w.world().work_directives().at(94008).requires_directive==94007);
+                CHECK(logistics05::commit_native_contract(
+                    w,*proposal,true).status==
+                    logistics05::DelegationResult::Refused);
+                const auto after=logistics05::inspect_native_contract_status(
+                    w.world(),7,77007,94007,94008);
+                CHECK(after &&
+                      after->pickup_status==WorkDirectiveStatus::Active &&
+                      after->freight_status==WorkDirectiveStatus::Active &&
+                      !after->real_delivery_confirmed);
+                // Independent SQLite recovery and owner revocation test:
+                // cancel only FUTURE NPC delegation, not the real finite
+                // pickup, in-transit material or its original freight leg.
+                const auto cancelled_db=db.string()+".wo5_cancel_delegation.sqlite";
+                PersistentWorld::recover_copy(db.string(),cancelled_db);
+                {
+                    PersistentWorld copy(cancelled_db,Simulation(99437));
+                    CHECK(copy.world().work_directives().count(94008)==1);
+                    const auto untouched=copy.world().state_hash();
+                    bool cancelled_fault=false;
+                    try{
+                        (void)logistics05::revoke_native_delegation(
+                            copy,7,94007,94008,true,
+                            FailPoint::AfterSnapshotWrite);
+                    }catch(const std::exception&){cancelled_fault=true;}
+                    CHECK(cancelled_fault &&
+                          copy.world().state_hash()==untouched);
+                    CHECK(!logistics05::revoke_native_delegation(
+                        copy,8,94007,94008,true));
+                    CHECK(logistics05::revoke_native_delegation(
+                        copy,7,94007,94008,true));
+                    CHECK(copy.world().work_directives().at(94007).status==
+                          WorkDirectiveStatus::Cancelled &&
+                          copy.world().work_directives().at(94008).status==
+                          WorkDirectiveStatus::Cancelled &&
+                          copy.world().local_delivery_board().at(77007).stage==
+                          LocalDeliveryStage::Posted &&
+                          copy.world().intercolony_freight().at(77007).stage==
+                          IntercolonyFreightStage::AwaitingPickup &&
+                          copy.world().total_ore()==prior_mass);
+                    CHECK(!logistics05::revoke_native_delegation(
+                        copy,7,94007,94008,true));
+                }
+                {
+                    PersistentWorld restarted(cancelled_db,Simulation(99438));
+                    CHECK(restarted.world().work_directives().at(94008).status==
+                          WorkDirectiveStatus::Cancelled &&
+                          restarted.world().local_delivery_board().count(77007)==1);
+                }
                 CHECK(w.world().universal_work_board(7,ship).size()>0);
             }
             if(manufactured){
@@ -1167,8 +1370,82 @@ static void scenario(const fs::path& db, bool farming,
                       WorkDirectiveStatus::Fulfilled);
                 CHECK(w.world().work_directives().at(94008).status==
                       WorkDirectiveStatus::Active);
+                const auto in_flight=logistics05::inspect_native_contract_status(
+                    w.world(),7,77007,94007,94008);
+                CHECK(in_flight &&
+                      in_flight->native_pickup==LocalDeliveryStage::Complete &&
+                      in_flight->native_freight==IntercolonyFreightStage::Loaded &&
+                      !in_flight->real_delivery_confirmed &&
+                      in_flight->original_pilot!=0);
+                // WO5-E second physical boundary: the shuttle finished
+                // its journey, but the SEALED 100kg are still on the
+                // freighter and must not be transformed into cold macro
+                // inventory while crossing a regional owner epoch.
+                regional_events::CheckpointStore cp(
+                    db.string(),"wo5-native-freight");
+                regional_events::RegionalModeAuthority authority(cp);
+                const auto token=authority.state();
+                const auto loaded_audit=logistics05::observe_native_regional_recovery(
+                    db.string(),w,cp,authority,7,token.generation,
+                    token.checkpoint_revision);
+                CHECK(loaded_audit && loaded_audit->loaded==1 &&
+                      loaded_audit->awaiting==0 &&
+                      loaded_audit->delivered>=1 &&
+                      loaded_audit->has_unresolved_original_freight);
+                // Native carrier reused after a PRIOR completed nutrient
+                // delivery: its new 100kg belong solely to 77007. The
+                // old 77003 delivery receipt remains independently valid.
+                const auto older=logistics05::inspect_original_freight_evidence(
+                    w.world(),7,77003);
+                CHECK(older && older->actual_arrival_proved &&
+                      older->physically_carried_kg==0 &&
+                      older->other_loaded_same_good_kg==100);
+                bool cannot_cutover=false;
+                try{
+                    (void)authority.prepare("wo5-loaded-cutover",
+                        regional_events::SimulationOwner::Detailed,
+                        token.generation,token.checkpoint_revision,
+                        token.boundary_tick);
+                }catch(const std::exception&){cannot_cutover=true;}
+                CHECK(cannot_cutover &&
+                      authority.state().phase==
+                          regional_events::TransitionPhase::Stable);
             }
-            if(autonomous){
+            if(delegated){
+                // WO5-D: the original named-NPC navigation service moves
+                // precisely the REAL 100kg carrier already sealed by the
+                // original local freight operation. No imagined carrier
+                // itinerary or free arrival; original native receipt wins.
+                const auto navigation=logistics05::inspect_native_npc_freight_flight(
+                    w.world(),7,77007,95023,99023);
+                CHECK(navigation && navigation->carrier_ship==freighter &&
+                      navigation->destination_ship==receiver &&
+                      navigation->destination_body==receiver_body &&
+                      navigation->native_pilot_id!=0);
+                CHECK(!logistics05::inspect_native_npc_freight_flight(
+                    w.world(),8,77007,95123,99123));
+                const auto flight_hash=w.world().state_hash();
+                CHECK(!logistics05::commit_native_npc_freight_flight(
+                    w,*navigation,false));
+                CHECK(w.world().state_hash()==flight_hash);
+                bool flight_interrupted=false;
+                try{
+                    (void)logistics05::commit_native_npc_freight_flight(
+                        w,*navigation,true,FailPoint::AfterSnapshotWrite);
+                }catch(const std::exception&){flight_interrupted=true;}
+                CHECK(flight_interrupted &&
+                      w.world().state_hash()==flight_hash);
+                CHECK(logistics05::commit_native_npc_freight_flight(
+                    w,*navigation,true));
+                CHECK(!logistics05::commit_native_npc_freight_flight(
+                    w,*navigation,true)); // never schedule second copy
+                w.steps(5);
+                CHECK(w.world().npc_flight_orders().at(95023).phase==
+                      NpcFlightPhase::Arrived &&
+                      w.world().npc_flight_orders().at(95023).pilot_npc==
+                          navigation->native_pilot_id);
+                CHECK(w.world().completed_celestial_transits().count(99023)==1);
+            }else if(autonomous){
                 CHECK(w.queue_npc_flight(7,freighter,autonomous_pilot,
                     receiver_body,95023,99023,NpcFlightPurpose::Freight));
                 w.steps(5);
@@ -1184,6 +1461,124 @@ static void scenario(const fs::path& db, bool farming,
                 w.step();
                 CHECK(w.world().work_directives().at(94008).status==
                       WorkDirectiveStatus::Fulfilled);
+                const auto delivered=logistics05::inspect_native_contract_status(
+                    w.world(),7,77007,94007,94008);
+                CHECK(delivered &&
+                      delivered->pickup_status==WorkDirectiveStatus::Fulfilled &&
+                      delivered->freight_status==WorkDirectiveStatus::Fulfilled &&
+                      delivered->native_freight==IntercolonyFreightStage::Delivered &&
+                      delivered->original_arrival_receipt==99023 &&
+                      delivered->real_delivery_confirmed);
+                CHECK(!logistics05::inspect_native_contract_status(
+                    w.world(),8,77007,94007,94008));
+                // WO5-E: the exact ORIGINAL delivery, not a planning
+                // receipt or a cold simulation, releases the handoff fence.
+                // Recreate the regional handle after the fault/restart
+                // and enforce old-epoch refusal across both directions.
+                regional_events::CheckpointStore cp(
+                    db.string(),"wo5-native-freight");
+                regional_events::RegionalModeAuthority authority(cp);
+                const auto cold_state=authority.state();
+                const auto safe=logistics05::observe_native_regional_recovery(
+                    db.string(),w,cp,authority,7,cold_state.generation,
+                    cold_state.checkpoint_revision);
+                CHECK(safe && safe->awaiting==0 && safe->loaded==0 &&
+                      safe->delivered>=2 &&
+                      !safe->has_unresolved_original_freight &&
+                      !safe->may_consider_detailed_only_work);
+                const auto prior_world_hash=w.world().state_hash();
+                const auto prior_world_generation=w.generation();
+                const auto promote=authority.prepare(
+                    "wo5-native-to-detailed",
+                    regional_events::SimulationOwner::Detailed,
+                    cold_state.generation,cold_state.checkpoint_revision,
+                    cold_state.boundary_tick);
+                const auto during=logistics05::observe_native_regional_recovery(
+                    db.string(),w,cp,authority,7,promote.generation,
+                    promote.checkpoint_revision);
+                CHECK(during && during->phase==
+                      regional_events::TransitionPhase::ToDetailed &&
+                      !during->may_consider_detailed_only_work);
+                bool transient=false;
+                try{
+                    (void)authority.commit(
+                        "wo5-native-to-detailed",promote.generation,
+                        promote.checkpoint_revision,
+                        [](sqlite3*,regional_events::Scheduler&){
+                            throw std::runtime_error("injected handoff stage crash");
+                        });
+                }catch(const std::exception&){transient=true;}
+                CHECK(transient && authority.state().phase==
+                      regional_events::TransitionPhase::ToDetailed &&
+                      w.world().state_hash()==prior_world_hash &&
+                      w.generation()==prior_world_generation);
+                const auto warm=authority.commit(
+                    "wo5-native-to-detailed",promote.generation,
+                    promote.checkpoint_revision,
+                    [](sqlite3*,regional_events::Scheduler&){});
+                CHECK(warm.owner==regional_events::SimulationOwner::Detailed &&
+                      warm.phase==regional_events::TransitionPhase::Stable &&
+                      warm.generation>cold_state.generation &&
+                      w.generation()==prior_world_generation);
+                CHECK(!logistics05::observe_native_regional_recovery(
+                    db.string(),w,cp,authority,7,cold_state.generation,
+                    cold_state.checkpoint_revision));
+                const auto warm_audit=logistics05::observe_native_regional_recovery(
+                    db.string(),w,cp,authority,7,warm.generation,
+                    warm.checkpoint_revision);
+                CHECK(warm_audit && warm_audit->may_consider_detailed_only_work &&
+                      warm_audit->delivered>=2 &&
+                      !warm_audit->has_unresolved_original_freight);
+                const auto demote=authority.prepare(
+                    "wo5-native-to-cold",
+                    regional_events::SimulationOwner::Cold,
+                    warm.generation,warm.checkpoint_revision,warm.boundary_tick);
+                const auto cold_again=authority.commit(
+                    "wo5-native-to-cold",demote.generation,
+                    demote.checkpoint_revision,
+                    [](sqlite3*,regional_events::Scheduler&){});
+                const auto audited=logistics05::observe_native_regional_recovery(
+                    db.string(),w,cp,authority,7,cold_again.generation,
+                    cold_again.checkpoint_revision);
+                CHECK(audited && !audited->has_unresolved_original_freight &&
+                      !audited->may_consider_detailed_only_work &&
+                      audited->delivered>=2 &&
+                      w.world().state_hash()==prior_world_hash &&
+                      w.generation()==prior_world_generation);
+                bool replay_rejected=false;
+                try{
+                    (void)authority.commit("wo5-native-to-cold",
+                        demote.generation,demote.checkpoint_revision,
+                        [](sqlite3*,regional_events::Scheduler&){});
+                }catch(const std::exception&){replay_rejected=true;}
+                CHECK(replay_rejected);
+                // Independent DB copy is a DIFFERENT physical owner
+                // instance, yet must contain the SAME committed regional
+                // epoch, original twice-delivered cargo and unique receipts.
+                const auto recovered_path=db.string()+".wo5-regional-recovered";
+                PersistentWorld::recover_copy(db.string(),recovered_path);
+                {
+                    PersistentWorld restored(recovered_path,Simulation(613));
+                    regional_events::CheckpointStore restored_checkpoint(
+                        recovered_path,"wo5-native-freight");
+                    regional_events::RegionalModeAuthority restored_owner(
+                        restored_checkpoint);
+                    const auto epoch=restored_owner.state();
+                    const auto restored_audit=
+                        logistics05::observe_native_regional_recovery(
+                            recovered_path,restored,restored_checkpoint,
+                            restored_owner,7,epoch.generation,
+                            epoch.checkpoint_revision);
+                    CHECK(epoch.owner==regional_events::SimulationOwner::Cold &&
+                          epoch.phase==regional_events::TransitionPhase::Stable &&
+                          epoch.generation==cold_again.generation &&
+                          restored.world().canonical_state()==
+                              w.world().canonical_state() &&
+                          restored_audit && restored_audit->loaded==0 &&
+                          restored_audit->awaiting==0 &&
+                          restored_audit->delivered>=2 &&
+                          !restored_audit->may_consider_detailed_only_work);
+                }
             }else CHECK(w.deliver_intercolony_freight(7,77007));
             CHECK(w.world().intercolony_freight().at(77007).arrival_receipt==99023);
             CHECK(w.world().life_support(receiver)->nutrients_kg==to_before+300);
@@ -1250,10 +1645,19 @@ static void scenario(const fs::path& db, bool farming,
                 CHECK(w.world().colony_ship(receiver)->crew==3);
                 CHECK(w.world().total_ore()==origin);
             }
+            verified_ascent_receipt=w.world().planetary_shuttles().at(key).ascent_receipt;
+            CHECK(verified_ascent_receipt!=0);
             durable=w.world().canonical_state();
-            CHECK(durable.rfind(autonomous?"galaxy-kernel-v95|":
-                delegated?"galaxy-kernel-v94|":
-                (manufactured?"galaxy-kernel-v92|":"galaxy-kernel-v89|"),0)==0);
+            // Genuine local ship rendezvous enables v97 identity/custody.
+            // Do not expect the earlier v95 autonomous-flight header after
+            // the original owner-authorized rendezvous is constructed.
+            const auto expected_snapshot_header=rendezvous_freight?"galaxy-kernel-v97|":
+                (autonomous||delegated)?"galaxy-kernel-v95|":
+                (manufactured?"galaxy-kernel-v92|":"galaxy-kernel-v89|");
+            if(durable.rfind(expected_snapshot_header,0)!=0)
+                throw std::runtime_error("unexpected physical freight snapshot version: expected "+
+                    std::string(expected_snapshot_header)+" actual "+
+                    durable.substr(0,durable.find('|')));
             CHECK(Simulation::from_snapshot(durable).canonical_state()==durable);
         }
     }
@@ -1262,10 +1666,23 @@ static void scenario(const fs::path& db, bool farming,
         CHECK(w.world().canonical_state()==durable);
         CHECK(w.world().total_ore()==origin);
         CHECK(w.world().planetary_sites().size()==1);
-        CHECK(w.world().planetary_shuttles().at(
+        // Verify the exact original receipt captured after the real flights
+        // and work-board operations survives independent SQLite reopening.
+        // The final receipt is scenario-dependent: player ascent, named
+        // pilot work order, and manufactured cargo use different IDs.
+        const auto recovered_ascent=w.world().planetary_shuttles().at(
             PlanetarySiteKey{chosen.body,chosen.latitude,chosen.longitude,1})
-              .ascent_receipt==(farming?81003:
-                 (0x10000000000000ULL | (77003ULL<<1) | 1ULL)));
+              .ascent_receipt;
+        if(recovered_ascent!=verified_ascent_receipt)
+            throw std::runtime_error(
+                "original shuttle ascent receipt differs after SQLite restart: "
+                "expected="+std::to_string(verified_ascent_receipt)+
+                " actual="+std::to_string(recovered_ascent)+
+                " scenario="+(farming?std::string("farm"):std::string("oasis"))+
+                " manufactured="+std::to_string(manufactured)+
+                " autonomous="+std::to_string(autonomous)+
+                " delegated="+std::to_string(delegated)+
+                " rendezvous="+std::to_string(rendezvous_freight));
         CHECK(!w.launch_planetary_shuttle(7,ship,
             PlanetarySiteKey{chosen.body,chosen.latitude,chosen.longitude,1},
             81001,false));
