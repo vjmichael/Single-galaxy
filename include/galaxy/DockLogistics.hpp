@@ -88,6 +88,9 @@ class Ledger {
          "units INTEGER NOT NULL CHECK(units=1))");
     exec("CREATE INDEX IF NOT EXISTS dock_units_worker_v1 "
          "ON dock_serviced_units_v1(npc_id)");
+    exec("CREATE TABLE IF NOT EXISTS dock_jobs_archive_v1("
+         "job INTEGER PRIMARY KEY,station INTEGER NOT NULL,owner INTEGER NOT NULL,"
+         "kind INTEGER NOT NULL,completed INTEGER NOT NULL,archived_tick INTEGER NOT NULL)");
   }
   ~Ledger(){sqlite3_close(db_);}
   Ledger(const Ledger&)=delete;
@@ -138,6 +141,70 @@ class Ledger {
     s.bind(4,sim.tick());s.bind(5,sim.tick()+256);
     if(s.next()!=SQLITE_DONE)throw std::runtime_error("dock assignment SQL");
     return sqlite3_changes(db_)==1;
+  }
+  // An explicit owner-approved renewal is bounded to four native shifts
+  // since original assignment. No model or background service can renew a
+  // finite crew member indefinitely without a new authorized appointment.
+  bool renew(const Simulation& sim,EntityId station,PlayerId owner,
+             std::uint64_t npc_id){
+    if(!npc_id || !station || !owner ||
+       !sim.npc_available_for_shore_duty(npc_id,station) ||
+       workforce02::already_on_named_duty(sim,npc_id,sim.tick()))return false;
+    const auto it=sim.npc_records().find(npc_id);
+    if(it==sim.npc_records().end())return false;
+    const auto* ship=sim.find(it->second.home_ship);
+    if(!ship||ship->owner_id!=owner ||
+       ship->dock_station!=station||ship->dock_state!=DockState::Docked)
+        return false;
+    Statement q(db_,"SELECT assigned_tick,shift_end_tick FROM dock_staff_v1 "
+                    "WHERE npc_id=? AND station=? AND owner=?");
+    q.bind(1,npc_id);q.bind(2,station);q.bind(3,owner);
+    if(q.next()!=SQLITE_ROW)return false;
+    const auto assigned=q.number(0),ending=q.number(1),now=sim.tick();
+    if(now<assigned||now>=ending||now-assigned>=1024 ||
+       now>std::numeric_limits<std::uint64_t>::max()-256)return false;
+    const auto cap=assigned+1024;
+    const auto next=std::min(now+256,cap);
+    if(next<=ending)return false;
+    Statement update(db_,"UPDATE dock_staff_v1 SET shift_end_tick=? "
+                         "WHERE npc_id=? AND station=? AND owner=? "
+                         "AND shift_end_tick=?");
+    update.bind(1,next);update.bind(2,npc_id);update.bind(3,station);
+    update.bind(4,owner);update.bind(5,ending);update.next();
+    return sqlite3_changes(db_)==1;
+  }
+  // Completed original-world material receipts are independent of these
+  // compact queue rows. Archive only terminal jobs, keeping immutable unit
+  // receipts and their worker experience in the original SQLite save.
+  std::uint64_t archive_completed(const Simulation& sim,EntityId station,
+                                  PlayerId owner,std::uint64_t retain=64){
+    if(!station||!owner||retain<8||retain>128)return 0;
+    Statement q(db_,"SELECT id,kind,completed FROM dock_jobs_v1 "
+       "WHERE station=? AND owner=? AND state=2 AND pending_command=0 "
+       "ORDER BY id DESC LIMIT -1 OFFSET ?");
+    q.bind(1,station);q.bind(2,owner);q.bind(3,retain);
+    struct Old{std::uint64_t id,kind,count;};
+    std::vector<Old> ready;
+    while(q.next()==SQLITE_ROW)
+        ready.push_back({q.number(0),q.number(1),q.number(2)});
+    if(ready.empty())return 0;
+    exec("BEGIN IMMEDIATE");
+    try{
+      for(const auto& old:ready){
+        Statement a(db_,"INSERT INTO dock_jobs_archive_v1 "
+           "(job,station,owner,kind,completed,archived_tick) "
+           "VALUES(?,?,?,?,?,?)");
+        a.bind(1,old.id);a.bind(2,station);a.bind(3,owner);
+        a.bind(4,old.kind);a.bind(5,old.count);a.bind(6,sim.tick());a.next();
+        Statement del(db_,"DELETE FROM dock_jobs_v1 "
+           "WHERE id=? AND station=? AND owner=? AND state=2 "
+           "AND pending_command=0");
+        del.bind(1,old.id);del.bind(2,station);del.bind(3,owner);del.next();
+        if(sqlite3_changes(db_)!=1)
+           throw std::runtime_error("completed dock archive raced original job");
+      }
+      exec("COMMIT");return ready.size();
+    }catch(...){exec("ROLLBACK");throw;}
   }
   // Authenticated station-shift evidence; not a made-up NPC skill sheet.
   std::uint64_t documented_cargo_units(std::uint64_t npc_id) const {
@@ -212,6 +279,13 @@ class Ledger {
     while(b.next()==SQLITE_ROW){
       if(b.number(0)==1)v.completed_passengers=b.number(1);
       else v.completed_tonnes=b.number(1);
+    }
+    Statement archived(db_,"SELECT kind,SUM(completed) FROM dock_jobs_archive_v1 "
+                            "WHERE station=? AND owner=? GROUP BY kind");
+    archived.bind(1,station);archived.bind(2,owner);
+    while(archived.next()==SQLITE_ROW){
+      if(archived.number(0)==1)v.completed_passengers+=archived.number(1);
+      else v.completed_tonnes+=archived.number(1);
     }
     return v;
   }
