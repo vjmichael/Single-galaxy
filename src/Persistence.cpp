@@ -3989,6 +3989,48 @@ public:
         }
         return false;
     }
+    // DOCK-03: a shore-duty worker is a named person, not the entire colony.
+    // A family elsewhere on the ship must not block unrelated adults from
+    // taking local work. Parents/guardians with recorded dependents remain
+    // ineligible until a separate same-berth caregiver policy is implemented.
+    bool named_worker_has_dependent_link(std::uint64_t npc) const {
+        if(!npc)return true;
+        const auto key=std::to_string(npc);
+        Statement births(db_,"SELECT 1 FROM sqlite_master "
+                              "WHERE type='table' AND name='sg_med_society_birth'");
+        if(births.row()){
+            Statement p(db_,"SELECT 1 FROM sg_med_society_birth "
+                             "WHERE parent_a=? OR parent_b=? LIMIT 1");
+            p.text(1,key);p.text(2,key);
+            if(p.row())return true;
+        }
+        if(has_dependent_table()){
+            bool paired=false;
+            {Statement cols(db_,"PRAGMA table_info(sg_dependent_travel)");
+             while(cols.row())
+                 if(sqlite_str(cols.get(),1)=="co_guardian_id")paired=true;}
+            if(paired){
+                Statement guardian(db_,"SELECT 1 FROM sg_dependent_travel "
+                                      "WHERE guardian_id=? OR co_guardian_id=? LIMIT 1");
+                guardian.text(1,key);guardian.text(2,key);
+                if(guardian.row())return true;
+            }else{
+                Statement guardian(db_,"SELECT 1 FROM sg_dependent_travel "
+                                      "WHERE guardian_id=? LIMIT 1");
+                guardian.text(1,key);
+                if(guardian.row())return true;
+            }
+        }
+        Statement table(db_,"SELECT 1 FROM sqlite_master WHERE type='table' "
+                             "AND name='sg_colony_physical_child_authority'");
+        if(table.row()){
+            Statement guard(db_,"SELECT 1 FROM sg_colony_physical_child_authority "
+                                "WHERE guardian_id=? LIMIT 1");
+            guard.text(1,key);
+            if(guard.row())return true;
+        }
+        return false;
+    }
     std::int64_t active_dependent_berths(EntityId ferry) const {
         if(!has_dependent_table())return 0;
         Statement q(db_,"SELECT COUNT(*) FROM sg_dependent_travel WHERE ferry=? AND status=1");
@@ -10123,12 +10165,13 @@ bool PersistentWorld::station_dock_worker_transfer(
         return false;
     // A family/dependent ledger may bind a named adult as a guardian.
     // Do not send a guardian ashore independently of child custody.
-    if(store_->has_child_or_dependent_link(ship))return false;
+    if(store_->named_worker_has_dependent_link(npc))return false;
     const auto expected_generation=generation_;
     step_with_cell_worker(nullptr,fail,
         [&](sqlite3* db,std::uint64_t generation){
-            if(generation!=expected_generation+1)
-                throw std::runtime_error("dock worker custody generation race");
+            if(generation!=expected_generation+1 ||
+               store_->named_worker_has_dependent_link(npc))
+                throw std::runtime_error("dock worker custody or guardian changed");
             run(db,"CREATE TABLE IF NOT EXISTS sg_dock_worker_moves("
                 "receipt INTEGER PRIMARY KEY CHECK(receipt>0),"
                 "owner INTEGER NOT NULL,ship INTEGER NOT NULL,"
