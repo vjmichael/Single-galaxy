@@ -57,7 +57,12 @@ static int run_host(int argc,char** argv){
   // This optional fixture does NOT alter ordinary Single-Galaxy genesis.
   Simulation seed(0x5202);
   const auto test_station=seed.add_station({0,0});
-  (void)seed.spawn_ship_docked(kOwner,test_station,12,24);
+  // One original colony ship with actual finite individually tracked crew.
+  // The prior generic docked hull could never fit/mine with the original
+  // colony materials model. This is a NEW-WORLD genesis change only.
+  // The ship is not gifted a drill or physical refined stock.
+  const auto starting_ship=seed.add_colony_ship(kOwner,{0,0},12,8);
+  seed.enable_individual_workforce();
   (void)seed.add_colony_ship(8,{15000,0},8,2);
   // Explicit test-station genesis ONLY: a single persistent finite asteroid.
   // Existing saves ignore this seed. A visual Godot sample never adds ore.
@@ -66,8 +71,30 @@ static int run_host(int argc,char** argv){
   // Opt in ONLY the genesis of this explicit test station. Existing
   // SQLite worlds must load their own original rules and resources.
   seed.enable_native_swept_asteroid_collision();
+  seed.enable_station_ore_provenance();
+  seed.enable_ship_mining_equipment();
   PersistentWorld world(save_utf8,std::move(seed));
   if(fresh){
+   // One genuine original ship docking command and transition in the
+   // persisted simulation, not a Godot-side dock state or second hull.
+   Command berth{};
+   berth.id=900001;berth.sequence=berth.id;
+   berth.execute_tick=world.world().tick()+1;
+   berth.issuer=kOwner;berth.actor=starting_ship;
+   berth.target=test_station;berth.action=Action::RequestDock;
+   if(!world.submit(berth))throw std::runtime_error("original colony berth command refused");
+   world.step();
+   const auto& dock_event=world.world().events().back();
+   if(dock_event.command_id!=berth.id || dock_event.result!=Outcome::Applied)
+     throw std::runtime_error("original starting colony berth not committed");
+   world.steps(Simulation::kDockTransitionTicks);
+   const auto* docked=world.world().find(starting_ship);
+   if(!docked || docked->dock_state!=DockState::Docked ||
+      docked->dock_station!=test_station ||
+      !world.world().colony_ship(starting_ship) ||
+      world.world().colony_ship(starting_ship)->crew!=8 ||
+      docked->fitting.mining_tool())
+     throw std::runtime_error("physical starter ship/custody or drill-free contract failed");
    if(!world.register_player_at_station(kOwner,test_station))
     throw std::runtime_error("native test station registration denied");
   }
