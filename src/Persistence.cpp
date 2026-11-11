@@ -7501,22 +7501,58 @@ public:
                    n.location==n.home_ship)continue;
                 const auto* berth=restored.find(n.location);
                 if(!berth || berth->type!=EntityType::Station)continue;
-                if(!has_moves)
-                    throw std::runtime_error("shore worker lacks original movement provenance");
-                Statement proof(db_,"SELECT station,ship,direction,generation "
-                                    "FROM sg_dock_worker_moves WHERE npc_id=? "
-                                    "ORDER BY generation DESC LIMIT 1");
-                proof.i64(1,static_cast<sqlite3_int64>(id));
-                if(!proof.row() ||
-                   sqlite3_column_int64(proof.get(),0)!=
-                      static_cast<sqlite3_int64>(n.location) ||
-                   sqlite3_column_int64(proof.get(),1)!=
-                      static_cast<sqlite3_int64>(n.home_ship) ||
-                   sqlite3_column_int(proof.get(),2)!=1 ||
-                   sqlite3_column_int64(proof.get(),3)<1 ||
-                   static_cast<std::uint64_t>(sqlite3_column_int64(proof.get(),3))>generation ||
-                   proof.row())
-                    throw std::runtime_error("original dock worker provenance does not match physical custody");
+                const auto* home=restored.find(n.home_ship);
+                const bool home_shore=home &&
+                    home->dock_state==DockState::Docked &&
+                    home->dock_station==n.location;
+                if(home_shore) {
+                    if(!has_moves)
+                        throw std::runtime_error("shore worker lacks original movement provenance");
+                    Statement proof(db_,"SELECT station,ship,direction,generation "
+                                        "FROM sg_dock_worker_moves WHERE npc_id=? "
+                                        "ORDER BY generation DESC LIMIT 1");
+                    proof.i64(1,static_cast<sqlite3_int64>(id));
+                    if(!proof.row() ||
+                       sqlite3_column_int64(proof.get(),0)!=
+                          static_cast<sqlite3_int64>(n.location) ||
+                       sqlite3_column_int64(proof.get(),1)!=
+                          static_cast<sqlite3_int64>(n.home_ship) ||
+                       sqlite3_column_int(proof.get(),2)!=1 ||
+                       sqlite3_column_int64(proof.get(),3)<1 ||
+                       static_cast<std::uint64_t>(sqlite3_column_int64(proof.get(),3))>generation ||
+                       proof.row())
+                        throw std::runtime_error("original shore duty lacks physical custody proof");
+                } else {
+                    // A visiting passenger may reach this station only via an
+                    // independently APPLIED original ferry disembark to its
+                    // REAL receiving hull, then an atomically journaled walk.
+                    Statement table(db_,"SELECT 1 FROM sqlite_master WHERE type='table' "
+                                         "AND name='sg_dock05_visitor_moves'");
+                    if(!table.row())
+                        throw std::runtime_error("unrecorded intercolony visitor");
+                    Statement proof(db_,"SELECT receiving_ship,station,voyage,"
+                                        "direction,generation FROM sg_dock05_visitor_moves "
+                                        "WHERE npc_id=? ORDER BY generation DESC LIMIT 1");
+                    proof.i64(1,static_cast<sqlite3_int64>(id));
+                    if(!proof.row())
+                        throw std::runtime_error("visitor lacks original station movement");
+                    const auto receiver=static_cast<EntityId>(
+                        sqlite3_column_int64(proof.get(),0));
+                    const auto station=static_cast<EntityId>(
+                        sqlite3_column_int64(proof.get(),1));
+                    const auto voyage=static_cast<std::uint64_t>(
+                        sqlite3_column_int64(proof.get(),2));
+                    const auto direction=sqlite3_column_int(proof.get(),3);
+                    const auto when=sqlite3_column_int64(proof.get(),4);
+                    const auto* receiving_ship=restored.find(receiver);
+                    if(station!=n.location || direction!=1 ||
+                       when<1 || static_cast<std::uint64_t>(when)>generation ||
+                       !receiving_ship ||
+                       receiving_ship->owner_id!=(home?home->owner_id:0) ||
+                       !restored.original_completed_ferry_guest(id,receiver,voyage) ||
+                       proof.row())
+                        throw std::runtime_error("visitor arrival lacks original applied voyage");
+                }
             }
         }
         out.swap(restored);
