@@ -2362,3 +2362,14 @@ if(BUILD_TESTING)
     COMMAND galaxy_group3_asteroid_survey_tests)
   set_tests_properties(galaxy_group3_original_asteroid_survey PROPERTIES TIMEOUT 50)
 endif()
+
+# GROUP3-C actual child-stdio pilot/fitting/MINE and original SQLite recovery.
+if(BUILD_TESTING AND Python3_Interpreter_FOUND)
+  add_executable(galaxy_group3_native_mining_seed tests/Group3NativeMiningSeed.cpp)
+  target_link_libraries(galaxy_group3_native_mining_seed PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_group3_native_mining_pipe
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/Group3NativeMiningPipeTests.py
+      $<TARGET_FILE:galaxy_group3_native_mining_seed>
+      $<TARGET_FILE:galaxy_desktop_player_host>)
+  set_tests_properties(galaxy_group3_native_mining_pipe PROPERTIES TIMEOUT 180)
+endif()
