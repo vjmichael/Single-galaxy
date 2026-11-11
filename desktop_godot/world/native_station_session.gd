@@ -6,6 +6,7 @@ signal person_received(person: Dictionary)
 signal refinery_received(snapshot: Dictionary)
 signal colony_population_received(snapshot: Dictionary)
 signal dock_received(snapshot: Dictionary)
+signal dock_destinations_received(frame: Dictionary)
 signal status_changed(message: String)
 signal connection_changed(connected: bool)
 
@@ -39,6 +40,7 @@ var _pending_dock_kind := ""
 var _dock_initial_read_done := false
 var _dock_auto_remaining := 0
 var _dock_auto_staff := 0
+var _dock_auto_routes := 0
 var _last_dock_automation_ms := -10000
 const DOCK_AUTO_INTERVAL_MS := 900
 var _refinery_header := {}
@@ -200,6 +202,9 @@ func _integer(value: String) -> bool:
 
 func _accept_line(line: String) -> void:
 	var f := line.split("|", false)
+	if f.size() > 0 and f[0] == "DDEST":
+		_accept_dock_destinations(f)
+		return
 	if f.size() > 0 and f[0] == "DOCK":
 		_accept_dock(f)
 		return
@@ -268,6 +273,7 @@ func _accept_line(line: String) -> void:
 		_dock_initial_read_done = false
 		_dock_auto_remaining = 0
 		_dock_auto_staff = 0
+		_dock_auto_routes = 0
 	var last_walk_confirmed: bool = req > 0 and req == _pending_walk
 	if last_walk_confirmed:
 		_pending_walk = 0
@@ -284,13 +290,48 @@ func _accept_line(line: String) -> void:
 			_last_send + NATIVE_HANGAR_COMMAND_GAP_MS)
 		_status("E received — synchronizing original station boarding after WALK receipt")
 
+func _accept_dock_destinations(f: PackedStringArray) -> void:
+	if f.size()<8 or f[1]!="1" or _pending_dock_kind!="DESTS":
+		stop("Unexpected dock destination receipt")
+		return
+	for i in range(2,f.size()):
+		if not _integer(f[i]):
+			stop("Malformed native ferry destination")
+			return
+	var count := int(f[7])
+	if count<0 or count>4 or f.size()!=8+count*2 or \
+			int(f[2])!=_session or int(f[3])!=_pending or \
+			int(f[4])<_tick or int(f[5])<_generation or \
+			int(f[6])!=int(_person.get("station",-1)) or \
+			int(_person.get("state",-1))!=4:
+		stop("Ferry destination outside original station authority")
+		return
+	var ports: Array[Dictionary] = []
+	var seen: Dictionary = {}
+	for i in range(count):
+		var port := int(f[8+2*i])
+		var vessel := int(f[9+2*i])
+		if port<=0 or vessel<=0 or port==int(_person.get("station",0)) or \
+				seen.has(str(port)+":"+str(vessel)):
+			stop("Invalid original receiving berth")
+			return
+		seen[str(port)+":"+str(vessel)] = true
+		ports.append({"station":port,"receiver":vessel})
+	_pending=0
+	_pending_dock_kind=""
+	_tick=int(f[4])
+	_generation=int(f[5])
+	dock_destinations_received.emit({"station":int(f[6]),"destinations":ports})
+	_status("Choose a real receiving colony" if count>0 else
+		"No other supplied receiving colony is available")
+
 func _accept_dock(f: PackedStringArray) -> void:
 	# Every status is a response to one local one-use command. Never allow
 	# client forecasts to replace authoritative worker or cargo counts.
-	if f.size() != 23 or f[1] != "1" or _pending_dock_kind.is_empty():
+	if f.size() != 29 or f[1] != "1" or _pending_dock_kind.is_empty():
 		stop("Unrequested dock service receipt")
 		return
-	for i in range(2, 23):
+	for i in range(2, 29):
 		if not _integer(f[i]):
 			stop("Malformed original dock receipt")
 			return
@@ -315,8 +356,15 @@ func _accept_dock(f: PackedStringArray) -> void:
 	var urgent_boarding := int(f[20])
 	var gangways := int(f[21])
 	var congestion := int(f[22])
+	var active_routes := int(f[23])
+	var delivered_routes := int(f[24])
+	var held_routes := int(f[25])
+	var passengers_travelling := int(f[26])
+	var visitors_arrived := int(f[27])
+	var reviewable_route := int(f[28])
 	var expected_result := {"VIEW":[0],"ASSIGN":[1],"RELEASE":[2],
-		"PASS":[3],"FREIGHT":[4],"WORK":[5,6]}
+		"PASS":[3],"FREIGHT":[4],"WORK":[5,6,9],
+		"ROUTE":[7],"CANCEL":[8]}
 	if session != _session or req != _pending or tick < _tick or generation < _generation or \
 			int(_person.get("state",-1)) != 4 or station != int(_person.get("station",-1)) or \
 			staff < 0 or staff > 16 or passengers < 0 or passengers > 128 or \
@@ -326,14 +374,18 @@ func _accept_dock(f: PackedStringArray) -> void:
 			boarding_waiting<0 or boarding_waiting>32 or actually_boarded<0 or \
 			boarding_held<0 or urgent_boarding<0 or urgent_boarding>boarding_waiting or \
 			gangways<0 or gangways>2 or congestion<0 or congestion>100 or \
+			active_routes<0 or active_routes>10000 or delivered_routes<0 or \
+			held_routes<0 or passengers_travelling<0 or \
+			visitors_arrived<0 or reviewable_route<0 or \
 			not expected_result.get(_pending_dock_kind,[]).has(result):
 		stop("Original dock receipt violates source custody or queue bounds")
 		return
 	_pending = 0
 	_pending_dock_kind = ""
 	_dock_initial_read_done = true
-	_dock_auto_remaining = passengers + tonnes + boarding_waiting
+	_dock_auto_remaining = passengers + tonnes + boarding_waiting + active_routes
 	_dock_auto_staff = staff
+	_dock_auto_routes = active_routes
 	_tick = tick
 	_generation = generation
 	var snapshot := {"station":station,"dock_staff":staff,
@@ -342,13 +394,20 @@ func _accept_dock(f: PackedStringArray) -> void:
 		"service_capacity":service_capacity,"boarding_waiting":boarding_waiting,
 		"actually_boarded":actually_boarded,"boarding_held":boarding_held,
 		"urgent_boarding":urgent_boarding,"gangways":gangways,
-		"congestion":congestion,"checked_in":completed_people,
+		"congestion":congestion,"active_routes":active_routes,
+		"delivered_routes":delivered_routes,"held_routes":held_routes,
+		"passengers_travelling":passengers_travelling,
+		"visitors_arrived":visitors_arrived,"reviewable_route":reviewable_route,
+		"checked_in":completed_people,
 		"handled_tonnes":completed_tonnes,"result":result,
 		"tick":tick,"generation":generation}
 	dock_received.emit(snapshot)
 	_status("Dock assignment changed" if result in [1,2] else
 		"Freight service updated" if result in [4,5] else
 		"Passenger booked against an actual local ferry berth" if result==3 else
+		"Ferry journey scheduled from original ships" if result==7 else
+		"Unstarted ferry route withdrawn" if result==8 else
+		"Ferry and original travel progressing" if result==9 else
 		"Dock workers unavailable or queue idle" if result==6 else
 		"Dock services ready")
 
@@ -367,7 +426,7 @@ func _automatic_dock_service() -> void:
 	_last_dock_automation_ms = now
 	if not _dock_initial_read_done:
 		request_dock_status()
-	elif _dock_auto_remaining>0 and _dock_auto_staff>0:
+	elif _dock_auto_remaining>0 and (_dock_auto_staff>0 or _dock_auto_routes>0):
 		advance_dock_services()
 
 func request_dock_status() -> bool:
@@ -391,7 +450,21 @@ func queue_docked_freight_tonne() -> bool:
 func advance_dock_services() -> bool:
 	return _submit_dock("WORK",int(_person.get("station",0)))
 
-func _submit_dock(kind: String, source: int, quantity: int = 0) -> bool:
+func request_dock_destinations() -> bool:
+	return _submit_dock("DESTS",int(_person.get("station",0)))
+
+func schedule_intercolony_ferry(destination: int, receiving_ship: int) -> bool:
+	if destination<=0 or receiving_ship<=0:
+		return false
+	return _submit_dock("ROUTE",destination,receiving_ship,0)
+
+func cancel_reviewable_route(route_id: int) -> bool:
+	if route_id<=0:
+		return false
+	return _submit_dock("CANCEL",route_id)
+
+func _submit_dock(kind: String, source: int, quantity: int = 0,
+		extra: int = 0) -> bool:
 	if not _active or _session<=0 or _pending!=0 or \
 			int(_person.get("state",-1)) != 4 or \
 			Time.get_ticks_msec()-_last_send < NATIVE_HANGAR_COMMAND_GAP_MS:
@@ -399,7 +472,8 @@ func _submit_dock(kind: String, source: int, quantity: int = 0) -> bool:
 		return false
 	var op := {"VIEW":"DOCKVIEW","ASSIGN":"DOCKASSIGN",
 		"RELEASE":"DOCKRELEASE","PASS":"DOCKPASS","FREIGHT":"DOCKFREIGHT",
-		"WORK":"DOCKWORK"}.get(kind,"")
+		"WORK":"DOCKWORK","DESTS":"DOCKDESTS",
+		"ROUTE":"DOCKROUTE","CANCEL":"DOCKCANCEL"}.get(kind,"")
 	if op.is_empty():
 		return false
 	var request := _next_request
@@ -410,6 +484,8 @@ func _submit_dock(kind: String, source: int, quantity: int = 0) -> bool:
 	var line := "%s|%d|%d|%d|%d" % [op,_session,request,_generation,source]
 	if kind=="FREIGHT":
 		line += "|%d" % quantity
+	elif kind=="ROUTE":
+		line += "|%d|%d" % [quantity,extra]
 	_send(line)
 	return true
 
