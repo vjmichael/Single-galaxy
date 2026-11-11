@@ -38,7 +38,7 @@ The compiler-repaired historical native test source is Git blob
 `tests/WO3HistoricalNativeProducer.py` checks these two identities before
 preparing the original source. It adds an observation-only checkpoint to
 the **historical original test harness**, never to its kernel or persistence
-libraries, so `PersistentWorld::recover_copy` captures the native v85
+libraries, so SQLite's online-backup API captures the native v85
 SQLite journal **after original approved command execution**, not a
 synthetic/new genesis.
 
