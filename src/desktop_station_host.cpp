@@ -7,6 +7,7 @@
 #include "galaxy/DockLogistics.hpp"
 #include "galaxy/StationLaunch.hpp"
 #include "galaxy/StationRefineryProtocol.hpp"
+#include <algorithm>
 #include <charconv>
 #include <chrono>
 #include <cstdint>
