@@ -24,7 +24,8 @@ bool Simulation::station_dock_worker_transfer(
        crew->second.crew<=1 || it==npcs_.end())return false;
     auto& npc=it->second;
     if(npc.home_ship!=ship || npc.role!=NpcRole::Ship ||
-       npc.transport_id || npc.mentor_id || npc.assigned_site!=ship ||
+       npc.transport_id || npc.mentor_id ||
+       (npc.assigned_site!=0 && npc.assigned_site!=ship) ||
        npc.location!=(disembark?ship:station))return false;
     // No leave while another physical ship duty, emergency, or existing
     // scheduled undock is in progress. Return does not need duty eligibility.
@@ -47,7 +48,18 @@ bool Simulation::station_dock_worker_transfer(
         (void)id;
         if(dependent.guardian_id==npc_id)return false;
     }
-    if(disembark && !npc_available_for_duty(npc_id))return false;
+    if(disembark){
+        std::uint64_t physically_aboard=0,examined=0;
+        for(const auto& [id,person]:npcs_){
+            (void)id;
+            if(++examined>4096)return false;
+            if(person.home_ship==ship && person.location==ship &&
+               person.role==NpcRole::Ship && !person.transport_id)
+                ++physically_aboard;
+        }
+        // Shore labor cannot strip a real ship of its last accountable crew.
+        if(physically_aboard<=1 || !npc_available_for_duty(npc_id))return false;
+    }
     npc.location=disembark?station:ship;
     // Legal residence, home ship, unique NPC identity, experience, crew
     // contract and all physical stores are intentionally preserved.
