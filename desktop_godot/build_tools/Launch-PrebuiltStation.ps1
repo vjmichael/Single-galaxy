@@ -48,6 +48,9 @@ $supervisor=Join-Path $project 'native\galaxy_server_dx_supervisor.exe'
 $shaManifest=Join-Path $project 'native\SGDX_BUILD_SHA.txt'
 $logDir=Join-Path $project 'playtest-logs'
 New-Item -ItemType Directory -Force -Path $logDir | Out-Null
+# Never confuse prior F11 captures with this launch's physical evidence.
+$operatorSessionName='operator-'+[DateTimeOffset]::UtcNow.ToString('yyyyMMddTHHmmssfffZ')
+$operatorLogDir=Join-Path $logDir $operatorSessionName
 $pass=$false
 if($VerifyOnly -and $SkipHeadlessSmoke){
   throw 'Package verification cannot skip bundled-engine headless smoke tests.'
@@ -191,9 +194,10 @@ try {
   } else {
     # Screenshot key is opt-in; captures ONLY the game viewport plus read-only
     # verified original C++ frames. No Windows desktop/screen recording.
-    $env:SG_FP3D_OPERATOR_CAPTURE_DIR=$logDir
+    New-Item -ItemType Directory -Force -Path $operatorLogDir | Out-Null
+    $env:SG_FP3D_OPERATOR_CAPTURE_DIR=$operatorLogDir
     Write-Host 'Original saved colony starts automatically: WASD walk to cyan hatch, E board (auto native pilot seat and permanent third-person camera), mouse/A,D steer, U undock, B brake, G dock near colony, ONE E disembark after return docking, F11 capture. No cabin exploration or V toggle. H retries a failed station connection only.'
-    Write-Host 'For physical playtest evidence, press F11 at native station, docked cockpit, exterior flight, asteroid contact and after restart.'
+    Write-Host 'For physical playtest evidence, press F11 at native station, docked cockpit, exterior flight, asteroid contact and after restart. F12 marks a stuck-input or stutter event in the native command/frame-time trace.'
     $game=Start-Process -FilePath $GodotExe -ArgumentList @('--path',('"' + $project + '"')) -Wait -PassThru
     Write-Host "Godot exited code $($game.ExitCode). Window close is NOT proof of physical gameplay acceptance."
     $pass=$game.ExitCode -eq 0
@@ -202,14 +206,14 @@ try {
   Write-Host "PLAYTEST BLOCKED: $_" -ForegroundColor Red
 } finally {
   Remove-Item Env:SG_FP3D_OPERATOR_CAPTURE_DIR -ErrorAction SilentlyContinue
-  $nativeReceipts=Join-Path $logDir 'operator-viewport-receipts.jsonl'
+  $nativeReceipts=Join-Path $operatorLogDir 'operator-viewport-receipts.jsonl'
   $captureCount=0
   $verifiedCaptureCount=0
   if(Test-Path -LiteralPath $nativeReceipts -PathType Leaf){
     foreach($line in (Get-Content -LiteralPath $nativeReceipts -ErrorAction SilentlyContinue)){
       try {
         $record=$line | ConvertFrom-Json -ErrorAction Stop
-        $picture=Join-Path $logDir $record.image
+        $picture=Join-Path $operatorLogDir $record.image
         if($record.schema -eq 'SG-FP3D-OPERATOR-01' -and
            (Test-Path -LiteralPath $picture -PathType Leaf) -and
            (Get-LocalSha256 $picture) -ieq $record.image_sha256){
@@ -219,6 +223,19 @@ try {
       } catch { Write-Warning 'Invalid operator screenshot receipt; not counted as evidence.' }
     }
   }
+  # Only adapter name/driver version are retained locally; neither the
+  # Windows desktop nor private original-world SQLite is uploaded.
+  $physicalVideo=@()
+  if(-not $VerifyOnly){
+    try {
+      $physicalVideo=@(Get-CimInstance -ClassName Win32_VideoController -ErrorAction Stop | ForEach-Object {
+        [ordered]@{name=[string]$_.Name;driver_version=[string]$_.DriverVersion}
+      })
+    } catch {
+      Write-Warning 'Windows GPU adapter metadata unavailable; physical operator review still required.'
+    }
+  }
+  $seenR9700=@($physicalVideo | Where-Object { $_.name -match 'R9700' }).Count -gt 0
   $manifest=[ordered]@{
     task='FP3D-WIN02-BUNDLED-RUNTIME';godot=$GodotExe
     engine_mode=if($GodotExe -eq (Join-Path $project 'runtime\Godot_v4.7.2-stable_win64.exe')){'BUNDLED-VERIFIED'}else{'EXPLICIT-DEVELOPER-OVERRIDE'}
@@ -228,6 +245,10 @@ try {
     native_cockpit_hash=if(Test-Path $pilot){(Get-LocalSha256 $pilot).ToUpperInvariant()}else{''}
     sgdx_supervisor_hash=if(Test-Path $supervisor){(Get-LocalSha256 $supervisor).ToUpperInvariant()}else{''}
     build_sha=if(Test-Path $shaManifest){(Get-Content -LiteralPath $shaManifest -Raw).Trim()}else{''}
+    operator_capture_session=if($VerifyOnly){''}else{$operatorSessionName}
+    windows_gpu_adapters=$physicalVideo
+    windows_r9700_adapter_name_seen=$seenR9700
+    windows_gpu_data_is_not_acceptance=$true
     verified_game_viewport_screenshots=$captureCount
     verified_native_frame_screenshots=$verifiedCaptureCount
     operator_visual_acceptance='NOT ATTESTED: review actual PNGs and original SQLite receipts'
@@ -236,7 +257,12 @@ try {
   $manifest | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $logDir 'result.json') -Encoding UTF8
   $zip=Join-Path $project 'SingleGalaxy_Station_Playtest_Evidence.zip'
   if(Test-Path $zip){Remove-Item $zip -Force}
-  Compress-Archive -Path (Join-Path $logDir '*') -DestinationPath $zip -Force
+  if(-not $VerifyOnly -and (Test-Path -LiteralPath $operatorLogDir -PathType Container)){
+    # Current session only; do not let older screenshots satisfy a new run.
+    Compress-Archive -Path @((Join-Path $logDir 'result.json'),$operatorLogDir) -DestinationPath $zip -Force
+  } else {
+    Compress-Archive -Path (Join-Path $logDir '*') -DestinationPath $zip -Force
+  }
   Write-Host "Evidence: $zip"
   if(-not $pass){exit 1}
 }
