@@ -15,6 +15,7 @@ const PHYSICAL_TRACE := preload("res://world/physical_acceptance_diagnostics.gd"
 const WORLD_RESET := preload("res://world/world_reset_manager.gd")
 const INDUSTRIAL_SHIP := preload("res://world/industrial_ship_design.gd")
 const VISUAL_QUALITY := preload("res://world/visual_quality_profile.gd")
+const SGDX_DIAG := preload("res://world/sgdx_operator_diagnostics.gd")
 const STATION_GRAY := Color(0.47, 0.51, 0.55, 1.0)
 const SHIP_WHITE := Color(0.96, 0.97, 0.99, 1.0)
 # Visual capsule center for 1.75 m tall collider; original C++ X/Z unchanged.
@@ -29,6 +30,8 @@ var interaction_label: Label
 var retry_station_button: Button
 var new_game_button: Button
 var new_game_confirm: ConfirmationDialog
+var sgdx_dx_button: Button
+var sgdx_dx_dialog: AcceptDialog
 var _world_reset_pending := false
 var _world_reset_blocked := false
 var _world_reset_wait_started := 0
@@ -192,6 +195,41 @@ func _ready() -> void:
 			if bool(repair.get("recovered", false)):
 				_on_native_player_status(str(repair.get("reason", "Original world recovered")))
 			call_deferred("_open_saved_station_automatically")
+
+func _show_sgdx_diagnostics() -> void:
+	# Read only. No SQLite command, restart, control or arbitrary OS capture.
+	# SGDX process receipts are already emitted by the supervised native
+	# executable even if the player is lost in space.
+	var profile := OS.get_user_data_dir()
+	var perf: Dictionary = _frame_timing_summary()
+	var observed := {
+		"station_connected":native_station_session != null and native_station_session.is_active(),
+		"ship_connected":native_player_session != null and native_player_session.is_active(),
+		"tick":int(_verified_flight_ship.get("tick",-1)),
+		"generation":int(_verified_flight_ship.get("gen",-1)),
+		"dock":int(_verified_flight_ship.get("dock",-1)),
+		"adapter":RenderingServer.get_video_adapter_name(),
+		"draw_distance_m":VISUAL_QUALITY.distance_m(_visual_high_quality),
+		"fps":Engine.get_frames_per_second(),
+		"p95_ms":float(perf.get("p95_ms",0.0)),
+		"p99_ms":float(perf.get("p99_ms",0.0)),
+		"visual_only":true}
+	if bool(_verified_station_nav.get("found",false)):
+		observed["return_range_m"] = float(_verified_station_nav["range_m"])
+	var report: Dictionary = SGDX_DIAG.snapshot(profile,observed)
+	if _physical_trace != null and _physical_trace.enabled():
+		_physical_trace.record("operator_sgdx_diagnosis",report)
+		_physical_trace.flush()
+	var directory := OS.get_environment("SG_FP3D_OPERATOR_CAPTURE_DIR")
+	if directory.is_empty():
+		directory = profile
+	var file_path := directory.path_join("sgdx-last-diagnosis.json")
+	var saved := SGDX_DIAG.save_operator_snapshot(file_path, report)
+	if is_instance_valid(sgdx_dx_dialog):
+		sgdx_dx_dialog.dialog_text = SGDX_DIAG.human_summary(report) + (
+			"\n\nLocal evidence: "+file_path if saved else "\n\nCould not save evidence (report remains visible)")
+		Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+		sgdx_dx_dialog.popup_centered(Vector2i(730,480))
 
 func _ask_world_reset() -> void:
 	if not _player_session_autoconnect:
@@ -765,7 +803,7 @@ func _build_hud() -> void:
 	contents.add_theme_constant_override("separation", 4)
 	panel.add_child(contents)
 	var title := Label.new()
-	title.text = "SINGLE-GALAXY  |  COLONY / DEPARTURES  |  F3 HUD  F4 VIEW  F6 NEW GAME"
+	title.text = "SINGLE-GALAXY  |  COLONY / DEPARTURES  |  F3 HUD  F4 VIEW  F5 DX  F6 RESET"
 	title.add_theme_font_size_override("font_size", 17)
 	contents.add_child(title)
 	scope_label = Label.new()
@@ -820,6 +858,18 @@ func _build_hud() -> void:
 	new_game_confirm.ok_button_text = "Archive old world and start new game"
 	new_game_confirm.confirmed.connect(_confirmed_world_reset)
 	hud.add_child(new_game_confirm)
+	sgdx_dx_button = Button.new()
+	sgdx_dx_button.name = "DiagnoseGameWithSGDX"
+	sgdx_dx_button.text = "Diagnose game (F5)"
+	sgdx_dx_button.add_theme_font_size_override("font_size", 12)
+	sgdx_dx_button.pressed.connect(_show_sgdx_diagnostics)
+	contents.add_child(sgdx_dx_button)
+	sgdx_dx_dialog = AcceptDialog.new()
+	sgdx_dx_dialog.name = "SGDXGameHealthReadOnly"
+	sgdx_dx_dialog.title = "SGDX native diagnostics"
+	sgdx_dx_dialog.dialog_autowrap = true
+	sgdx_dx_dialog.ok_button_text = "Close diagnostics"
+	hud.add_child(sgdx_dx_dialog)
 
 	flight_panel = PanelContainer.new()
 	flight_panel.name = "FlightTelemetryPanel"
@@ -1004,6 +1054,10 @@ func _advance_native_handoff() -> void:
 		player.use_native_authority(_player_session_autoconnect)
 
 func _unhandled_input(event: InputEvent) -> void:
+	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_F5:
+		_show_sgdx_diagnostics()
+		get_viewport().set_input_as_handled()
+		return
 	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_F4:
 		_toggle_visual_quality()
 		get_viewport().set_input_as_handled()
