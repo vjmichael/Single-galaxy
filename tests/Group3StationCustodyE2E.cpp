@@ -46,7 +46,7 @@ int main(int argc,char** argv){
     ship_b=seed.add_ship(7,{0,0},10);
     seed.provision_colony_genesis(ship,1000,3000,1000,1000,1000);
     const auto bulk=seed.add_asteroid({2000,0},70);
-    rock=seed.add_geological_asteroid({3000,0},AsteroidClass::Metallic,10,5000);
+    rock=seed.add_geological_asteroid({12000,0},AsteroidClass::Metallic,10,10);
     seed.enable_native_galactic_physics({{1,galactic::Point{{0,100000},{0,100000},{0,100000}}}});
     seed.enable_native_swept_asteroid_collision();
     seed.enable_station_ore_provenance();
