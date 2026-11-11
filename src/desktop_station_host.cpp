@@ -5,6 +5,7 @@
 // Real person, original SQLite world and exact berth custody; fixture-only hull.
 #include "galaxy/Persistence.hpp"
 #include "galaxy/DockLogistics.hpp"
+#include "galaxy/Dock04Traffic.hpp"
 #include "galaxy/StationLaunch.hpp"
 #include "galaxy/StationRefineryProtocol.hpp"
 #include <algorithm>
@@ -108,6 +109,7 @@ static int run_host(int argc,char** argv){
   // The dock ledger references real world IDs and never stores material stock.
   // Reopen the SAME SQLite save under this already-acquired native writer lease.
   dock::Ledger dock_ledger(save_utf8);
+  dock04::Traffic dock_traffic(save_utf8);
   const auto session=epoch();
   const auto receipt_prefix=(epoch()&((std::uint64_t{1}<<45)-1))<<14;
   std::uint64_t latest_request=0,budget=0;
@@ -284,20 +286,35 @@ static int run_host(int argc,char** argv){
       (void)dock_ledger.release(local_station,kOwner,candidate);
       result=2;
     }else if(dock_passenger){
-      // A real local named-NPC check-in appointment, not boarding/migration.
+      // DOCK-04: select a REAL ferry with seats, provisions and the same
+      // original physical station as a DISTINCT, owned source ship.
+      // No station-only check-in may be mislabeled "boarded".
       bool queued=false;
-      if(ship!=0)queued=dock_ledger.enqueue_passenger(world.world(),local_station,kOwner,ship);
-      else {
-        std::uint64_t scanned=0;
-        for(const auto& [npc_id,npc]:world.world().npc_records()){
-          if(++scanned>4096)break;
-          if(npc.location==local_station &&
-             dock_ledger.enqueue_passenger(world.world(),local_station,kOwner,npc_id)){
+      std::uint64_t scanned=0;
+      for(const auto& [npc_id,npc]:world.world().npc_records()){
+        if(++scanned>4096)break;
+        if(npc.location!=local_station &&
+           npc.location!=npc.home_ship)continue;
+        if(ship){
+          if(dock_traffic.enqueue(world.world(),local_station,kOwner,npc_id,ship)){
             queued=true;break;
           }
+        }else{
+          for(const auto& [hull_id,hull]:world.world().entities()){
+            if(hull.type!=EntityType::Ship || hull.owner_id!=kOwner ||
+               hull.dock_state!=DockState::Docked ||
+               hull.dock_station!=local_station)continue;
+            if(dock_traffic.enqueue(world.world(),local_station,kOwner,npc_id,hull_id)){
+              queued=true;break;
+            }
+          }
+          if(queued)break;
         }
       }
-      if(!queued){deny(req,"no-eligible-named-passenger-or-queue-full");continue;}
+      if(!queued){
+        deny(req,"boarding-needs-two-real-docked-ships-and-available-seats");
+        continue;
+      }
       result=3;
     }else if(dock_freight){
       if(!dock_ledger.enqueue_freight(world.world(),local_station,kOwner,ship,quantity)){
@@ -305,25 +322,68 @@ static int run_host(int argc,char** argv){
       }
       result=4;
     }else if(dock_work){
-      // Only actual assigned staff can advance one durable original job.
+      // One original station writer serves both traffic classes. Real dock
+      // workers are the shared throughput budget; two gangways reserve up
+      // to two passenger transfers/cycle. Weighted freight turns ensure
+      // urgent passenger handling cannot indefinitely starve real cargo.
+      dock_traffic.reconcile(world,local_station,kOwner);
       const auto roster=dock_ledger.service_roster(world.world(),local_station,kOwner);
-      std::uint64_t completed=0;
-      for(const auto worker:roster) {
-        if(!dock_ledger.serve_one(world,local_station,kOwner,worker))break;
+      std::uint64_t completed=0,passengers=0,freight=0;
+      for(const auto worker:roster){
+        (void)worker; // roster is source-attested, not a virtual service actor
+        const auto traffic=dock_traffic.snapshot(world.world(),local_station,kOwner);
+        const auto cargo=dock_ledger.snapshot(world.world(),local_station,kOwner);
+        const bool passenger_ready=traffic.waiting>0 &&
+             traffic.passenger_gangways>0 && passengers<2;
+        const bool freight_ready=cargo.freight_tonnes>0 && freight<4;
+        if(!passenger_ready && !freight_ready)break;
+        // Max two consecutive passenger boardings before one freight turn
+        // where both queues are occupied; emergency pressure breaks ties
+        // but cannot expand the physical gangway count.
+        const bool choose_passenger=passenger_ready &&
+            (!freight_ready ||
+             (traffic.passenger_streak<2 &&
+              (traffic.urgent>0 || freight>0 || passengers<2)));
+        bool applied=false;
+        if(choose_passenger){
+          applied=dock_traffic.serve_one(world,local_station,kOwner);
+          if(applied)++passengers;
+        }
+        if(!applied && freight_ready){
+          applied=dock_ledger.serve_one(world,local_station,kOwner,worker,true);
+          if(applied){
+            ++freight;
+            dock_traffic.freight_completed(local_station,kOwner);
+          }
+        }
+        if(!applied && !choose_passenger && passenger_ready){
+          applied=dock_traffic.serve_one(world,local_station,kOwner);
+          if(applied)++passengers;
+        }
+        if(!applied)break;
         ++completed;
       }
       result=completed?5:6;
       if(completed)
         galaxy::server_dx::committed_breadcrumb(world.world().tick(),world.generation());
+    }else if(dock_view){
+      // A view is the safe place to reconcile already-committed original
+      // travel receipts after native host restart; never retry on ambiguity.
+      dock_traffic.reconcile(world,local_station,kOwner);
     }
     const auto data=dock_ledger.snapshot(world.world(),local_station,kOwner);
+    const auto traffic=dock_traffic.snapshot(world.world(),local_station,kOwner);
     std::cout<<"DOCK|1|"<<session<<'|'<<req<<'|'<<world.world().tick()
              <<'|'<<world.generation()<<'|'<<local_station
              <<'|'<<data.staff<<'|'<<data.passengers<<'|'<<data.freight_tonnes
              <<'|'<<data.freight_jobs<<'|'<<data.held_jobs
              <<'|'<<data.completed_passengers<<'|'<<data.completed_tonnes
              <<'|'<<result<<'|'<<data.qualified_staff
-             <<'|'<<data.service_capacity<<'\n'<<std::flush;
+             <<'|'<<data.service_capacity
+             <<'|'<<traffic.waiting<<'|'<<traffic.boarded
+             <<'|'<<traffic.held<<'|'<<traffic.urgent
+             <<'|'<<traffic.passenger_gangways
+             <<'|'<<traffic.congestion<<'\n'<<std::flush;
     if(!std::cout)throw std::runtime_error("dock service response pipe closed");
     last=now;continue;
    }
