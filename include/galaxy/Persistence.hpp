@@ -937,6 +937,11 @@ public:
     bool station_player_action(PlayerId owner,EntityId station,EntityId ship,
         StationPlayerAction action,std::int64_t dx,std::int64_t dz,
         std::uint64_t receipt,FailPoint fail=FailPoint::None);
+    // One original SQLite world step, immutable dock movement receipt and
+    // original NPC custody mutation in one atomic transaction. Host only.
+    bool station_dock_worker_transfer(PlayerId owner,EntityId ship,
+        EntityId station,std::uint64_t npc_id,bool disembark,
+        std::uint64_t receipt,FailPoint fail=FailPoint::None);
     bool grant_player_rescue_consent(PlayerId owner,EntityId receiver,
         std::uint64_t consent_id,FailPoint fail=FailPoint::None);
     bool revoke_player_rescue_consent(PlayerId owner,std::uint64_t consent_id,
