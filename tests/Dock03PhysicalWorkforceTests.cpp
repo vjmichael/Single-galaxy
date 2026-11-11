@@ -36,9 +36,20 @@ int main(int argc,char** argv){
    station=seed.add_station({0,0});
    ship=seed.add_colony_ship(7,{0,0},12,8);
    foreign=seed.add_colony_ship(8,{1200,0},8,3);
+   const auto rock=seed.add_geological_asteroid(
+       {2500,0},AsteroidClass::Metallic,10,5000);
    seed.enable_individual_workforce();
+   seed.enable_station_ore_provenance();
    seed.enable_native_galactic_physics({{1,galactic::Point{{0,100000},{0,100000},{0,100000}}}});
    PersistentWorld world(db,std::move(seed));
+   Command mine{};mine.id=57100;mine.sequence=mine.id;
+   mine.issuer=7;mine.actor=ship;mine.target=rock;
+   mine.execute_tick=world.world().tick()+1;
+   mine.action=Action::Mine;mine.amount=1;
+   CHECK(world.submit(mine));
+   world.step();
+   CHECK(world.world().events().back().result==Outcome::Applied);
+   CHECK(world.world().find(ship)->cargo==1);
    Command docking{};docking.id=57101;docking.sequence=docking.id;
    docking.issuer=7;docking.actor=ship;docking.target=station;
    docking.execute_tick=world.world().tick()+1;
@@ -74,6 +85,15 @@ int main(int argc,char** argv){
    CHECK(ledger.active_staff(world.world(),station,7)==1);
    CHECK(!ledger.assign(world.world(),station,8,worker));
    CHECK(ledger.documented_cargo_units(worker)==0);
+   CHECK(ledger.enqueue_freight(world.world(),station,7,ship,1));
+   CHECK(ledger.snapshot(world.world(),station,7).freight_tonnes==1);
+   const auto available=ledger.service_roster(world.world(),station,7);
+   CHECK(available.size()==1 && available.front()==worker);
+   CHECK(ledger.serve_one(world,station,7,available.front()));
+   CHECK(world.world().find(ship)->cargo==0);
+   CHECK(world.world().hangar(station,7)->ore==1);
+   CHECK(ledger.snapshot(world.world(),station,7).freight_tonnes==0);
+   CHECK(ledger.documented_cargo_units(worker)==1); // real applied 1t receipt
   }
   CHECK(movements(db)==1);
   {
@@ -81,6 +101,8 @@ int main(int argc,char** argv){
    CHECK(world.world().npc_records().at(worker).location==station);
    dock::Ledger ledger(db);
    CHECK(ledger.active_staff(world.world(),station,7)==1);
+   CHECK(ledger.documented_cargo_units(worker)==1);
+   CHECK(world.world().hangar(station,7)->ore==1);
    // An existing shore worker blocks a normal host-queued ship undock.
    Command undock{};undock.id=57110;undock.sequence=undock.id;
    undock.issuer=7;undock.actor=ship;undock.action=Action::RequestUndock;
