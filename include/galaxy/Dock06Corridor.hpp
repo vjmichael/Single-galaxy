@@ -49,8 +49,8 @@ public:
             "npc_id INTEGER NOT NULL CHECK(npc_id>0),"
             "lane INTEGER NOT NULL CHECK(lane BETWEEN 1 AND 3),"
             "waypoint INTEGER NOT NULL CHECK(waypoint BETWEEN 0 AND 5),"
-            "x_mm INTEGER NOT NULL CHECK(x_mm BETWEEN -8000 AND 8000),"
-            "z_mm INTEGER NOT NULL CHECK(z_mm BETWEEN -8000 AND 8000),"
+            "x_bias INTEGER NOT NULL CHECK(x_bias BETWEEN 0 AND 16000),"
+            "z_bias INTEGER NOT NULL CHECK(z_bias BETWEEN 0 AND 16000),"
             "observed_generation INTEGER NOT NULL CHECK(observed_generation>0),"
             "pulse INTEGER NOT NULL DEFAULT 0 CHECK(pulse BETWEEN 0 AND 1000000000),"
             "PRIMARY KEY(station,npc_id))");
@@ -126,12 +126,12 @@ public:
             for(const auto& [id,lane]:active){
                 const auto start=route(lane,id)[0];
                 dock::Statement insert(db_,"INSERT OR IGNORE INTO dock06_walkers "
-                    "(station,owner,npc_id,lane,waypoint,x_mm,z_mm,"
+                    "(station,owner,npc_id,lane,waypoint,x_bias,z_bias,"
                     "observed_generation) VALUES(?,?,?,?,0,?,?,?)");
                 insert.bind(1,station);insert.bind(2,owner);insert.bind(3,id);
                 insert.bind(4,static_cast<std::uint64_t>(lane));
-                insert.bind(5,static_cast<std::uint64_t>(start.first));
-                insert.bind(6,static_cast<std::uint64_t>(start.second));
+                insert.bind(5,static_cast<std::uint64_t>(start.first+8000));
+                insert.bind(6,static_cast<std::uint64_t>(start.second+8000));
                 insert.bind(7,generation);insert.next();
                 dock::Statement update(db_,"UPDATE dock06_walkers SET "
                     "observed_generation=? WHERE station=? AND npc_id=? "
@@ -201,9 +201,9 @@ public:
             const auto reached=xx==target.first && zz==target.second;
             const auto next_index=walker.waypoint+(reached?1:0);
             dock::Statement step(db_,"UPDATE dock06_walkers SET "
-                "x_mm=?,z_mm=?,waypoint=?,pulse=pulse+1 "
+                "x_bias=?,z_bias=?,waypoint=?,pulse=pulse+1 "
                 "WHERE station=? AND owner=? AND npc_id=? AND lane=? "
-                "AND waypoint=? AND x_mm=? AND z_mm=? AND pulse<1000000000");
+                "AND waypoint=? AND x_bias=? AND z_bias=? AND pulse<1000000000");
             step.bind(1,static_cast<std::uint64_t>(xx+8000));
             step.bind(2,static_cast<std::uint64_t>(zz+8000));
             step.bind(3,next_index);step.bind(4,station);
@@ -211,9 +211,8 @@ public:
             step.bind(7,walker.lane);step.bind(8,walker.waypoint);
             step.bind(9,static_cast<std::uint64_t>(walker.x_mm+8000));
             step.bind(10,static_cast<std::uint64_t>(walker.z_mm+8000));
-            // SQL uses signed geometry: rebias bindings are decoded below.
-            // This path never passes an arbitrary negative integer into
-            // dock::Statement's unsigned-only binding.
+            // Signed station millimeters are stored with a +8000 offset;
+            // all route checks and Godot positions decode to native units.
             if(step.next()==SQLITE_DONE && sqlite3_changes(db_)==1)
                 moved=true;
         }
@@ -221,15 +220,15 @@ public:
     }
     bool boarding_ready(const Simulation& sim,EntityId station,PlayerId owner,
                         std::uint64_t npc) const {
-        dock::Statement q(db_,"SELECT lane,waypoint,x_mm,z_mm FROM dock06_walkers "
+        dock::Statement q(db_,"SELECT lane,waypoint,x_bias,z_bias FROM dock06_walkers "
                               "WHERE station=? AND owner=? AND npc_id=?");
         q.bind(1,station);q.bind(2,owner);q.bind(3,npc);
         if(q.next()!=SQLITE_ROW || q.number(0)!=2 || q.number(1)!=5)
             return false;
         const auto nodes=route(Lane::Boarding,npc);
         const auto at=nodes[5];
-        return q.number(2)==static_cast<std::uint64_t>(at.first) &&
-               q.number(3)==static_cast<std::uint64_t>(at.second) &&
+        return q.number(2)==static_cast<std::uint64_t>(at.first+8000) &&
+               q.number(3)==static_cast<std::uint64_t>(at.second+8000) &&
                sim.npc_records().count(npc) &&
                sim.npc_records().at(npc).location==station;
     }
@@ -297,8 +296,6 @@ private:
         }
     }
     bool table(const char* name)const{
-        dock::Statement q(db_,"SELECT 1 FROM sqlite_master "
-                              "WHERE type='table' AND name=?");
         sqlite3_stmt* raw=nullptr;
         const char* sql="SELECT 1 FROM sqlite_master WHERE type='table' AND name=?";
         if(sqlite3_prepare_v2(db_,sql,-1,&raw,nullptr)!=SQLITE_OK)
@@ -310,7 +307,7 @@ private:
     }
     std::vector<Walker> all(EntityId station,PlayerId owner)const{
         std::vector<Walker> rows;
-        dock::Statement q(db_,"SELECT npc_id,lane,waypoint,x_mm,z_mm "
+        dock::Statement q(db_,"SELECT npc_id,lane,waypoint,x_bias,z_bias "
                               "FROM dock06_walkers WHERE station=? AND owner=? "
                               "ORDER BY lane,npc_id LIMIT 25");
         q.bind(1,station);q.bind(2,owner);
@@ -318,8 +315,8 @@ private:
             if(rows.size()>=kMaxTracked)
                 throw std::runtime_error("unbounded native dock corridor actors");
             const auto npc=q.number(0),lane=q.number(1),index=q.number(2);
-            const auto x=static_cast<std::int64_t>(q.number(3)),
-                       z=static_cast<std::int64_t>(q.number(4));
+            const auto x=static_cast<std::int64_t>(q.number(3))-8000,
+                       z=static_cast<std::int64_t>(q.number(4))-8000;
             if(!npc||lane<1||lane>3||index>5||
                !station_walk::clear(x,z))
                 throw std::runtime_error("invalid native corridor checkpoint");
