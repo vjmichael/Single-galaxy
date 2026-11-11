@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <limits>
+#include <set>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -74,6 +75,18 @@ class Ledger {
          "pending_command INTEGER NOT NULL DEFAULT 0,"
          "created_tick INTEGER NOT NULL)");
     exec("CREATE INDEX IF NOT EXISTS dock_jobs_station_v1 ON dock_jobs_v1(station,owner,state,id)");
+    // Reservation is written before each original-world freight step. Skill
+    // is not invented from elapsed time: earned cargo units link one-to-one
+    // to independently applied native UnloadOre command receipts.
+    exec("CREATE TABLE IF NOT EXISTS dock_pending_worker_v1("
+         "command_id INTEGER PRIMARY KEY CHECK(command_id>0),"
+         "job_id INTEGER NOT NULL,npc_id INTEGER NOT NULL)");
+    exec("CREATE TABLE IF NOT EXISTS dock_serviced_units_v1("
+         "command_id INTEGER PRIMARY KEY CHECK(command_id>0),"
+         "job_id INTEGER NOT NULL,npc_id INTEGER NOT NULL,"
+         "units INTEGER NOT NULL CHECK(units=1))");
+    exec("CREATE INDEX IF NOT EXISTS dock_units_worker_v1 "
+         "ON dock_serviced_units_v1(npc_id)");
   }
   ~Ledger(){sqlite3_close(db_);}
   Ledger(const Ledger&)=delete;
@@ -93,8 +106,10 @@ class Ledger {
       const auto* home=sim.find(it->second.home_ship);
       if(home && home->owner_id==owner && it->second.location==station &&
          it->second.role==NpcRole::Ship &&
-         (it->second.assigned_site==0 || it->second.assigned_site==station) &&
-         !it->second.transport_id && !occupied.count(id))++count;
+         (it->second.assigned_site==0 ||
+          it->second.assigned_site==it->second.home_ship) &&
+         !it->second.transport_id && !occupied.count(id) &&
+         sim.npc_available_for_duty(id))++count;
     }
     return count;
   }
@@ -105,7 +120,8 @@ class Ledger {
     const auto it=sim.npc_records().find(npc_id);
     if(it==sim.npc_records().end()||it->second.location!=station ||
        it->second.role!=NpcRole::Ship || it->second.transport_id ||
-       (it->second.assigned_site && it->second.assigned_site!=station))return false;
+       (it->second.assigned_site && it->second.assigned_site!=it->second.home_ship) ||
+       !sim.npc_available_for_duty(npc_id))return false;
     const auto* home=sim.find(it->second.home_ship);
     if(!home || home->owner_id!=owner)return false;
     // An expired shift can be renewed without claiming a second worker.
@@ -117,6 +133,43 @@ class Ledger {
     s.bind(4,sim.tick());s.bind(5,sim.tick()+256);
     if(s.next()!=SQLITE_DONE)throw std::runtime_error("dock assignment SQL");
     return sqlite3_changes(db_)==1;
+  }
+  // Authenticated station-shift evidence; not a made-up NPC skill sheet.
+  std::uint64_t documented_cargo_units(std::uint64_t npc_id) const {
+    Statement s(db_,"SELECT COUNT(*) FROM dock_serviced_units_v1 WHERE npc_id=?");
+    s.bind(1,npc_id);return s.next()==SQLITE_ROW?s.number(0):0;
+  }
+  // Each active trained handler contributes two tonnes per service cycle,
+  // each other eligible original ship-role worker one. One cycle is capped
+  // at four real source-backed original world operations.
+  std::vector<std::uint64_t> service_roster(
+      const Simulation& sim,EntityId station,PlayerId owner) const {
+    std::vector<std::uint64_t> roster;
+    const auto occupied=workforce02::occupied_named_workers(sim,sim.tick());
+    Statement q(db_,"SELECT npc_id FROM dock_staff_v1 WHERE station=? AND owner=? "
+                    "AND assigned_tick<=? AND shift_end_tick>? ORDER BY npc_id LIMIT 17");
+    q.bind(1,station);q.bind(2,owner);q.bind(3,sim.tick());q.bind(4,sim.tick());
+    while(q.next()==SQLITE_ROW && roster.size()<4){
+      const auto id=q.number(0);
+      const auto it=sim.npc_records().find(id);
+      if(it==sim.npc_records().end()||it->second.location!=station ||
+         it->second.transport_id || it->second.role!=NpcRole::Ship ||
+         (it->second.assigned_site &&
+          it->second.assigned_site!=it->second.home_ship) ||
+         occupied.count(id) || !sim.npc_available_for_duty(id))continue;
+      const auto* ship=sim.find(it->second.home_ship);
+      if(!ship||ship->owner_id!=owner)continue;
+      roster.push_back(id);
+      if(documented_cargo_units(id)>=3 && roster.size()<4)
+        roster.push_back(id);
+    }
+    return roster;
+  }
+  std::uint64_t first_assigned(EntityId station,PlayerId owner) const {
+    Statement q(db_,"SELECT npc_id FROM dock_staff_v1 WHERE station=? AND owner=? "
+                    "ORDER BY npc_id LIMIT 1");
+    q.bind(1,station);q.bind(2,owner);
+    return q.next()==SQLITE_ROW?q.number(0):0;
   }
   bool release(EntityId station,PlayerId owner,std::uint64_t npc_id) {
     Statement s(db_,"DELETE FROM dock_staff_v1 WHERE npc_id=? AND station=? AND owner=?");
@@ -190,12 +243,16 @@ class Ledger {
         [&](const Event& e){return e.command_id==job.cmd;});
       if(it==events.end()){hold(job.id);continue;}
       if(it->result!=Outcome::Applied || it->transferred!=1){hold(job.id);continue;}
-      finish(job.id,job.completed+1,job.kind==1?1:2);
+      finish(job.id,job.completed+1,job.cmd);
     }
   }
-  bool serve_one(PersistentWorld& world,EntityId station,PlayerId owner) {
+  bool serve_one(PersistentWorld& world,EntityId station,PlayerId owner,
+                 std::uint64_t worker) {
     reconcile(world,station,owner);
-    if(!active_staff(world.world(),station,owner))return false;
+    if(!worker)return false;
+    const auto eligible=service_roster(world.world(),station,owner);
+    if(std::find(eligible.begin(),eligible.end(),worker)==eligible.end())
+      return false;
     Statement q(db_,"SELECT id,kind,source_id,requested,completed FROM dock_jobs_v1 "
                     "WHERE station=? AND owner=? AND state=0 ORDER BY id LIMIT 1");
     q.bind(1,station);q.bind(2,owner);
@@ -223,12 +280,18 @@ class Ledger {
     // Stable reserved command identity, one per actual tonne and job.
     if(id>0x0000FFFFFFFFFFFFULL||done>=requested||done>=64){hold(id);return false;}
     const std::uint64_t command_id=0x5000000000000000ULL|(id<<8)|(done+1);
-    {
+    exec("BEGIN IMMEDIATE");
+    try {
       Statement mark(db_,"UPDATE dock_jobs_v1 SET state=1,pending_command=? "
                          "WHERE id=? AND state=0 AND completed=?");
       mark.bind(1,command_id);mark.bind(2,id);mark.bind(3,done);mark.next();
-      if(sqlite3_changes(db_)!=1)throw std::runtime_error("dock job reservation changed");
-    }
+      if(sqlite3_changes(db_)!=1)
+        throw std::runtime_error("dock job reservation changed");
+      Statement pick(db_,"INSERT INTO dock_pending_worker_v1 "
+                         "(command_id,job_id,npc_id) VALUES(?,?,?)");
+      pick.bind(1,command_id);pick.bind(2,id);pick.bind(3,worker);pick.next();
+      exec("COMMIT");
+    } catch(...) {exec("ROLLBACK");throw;}
     Command c{};c.id=command_id;c.sequence=command_id;
     c.execute_tick=world.world().tick()+1;
     c.issuer=owner;c.actor=source;c.target=station;c.amount=1;
@@ -241,7 +304,7 @@ class Ledger {
     if(it==events.end()||it->result!=Outcome::Applied||it->transferred!=1) {
       hold(id);return false;
     }
-    finish(id,done+1,2);
+    finish(id,done+1,command_id);
     return true;
   }
  private:
@@ -286,13 +349,33 @@ class Ledger {
     Statement s(db_,"UPDATE dock_jobs_v1 SET state=3 WHERE id=? AND state IN(0,1)");
     s.bind(1,id);s.next();
   }
-  void finish(std::uint64_t id,std::uint64_t completed,int kind){
-    Statement s(db_,"UPDATE dock_jobs_v1 SET completed=?,state="
-                    "(CASE WHEN requested=? THEN 2 ELSE 0 END),pending_command=0 "
-                    "WHERE id=? AND state=1");
-    s.bind(1,completed);s.bind(2,completed);s.bind(3,id);s.next();
-    if(sqlite3_changes(db_)!=1)throw std::runtime_error("dock reconciliation mismatch");
-    (void)kind;
+  void finish(std::uint64_t id,std::uint64_t completed,
+              std::uint64_t command_id){
+    // Caller has independently checked one APPLIED source-world command.
+    // The provenance record, skill credit and job progress are one SQLite
+    // transaction; a crash cannot double-award cargo experience.
+    exec("BEGIN IMMEDIATE");
+    try {
+      Statement who(db_,"SELECT npc_id FROM dock_pending_worker_v1 "
+                         "WHERE command_id=? AND job_id=?");
+      who.bind(1,command_id);who.bind(2,id);
+      if(who.next()!=SQLITE_ROW)
+        throw std::runtime_error("dock cargo receipt lacks reserved worker");
+      const auto worker=who.number(0);
+      Statement evidence(db_,"INSERT OR IGNORE INTO dock_serviced_units_v1 "
+                             "(command_id,job_id,npc_id,units) VALUES(?,?,?,1)");
+      evidence.bind(1,command_id);evidence.bind(2,id);
+      evidence.bind(3,worker);evidence.next();
+      Statement update(db_,"UPDATE dock_jobs_v1 SET completed=?,state="
+                           "(CASE WHEN requested=? THEN 2 ELSE 0 END),"
+                           "pending_command=0 WHERE id=? AND state=1 AND "
+                           "pending_command=? AND completed=?");
+      update.bind(1,completed);update.bind(2,completed);update.bind(3,id);
+      update.bind(4,command_id);update.bind(5,completed-1);update.next();
+      if(sqlite3_changes(db_)!=1)
+        throw std::runtime_error("dock reconciliation mismatch");
+      exec("COMMIT");
+    }catch(...){exec("ROLLBACK");throw;}
   }
 };
 } // namespace galaxy::dock
