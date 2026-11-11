@@ -2343,3 +2343,13 @@ if(BUILD_TESTING AND Python3_Interpreter_FOUND)
   set_tests_properties(galaxy_fp3d_win01_source_contract
     PROPERTIES TIMEOUT 20 LABELS "source-only;windows-playtest")
 endif()
+
+# GROUP3-A — genuine v126 equipped mining, unchanged original source/ore ledger.
+if(BUILD_TESTING)
+  add_executable(galaxy_group3_fitted_mining_tests tests/PLAY_STATION_04B_MiningTests.cpp)
+  target_link_libraries(galaxy_group3_fitted_mining_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_group3_original_fitted_mining
+    COMMAND galaxy_group3_fitted_mining_tests
+      ${CMAKE_CURRENT_BINARY_DIR}/group3_v126_fitting.sqlite)
+  set_tests_properties(galaxy_group3_original_fitted_mining PROPERTIES TIMEOUT 120)
+endif()
