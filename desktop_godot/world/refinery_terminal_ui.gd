@@ -4,10 +4,20 @@ extends PanelContainer
 signal refine_requested(lot_id: int)
 signal unload_requested()
 signal terminal_closed()
+signal dock_status_requested()
+signal dock_worker_requested()
+signal dock_release_requested()
+signal dock_freight_requested()
+signal dock_service_requested()
 
 var _lots: ItemList
 var _status: Label
 var _dock_staff: Label
+var _dock_status: Label
+var _dock_assign_button: Button
+var _dock_release_button: Button
+var _dock_queue_button: Button
+var _dock_serve_button: Button
 var _minerals: Label
 var _refine_button: Button
 var _unload_button: Button
@@ -33,6 +43,39 @@ func _ready() -> void:
 	_dock_staff.text = "Dock workforce: awaiting original C++ station roster"
 	_dock_staff.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	column.add_child(_dock_staff)
+	var docks_heading := Label.new()
+	docks_heading.text = "DOCK SERVICES | STAFF & FREIGHT"
+	column.add_child(docks_heading)
+	_dock_status = Label.new()
+	_dock_status.text = "Refresh to inspect this colony's actual dock queue"
+	_dock_status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	column.add_child(_dock_status)
+	var refresh := Button.new()
+	refresh.text = "Refresh dock services"
+	refresh.pressed.connect(func(): dock_status_requested.emit())
+	column.add_child(refresh)
+	var workers := HBoxContainer.new()
+	column.add_child(workers)
+	_dock_assign_button = Button.new()
+	_dock_assign_button.text = "Assign available local worker"
+	_dock_assign_button.pressed.connect(func(): dock_worker_requested.emit())
+	workers.add_child(_dock_assign_button)
+	_dock_release_button = Button.new()
+	_dock_release_button.text = "End a dock shift"
+	_dock_release_button.pressed.connect(func(): dock_release_requested.emit())
+	workers.add_child(_dock_release_button)
+	var freight := HBoxContainer.new()
+	column.add_child(freight)
+	_dock_queue_button = Button.new()
+	_dock_queue_button.text = "Queue 1 tonne from docked ship"
+	_dock_queue_button.disabled = true
+	_dock_queue_button.pressed.connect(func(): dock_freight_requested.emit())
+	freight.add_child(_dock_queue_button)
+	_dock_serve_button = Button.new()
+	_dock_serve_button.text = "Dispatch dock workers"
+	_dock_serve_button.disabled = true
+	_dock_serve_button.pressed.connect(func(): dock_service_requested.emit())
+	freight.add_child(_dock_serve_button)
 	var lot_heading := Label.new()
 	lot_heading.text = "This colony's ore lots | local owner hangar"
 	column.add_child(lot_heading)
@@ -76,7 +119,22 @@ func set_dock_staff_observation(frame: Dictionary) -> void:
 	_dock_staff.text = "DOCK (this colony): %d assigned original workers; %d present named NPCs%s" % [
 		workers,residents," (bounded scan)" if bool(frame.get("scan_truncated",false)) else ""]
 	if workers == 0:
-		_dock_staff.text += " | Dedicated dock-worker assignment remains to be built"
+		_dock_staff.text += " | No eligible dock worker is currently on shift"
+
+func set_dock_status(snapshot: Dictionary) -> void:
+	if not is_instance_valid(_dock_status):
+		return
+	var staff := int(snapshot.get("dock_staff",0))
+	var passengers := int(snapshot.get("passengers",0))
+	var tonnes := int(snapshot.get("freight_tonnes",0))
+	var held := int(snapshot.get("held_jobs",0))
+	_dock_status.text = "Station #%d | %d workers on shift | %d local check-ins waiting\n%d t of physically docked freight awaiting handling | %d held jobs\n%d check-ins processed (not boarded) | %d t unloaded to local hangar" % [
+		int(snapshot.get("station",0)),staff,passengers,tonnes,held,
+		int(snapshot.get("checked_in",0)),int(snapshot.get("handled_tonnes",0))]
+	_dock_staff.text = "Dock workers: %d on active original-world shifts" % staff
+	_dock_serve_button.disabled = staff <= 0 or (passengers+tonnes)==0
+	_dock_release_button.disabled = staff <= 0
+	_dock_queue_button.disabled = int(_current.get("eligible_ship",0)) <= 0
 
 func show_waiting() -> void:
 	visible = true
@@ -84,7 +142,13 @@ func show_waiting() -> void:
 	if is_instance_valid(_lots):
 		_lots.clear()
 	if is_instance_valid(_status):
-		_status.text = "Contacting original C++ station host..."
+		_status.text = "Contacting colony inventory..."
+	if is_instance_valid(_dock_status):
+		_dock_status.text = "Refresh dock services to inspect saved shifts and queues"
+	if is_instance_valid(_dock_serve_button):
+		_dock_serve_button.disabled = true
+	if is_instance_valid(_dock_queue_button):
+		_dock_queue_button.disabled = true
 	if is_instance_valid(_refine_button):
 		_refine_button.disabled = true
 	if is_instance_valid(_unload_button):
@@ -146,6 +210,7 @@ func present(snapshot: Dictionary) -> void:
 	_minerals.text = "This colony's mineral stock: " + (", ".join(rows) if rows.size() > 0 else "none")
 	_update_refine_button(0)
 	_unload_button.disabled = int(snapshot.get("eligible_ship", 0)) <= 0
+	_dock_queue_button.disabled = int(snapshot.get("eligible_ship",0)) <= 0
 	if not installed or not powered or workers <= 0 or energy <= 0 or tonne < 1:
 		_refine_button.disabled = true
 
