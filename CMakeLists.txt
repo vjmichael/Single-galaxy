@@ -2242,6 +2242,12 @@ if(BUILD_TESTING)
   add_test(NAME galaxy_dock05_native_intercolony_arrival
     COMMAND galaxy_dock05_intercolony_tests
     "${CMAKE_CURRENT_BINARY_DIR}/dock05_world.sqlite")
+  add_executable(galaxy_dock06_corridor_tests
+    tests/Dock06NativeCorridorTests.cpp)
+  target_link_libraries(galaxy_dock06_corridor_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_dock06_original_npc_corridor
+    COMMAND galaxy_dock06_corridor_tests
+    "${CMAKE_CURRENT_BINARY_DIR}/dock06_world.sqlite")
 endif()
 add_executable(galaxy_desktop_station_host src/desktop_station_host.cpp)
 target_link_libraries(galaxy_desktop_station_host PRIVATE galaxy_kernel)
