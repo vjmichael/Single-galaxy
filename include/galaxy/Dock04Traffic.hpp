@@ -130,7 +130,10 @@ public:
                 if(p.home_ship==npc.home_ship && p.location==npc.home_ship &&
                    p.role==NpcRole::Ship && !p.transport_id)++onboard;
             }
-            if(onboard<=1)return false;
+            // Reserve against every outstanding request for this source:
+            // no overbooking a vessel's last real crew at the gangway.
+            if(onboard<=1 || source_reserved(npc.home_ship)>=onboard-1)
+                return false;
         }
         // Physical deck occupancy + all pending bookings must fit in the
         // ORIGINAL sixteen real ferry berths. No optimistic seat claim.
@@ -214,7 +217,8 @@ public:
     void reconcile(PersistentWorld& world,EntityId station,PlayerId owner){
         dock::Statement q(db_,"SELECT id,npc_id,source_ship,ferry,phase,"
                              "command_id,transport_id FROM dock04_boarding_v1 "
-                             "WHERE station=? AND owner=? AND phase IN(1,3,5)");
+                             "WHERE station=? AND owner=? AND "
+                             "(phase IN(1,3,5) OR (phase=7 AND command_id>0))");
         q.bind(1,station);q.bind(2,owner);
         struct Pending{std::uint64_t id,npc,source,ferry,phase,cmd,transport;};
         std::vector<Pending> jobs;
@@ -240,8 +244,15 @@ public:
                 if(applied && world.world().voyage_status(j.transport)==1 &&
                    it->second.location==j.ferry &&
                    it->second.transport_id==j.transport) {
+                    if(j.phase==7){
+                        // Held due to original-world in-flight uncertainty,
+                        // subsequently resolved by original APPLIED evidence.
+                        dock::Statement restore(db_,"UPDATE dock04_boarding_v1 "
+                            "SET phase=5 WHERE id=? AND phase=7 AND command_id=?");
+                        restore.bind(1,j.id);restore.bind(2,j.cmd);restore.next();
+                    }
                     complete(j.id,j.cmd,j.transport,j.npc,j.ferry,station,owner);
-                }else hold(j.id);
+                }else if(j.phase!=7)hold(j.id);
             }
         }
     }
@@ -271,13 +282,20 @@ public:
         if(person==world.world().npc_records().end() || person->second.transport_id ||
            person->second.home_ship!=source){hold(id);return false;}
         if(phase==0){
-            if(person->second.location!=source){hold(id);return false;}
-            set_phase(id,0,1);
-            if(!world.station_dock_worker_transfer(
-                owner,source,station,npc,true,move_receipt(id,true))){
-                hold(id);return false;
+            if(person->second.location==station){
+                // A real original shore-duty NPC may already have crossed
+                // through the original hatch; don't teleport them to repeat
+                // the outward transition solely for queue bookkeeping.
+                set_phase(id,0,2);
+            }else {
+                if(person->second.location!=source){hold(id);return false;}
+                set_phase(id,0,1);
+                if(!world.station_dock_worker_transfer(
+                    owner,source,station,npc,true,move_receipt(id,true))){
+                    hold(id);return false;
+                }
+                set_phase(id,1,2);
             }
-            set_phase(id,1,2);
         }
         if(phase<=2){
             person=world.world().npc_records().find(npc);
@@ -358,6 +376,11 @@ private:
         dock::Statement q(db_,"SELECT COUNT(*) FROM dock04_boarding_v1 "
                              "WHERE ferry=? AND phase NOT IN(6,7)");
         q.bind(1,ferry);return q.next()==SQLITE_ROW?q.number(0):0;
+    }
+    std::uint64_t source_reserved(EntityId source) const {
+        dock::Statement q(db_,"SELECT COUNT(*) FROM dock04_boarding_v1 "
+                             "WHERE source_ship=? AND phase NOT IN(6,7)");
+        q.bind(1,source);return q.next()==SQLITE_ROW?q.number(0):0;
     }
     bool pending_for_person(std::uint64_t npc)const {
         dock::Statement q(db_,"SELECT 1 FROM dock04_boarding_v1 "
