@@ -2231,6 +2231,11 @@ if(BUILD_TESTING)
   add_test(NAME galaxy_dock03_physical_workforce
     COMMAND galaxy_dock03_physical_workforce_tests
     "${CMAKE_CURRENT_BINARY_DIR}/dock03_world.sqlite")
+  add_executable(galaxy_dock04_traffic_tests tests/Dock04PassengerFreightTests.cpp)
+  target_link_libraries(galaxy_dock04_traffic_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_dock04_original_boarding_and_cohorts
+    COMMAND galaxy_dock04_traffic_tests
+    "${CMAKE_CURRENT_BINARY_DIR}/dock04_world.sqlite")
 endif()
 add_executable(galaxy_desktop_station_host src/desktop_station_host.cpp)
 target_link_libraries(galaxy_desktop_station_host PRIVATE galaxy_kernel)
