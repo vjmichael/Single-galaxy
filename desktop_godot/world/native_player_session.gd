@@ -465,7 +465,7 @@ func _accept_original_survey(parts: PackedStringArray) -> void:
 		var ore := int(parts[12])
 		var taxonomy := int(parts[13])
 		var detail := int(parts[14])
-		const MAX_RANGE_MM := 8500000
+		const MAX_RANGE_MM := 50000
 		var rows: Array = _survey_batch["sources"]
 		if (rock <= 0 or rock == ship or rows.size() >= int(_survey_batch["count"]) or
 				abs(dx) > MAX_RANGE_MM or abs(dy) > MAX_RANGE_MM or
