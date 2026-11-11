@@ -38,7 +38,7 @@ public:
              "receiver INTEGER NOT NULL CHECK(receiver>0),"
              "mode INTEGER NOT NULL CHECK(mode IN(1,2)),"
              "destination_body INTEGER NOT NULL,"
-             "stage INTEGER NOT NULL DEFAULT 0 CHECK(stage BETWEEN 0 AND 9),"
+             "stage INTEGER NOT NULL DEFAULT 0 CHECK(stage BETWEEN 0 AND 11),"
              "posted_tick INTEGER NOT NULL,source_generation INTEGER NOT NULL)");
         exec("CREATE INDEX IF NOT EXISTS dock05_route_station "
              "ON dock05_route_v1(origin,owner,stage,id)");
@@ -165,10 +165,16 @@ public:
         // The existing galactic transit is currently same-system only.
         // Different frames require the REAL planetary/celestial destination
         // anchor and an installed original scanner; otherwise refuse.
-        const bool local=sim.same_local_frame(ferry,destination);
+        // v120 same_local_frame means shared absolute star-frame access,
+        // NOT that two stations are in the same *celestial* approach frame.
+        // Use genuine original body anchors for the transit choice.
+        const auto own_frame=sim.ship_frames().find(ferry);
         const auto body=sim.local_entity_anchors().find(destination);
         const std::uint64_t anchor=
             body==sim.local_entity_anchors().end()?0:body->second;
+        if(own_frame==sim.ship_frames().end())return 0;
+        const bool local=sim.same_local_frame(ferry,destination) &&
+                         own_frame->second.anchor_body==anchor;
         if(!local && (!anchor || !boat->fitting.exploration_scanner()))
             return 0;
         if(has_active_ferry(ferry))return 0;
@@ -245,21 +251,71 @@ public:
             return true;
         }
         if(j.stage==0){
-            // Reserve intent BEFORE issuing original protected flight.
-            // On failure, owner review is required before any retry.
+            if(j.mode==2){
+                // The native celestial transit planner requires a vessel
+                // actually InSpace. Submit the ORIGINAL owned undock command
+                // and observe native transition, never change coordinates.
+                const auto* ship=world.world().find(j.ferry);
+                if(!ship || ship->dock_state!=DockState::Docked ||
+                   ship->dock_station!=origin || ship->owner_id!=owner){
+                    hold_route(j.id);return false;
+                }
+                set_route(j.id,0,10);
+                Command undock{};
+                undock.id=undock_command(j.id);
+                undock.sequence=undock.id;
+                undock.execute_tick=world.world().tick()+1;
+                undock.issuer=owner;
+                undock.actor=j.ferry;
+                undock.action=Action::RequestUndock;
+                if(!world.submit(undock)){hold_route(j.id);return false;}
+                world.step();
+                return true;
+            }
+            // Nearby travel is a REAL pilot-issued undock, thrust and
+            // destination dock sequence controlled by native FLIGHT-02.
             set_route(j.id,0,9);
-            bool posted=false;
-            if(j.mode==1)
-                posted=world.queue_npc_station_docking(owner,j.ferry,0,
+            if(!world.queue_npc_station_docking(owner,j.ferry,0,
                     j.destination,local_flight(j.id),
-                    NpcFlightPurpose::Passenger);
-            else
-                posted=world.queue_npc_flight(owner,j.ferry,0,j.body,
-                    celestial_flight(j.id),transit_id(j.id),
-                    NpcFlightPurpose::Passenger);
-            if(!posted){set_route(j.id,9,7);return false;}
-            set_route(j.id,9,j.mode==1?3:1);
+                    NpcFlightPurpose::Passenger)){
+                hold_route(j.id);return false;
+            }
+            set_route(j.id,9,3);
             return true;
+        }
+        if(j.stage==10){
+            // An interrupted original undock is never resubmitted. Find the
+            // independently applied world command before advancing the
+            // real transition countdown to its InSpace arrival.
+            bool applied=false;
+            for(const auto& e:world.world().events())
+                if(e.command_id==undock_command(j.id) &&
+                   e.result==Outcome::Applied)applied=true;
+            const auto* ship=world.world().find(j.ferry);
+            if(!ship || !applied || ship->owner_id!=owner){
+                hold_route(j.id);return false;
+            }
+            if(ship->dock_state==DockState::InSpace){
+                set_route(j.id,10,11);return true;
+            }
+            if(ship->dock_state==DockState::Undocking){
+                world.step();return true;
+            }
+            hold_route(j.id);return false;
+        }
+        if(j.stage==11){
+            const auto* ship=world.world().find(j.ferry);
+            if(!ship||ship->dock_state!=DockState::InSpace ||
+               !world.world().original_passenger_ferry_safe_to_fly(j.ferry)){
+                hold_route(j.id);return false;
+            }
+            set_route(j.id,11,9);
+            if(!world.queue_npc_flight(owner,j.ferry,0,j.body,
+                    celestial_flight(j.id),transit_id(j.id),
+                    NpcFlightPurpose::Passenger)){
+                hold_route(j.id);return false;
+            }
+            set_route(j.id,9,1);return true;
         }
         if(j.stage==1){
             const auto it=world.world().npc_flight_orders().find(celestial_flight(j.id));
@@ -451,6 +507,9 @@ private:
     };
     std::string file_;
     sqlite3* db_=nullptr;
+    static std::uint64_t undock_command(std::uint64_t route){
+        return 0x5A00000000000000ULL|(route<<8)|1ULL;
+    }
     static std::uint64_t local_flight(std::uint64_t route){
         return 0xD050000000ULL | (route<<3)|1ULL;
     }
