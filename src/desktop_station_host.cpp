@@ -193,28 +193,61 @@ static int run_host(int argc,char** argv){
     }
     std::uint64_t result=0;
     if(dock_assign){
-      // Selector zero means "first eligible real local worker"; no UI
-      // requires a creator to know an opaque internal NPC identifier.
       bool appointed=false;
-      if(ship!=0){
-        appointed=dock_ledger.assign(world.world(),local_station,kOwner,ship);
-      }else{
+      // The original ship NPC crosses the same real docked berth. No
+      // generic crewman is counted as local labor before its SQLite STEP.
+      const auto recruit=[&](std::uint64_t candidate)->bool{
+        const auto it=world.world().npc_records().find(candidate);
+        if(it==world.world().npc_records().end() ||
+           it->second.role!=NpcRole::Ship || it->second.transport_id)
+          return false;
+        const auto* home=world.world().find(it->second.home_ship);
+        if(!home || home->owner_id!=kOwner ||
+           home->dock_state!=DockState::Docked ||
+           home->dock_station!=local_station)return false;
+        if(it->second.location==local_station)
+          return dock_ledger.assign(world.world(),local_station,kOwner,candidate);
+        if(it->second.location!=it->second.home_ship ||
+           dock_ledger.active_staff(world.world(),local_station,kOwner)>=
+               dock::Ledger::kMaxStaff)return false;
+        // Verify exact named NPC custody and genuine station access before
+        // declaring employment. The transfer's generation and immutable
+        // receipt are committed within the original PersistentWorld STEP.
+        if(!world.station_dock_worker_transfer(kOwner,it->second.home_ship,
+                local_station,candidate,true,receipt_prefix|req))return false;
+        galaxy::server_dx::committed_breadcrumb(world.world().tick(),world.generation());
+        if(!dock_ledger.assign(world.world(),local_station,kOwner,candidate))
+          throw std::runtime_error("physically transferred dock worker could not receive shift");
+        return true;
+      };
+      if(ship!=0)appointed=recruit(ship);
+      else{
         std::uint64_t scanned=0;
         for(const auto& [npc_id,npc]:world.world().npc_records()){
-          if(++scanned>4096)break; // bounded named-NPC search
-          if(npc.location==local_station &&
-             dock_ledger.assign(world.world(),local_station,kOwner,npc_id)){
+          if(++scanned>4096)break;
+          if((npc.location==local_station ||
+              npc.location==npc.home_ship) && recruit(npc_id)){
             appointed=true;break;
           }
         }
       }
-      if(!appointed){deny(req,"no-available-local-dock-worker");continue;}
+      if(!appointed){deny(req,"no-eligible-physical-ship-crew-for-dock");continue;}
       result=1;
     }else if(dock_release){
-      const bool released=ship ?
-        dock_ledger.release(local_station,kOwner,ship) :
-        dock_ledger.release_first(local_station,kOwner);
-      if(!released){deny(req,"dock-worker-not-assigned-here");continue;}
+      // End shore duty by returning the SAME named person to the SAME
+      // physically docked original ship; keep shift if return is refused.
+      const std::uint64_t candidate=ship?ship:
+          dock_ledger.first_assigned(local_station,kOwner);
+      const auto it=world.world().npc_records().find(candidate);
+      if(!candidate || it==world.world().npc_records().end() ||
+         it->second.location!=local_station ||
+         !world.station_dock_worker_transfer(kOwner,it->second.home_ship,
+              local_station,candidate,false,receipt_prefix|req)){
+        deny(req,"dock-worker-cannot-return-to-original-berth");continue;
+      }
+      galaxy::server_dx::committed_breadcrumb(world.world().tick(),world.generation());
+      if(!dock_ledger.release(local_station,kOwner,candidate))
+        throw std::runtime_error("returned dock worker retained stale shift");
       result=2;
     }else if(dock_passenger){
       // A real local named-NPC check-in appointment, not boarding/migration.
@@ -239,10 +272,10 @@ static int run_host(int argc,char** argv){
       result=4;
     }else if(dock_work){
       // Only actual assigned staff can advance one durable original job.
-      const auto staff=dock_ledger.active_staff(world.world(),local_station,kOwner);
+      const auto roster=dock_ledger.service_roster(world.world(),local_station,kOwner);
       std::uint64_t completed=0;
-      for(std::uint64_t n=0;n<std::min<std::uint64_t>(staff,4);++n) {
-        if(!dock_ledger.serve_one(world,local_station,kOwner))break;
+      for(const auto worker:roster) {
+        if(!dock_ledger.serve_one(world,local_station,kOwner,worker))break;
         ++completed;
       }
       result=completed?5:6;
