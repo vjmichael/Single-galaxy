@@ -198,7 +198,9 @@ static int run_host(int argc,char** argv){
       if(ship!=0){
         appointed=dock_ledger.assign(world.world(),local_station,kOwner,ship);
       }else{
+        std::uint64_t scanned=0;
         for(const auto& [npc_id,npc]:world.world().npc_records()){
+          if(++scanned>4096)break; // bounded named-NPC search
           if(npc.location==local_station &&
              dock_ledger.assign(world.world(),local_station,kOwner,npc_id)){
             appointed=true;break;
@@ -214,10 +216,20 @@ static int run_host(int argc,char** argv){
       if(!released){deny(req,"dock-worker-not-assigned-here");continue;}
       result=2;
     }else if(dock_passenger){
-      // A genuine named-NPC appointment, not boarding or immigration.
-      if(!dock_ledger.enqueue_passenger(world.world(),local_station,kOwner,ship)){
-        deny(req,"passenger-not-present-or-queue-full");continue;
+      // A real local named-NPC check-in appointment, not boarding/migration.
+      bool queued=false;
+      if(ship!=0)queued=dock_ledger.enqueue_passenger(world.world(),local_station,kOwner,ship);
+      else {
+        std::uint64_t scanned=0;
+        for(const auto& [npc_id,npc]:world.world().npc_records()){
+          if(++scanned>4096)break;
+          if(npc.location==local_station &&
+             dock_ledger.enqueue_passenger(world.world(),local_station,kOwner,npc_id)){
+            queued=true;break;
+          }
+        }
       }
+      if(!queued){deny(req,"no-eligible-named-passenger-or-queue-full");continue;}
       result=3;
     }else if(dock_freight){
       if(!dock_ledger.enqueue_freight(world.world(),local_station,kOwner,ship,quantity)){
