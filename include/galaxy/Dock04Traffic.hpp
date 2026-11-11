@@ -8,6 +8,7 @@
 // HostEmbarkPassengers -> voyage -> NPC physical custody journal.
 #include "galaxy/DockLogistics.hpp"
 #include "galaxy/ColonySafety.hpp"
+#include "galaxy/PopulationCohorts.hpp"
 #include <algorithm>
 #include <cstdint>
 #include <limits>
@@ -192,6 +193,23 @@ public:
                 (100*v.waiting)/(kMaxPending*v.passenger_gangways)) : 
             (v.waiting?100:0);
         return v;
+    }
+    // This is an evidence-backed *pressure projection*, not a physical
+    // passenger admission. The caller supplies the authoritative original
+    // aggregate cohorts; only this station's settlement key is considered.
+    // Neither a displayed demand nor a numerical forecast creates a named
+    // person, a berth reservation or a voyager.
+    TrafficView project_cohort_pressure(const Simulation& world,EntityId station,
+                                        PlayerId owner,const PopulationCohorts& cohorts,
+                                        std::uint32_t travel_per_million) const {
+        auto view=snapshot(world,station,owner);
+        const auto* berth=world.find(station);
+        if(!berth || berth->type!=EntityType::Station ||
+           !owner || owner==Simulation::kServerAuthority)return view;
+        view.demand=projected_demand(
+            cohorts.population_at(station),travel_per_million,
+            std::min<std::uint64_t>(128,view.passenger_gangways*kFerrySeats));
+        return view;
     }
     std::uint64_t active(EntityId station,PlayerId owner) const {
         dock::Statement q(db_,"SELECT COUNT(*) FROM dock04_boarding_v1 "
