@@ -1,7 +1,7 @@
 {
   "schema": "SG-CI-GATE-01",
   "task_group": "SGDX03",
-  "source_sha": "647013166d81d51c6a8c06185b0e2e511c8c2208",
+  "source_sha": "dd86e3547cf2952d696eae27195ff2e0b2af5c64",
   "pr_number": 125,
-  "note": "Group 2 source-contract wording repaired after actual Linux failure in run 42941495519 (native C++ built; world parity still expected old 'second original launch' wording). Same stronger input-to-native test now enforces bound Godot physical key, released cursor synthetic action, player signal, U/G dock, UP thrust, A/D exact native ship heading and original SQLite restart. Central Windows/Linux workflow now explicitly runs authorized input source contract too. No weakening. One exact-head dual-OS native CTest + actual Godot + packaged Windows artifacts; R9700 owner physical remains separate."
+  "note": "GROUP2 exact-head Windows/Linux acceptance of genuine cursor-visible keyboard-to-original-ship input. Correct demonstrated Windows non-headless frame failure in run 42941495519: A/D steering AFTER original asteroid impact changed native tick/generation, violating necessary exact impact screenshot vs independent SQLite restart. Source now executes verified A LEFT (+15 native heading) and D RIGHT (exact heading restore) BEFORE forward/impact, guaranteeing impact is final original-world commit before independent restart. Stronger source-only windowed checkpoint-order gate. Run 19 CTests and real Godot keyboard U/G/UP/A/D, original SQLite/SGDX, rendered 4-frames, packaged Windows SHA/PowerShell tamper, no weakened checks. R9700 owner playtest independent."
 }
