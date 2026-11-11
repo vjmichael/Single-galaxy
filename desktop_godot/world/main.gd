@@ -811,7 +811,7 @@ func _build_hud() -> void:
 	contents.add_theme_constant_override("separation", 4)
 	panel.add_child(contents)
 	var title := Label.new()
-	title.text = "SINGLE-GALAXY  |  COLONY / DEPARTURES  |  F3 HUD  F4 VIEW  F5 DX  F6 RESET"
+	title.text = "SINGLE-GALAXY | I COLONY INVENTORY | SHIFT RUN | F3 HUD  F4 VIEW  F5 DX  F6 RESET"
 	title.add_theme_font_size_override("font_size", 17)
 	contents.add_child(title)
 	scope_label = Label.new()
@@ -1122,16 +1122,19 @@ func _unhandled_input(event: InputEvent) -> void:
 		_on_native_player_status("Pilot-only third-person camera is fixed while aboard")
 		get_viewport().set_input_as_handled()
 		return
-	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_R:
+	# I is the colony management interface, available anywhere inside
+	# the player's currently verified original colony. R remains an alias.
+	if event is InputEventKey and event.pressed and not event.echo and \
+			event.keycode in [KEY_I,KEY_R]:
 		if native_station_session == null or not native_station_session.is_active() or last_station_player_state != 4:
-			_on_native_player_status("Connect as a real station resident with H before using refinery")
+			_on_native_player_status("Colony interface requires the original player to be physically in this colony")
 		else:
 			if is_instance_valid(refinery_terminal) and refinery_terminal.visible:
 				_hide_refinery_terminal()
 			else:
 				refinery_terminal.show_waiting()
 				Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
-				native_station_session.request_refinery_view()
+				native_station_session.request_colony_inventory()
 		get_viewport().set_input_as_handled()
 		return
 	if event is InputEventKey and event.pressed and not event.echo and (event.keycode == KEY_H or event.keycode == KEY_P):
@@ -1215,14 +1218,14 @@ func _on_native_refinery_state(snapshot: Dictionary) -> void:
 func _on_native_refine_requested(lot_id: int) -> void:
 	# No client-side yields or refining; send only the selected original lot ID.
 	if native_station_session != null and native_station_session.is_active() and last_station_player_state == 4:
-		native_station_session.submit_refining(lot_id)
+		native_station_session.submit_colony_refining(lot_id)
 
 func _on_native_unload_requested() -> void:
 	# No local inventory mutation or replacement mining mechanic.
 	# The station C++ host rechecks physical proximity, actual owned docked
 	# ship and one tonne of cargo before committing original SQLite.
 	if native_station_session != null and native_station_session.is_active() and last_station_player_state == 4:
-		native_station_session.unload_owned_ship_tonne()
+		native_station_session.unload_colony_docked_ship_tonne()
 
 func _hide_refinery_terminal() -> void:
 	if is_instance_valid(refinery_terminal):

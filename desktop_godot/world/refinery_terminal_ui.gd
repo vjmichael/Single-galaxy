@@ -13,14 +13,14 @@ var _unload_button: Button
 var _current := {}
 
 func _ready() -> void:
-	name = "NativeStationRefineryTerminal"
+	name = "ColonyInventoryAndOperations"
 	position = Vector2(800, 110)
 	custom_minimum_size = Vector2(450, 380)
 	visible = false
 	var column := VBoxContainer.new()
 	add_child(column)
 	var heading := Label.new()
-	heading.text = "STATION REFINERY | ORIGINAL SQLITE"
+	heading.text = "COLONY INVENTORY | LOCAL ORIGINAL SQLITE"
 	heading.add_theme_font_size_override("font_size", 18)
 	column.add_child(heading)
 	_status = Label.new()
@@ -28,18 +28,18 @@ func _ready() -> void:
 	_status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	column.add_child(_status)
 	var lot_heading := Label.new()
-	lot_heading.text = "Unloaded station ore lots (real source IDs)"
+	lot_heading.text = "This colony's ore lots | local owner hangar"
 	column.add_child(lot_heading)
 	_lots = ItemList.new()
 	_lots.custom_minimum_size = Vector2(430, 115)
 	_lots.item_selected.connect(_update_refine_button)
 	column.add_child(_lots)
 	_minerals = Label.new()
-	_minerals.text = "Minerals: no native inventory received"
+	_minerals.text = "Local colony minerals: waiting for original inventory"
 	column.add_child(_minerals)
 	_unload_button = Button.new()
-	_unload_button.text = "Unload 1 tonne from owned docked ship"
-	_unload_button.tooltip_text = "Original C++ checks actual cargo, ownership, dock and terminal distance"
+	_unload_button.text = "Unload 1t from ship docked at THIS colony"
+	_unload_button.tooltip_text = "Only this colony's native docked owned ship; original SQLite moves one real tonne"
 	_unload_button.disabled = true
 	_unload_button.pressed.connect(_on_unload_pressed)
 	column.add_child(_unload_button)
@@ -48,8 +48,12 @@ func _ready() -> void:
 	_refine_button.disabled = true
 	_refine_button.pressed.connect(_on_refine_pressed)
 	column.add_child(_refine_button)
+	var future := Label.new()
+	future.text = "Manufacturing: not yet available. Build and staff real plants first.\nNo shared galactic inventory; goods remain at THIS colony."
+	future.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	column.add_child(future)
 	var close := Button.new()
-	close.text = "Close terminal (R)"
+	close.text = "Close colony interface (I)"
 	close.pressed.connect(func(): terminal_closed.emit())
 	column.add_child(close)
 
@@ -84,10 +88,10 @@ func present(snapshot: Dictionary) -> void:
 	var tonne := int(snapshot.get("ore_tonnes", 0))
 	var ready := int(snapshot.get("ready_tick", 0))
 	var tick := int(snapshot.get("tick", 0))
-	var text := "Station #%d | %d t ore | %d kg minerals\n" % [
+	var text := "COLONY #%d | PRIVATE LOCAL INVENTORY\nOre %d t | minerals %d kg\n" % [
 		int(snapshot.get("station", 0)), tonne, int(snapshot.get("mineral_total_kg", 0))]
 	if not installed:
-		text += "NO INSTALLED REFINERY: construct one from finite ship modules"
+		text += "REFINERY NOT BUILT — construction and staffing required"
 	else:
 		text += "Installed | workers %d | %s | energy %d | %s" % [
 			workers, "powered" if powered else "OFFLINE", energy,
@@ -118,7 +122,7 @@ func present(snapshot: Dictionary) -> void:
 	var rows := PackedStringArray()
 	for product in names:
 		rows.append("%s: %d kg" % [str(product).replace("_", " "), int(products[product])])
-	_minerals.text = "Station stock: " + (", ".join(rows) if rows.size() > 0 else "none")
+	_minerals.text = "This colony's mineral stock: " + (", ".join(rows) if rows.size() > 0 else "none")
 	_update_refine_button(0)
 	_unload_button.disabled = int(snapshot.get("eligible_ship", 0)) <= 0
 	if not installed or not powered or workers <= 0 or energy <= 0 or tonne < 1:
@@ -150,5 +154,5 @@ func _on_unload_pressed() -> void:
 	# Do not change displayed inventory until a new original REFEND
 	# receipt and source-verified lot snapshot arrive from SQLite.
 	_unload_button.disabled = true
-	_status.text = "Requesting one-tonne physical unload; awaiting original SQLite receipt..."
+	_status.text = "Original dock unloading 1t to THIS colony; awaiting SQLite receipt..."
 	unload_requested.emit()

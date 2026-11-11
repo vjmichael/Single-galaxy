@@ -355,6 +355,21 @@ func _accept_refinery_line(f: PackedStringArray) -> void:
 		return
 	stop("Unknown refinery source frame")
 
+func request_colony_inventory() -> void:
+	# Colony-local operations panel: user must be physically at THIS native
+	# station, but need not walk to a separate refinery building.
+	if not _active or _session <= 0 or _pending != 0 or \
+			int(_person.get("state", -1)) != 4 or int(_person.get("station",0)) <= 0:
+		_status("Colony inventory requires residence at this original station")
+		return
+	var request := _next_request
+	_next_request += 1
+	_pending = request
+	_pending_refinery_kind = "VIEW"
+	_last_send = Time.get_ticks_msec()
+	_send("COLVIEW|%d|%d|%d|%d" % [
+		_session,request,_generation,int(_person["station"])])
+
 func request_refinery_view() -> void:
 	if not _active or _session <= 0 or _pending != 0 or int(_person.get("state", -1)) != 4:
 		_status("Refinery terminal requires an actual station resident")
@@ -366,6 +381,20 @@ func request_refinery_view() -> void:
 	_last_send = Time.get_ticks_msec()
 	_send("REFVIEW|%d|%d|%d|%d" % [_session,request,_generation,int(_person["station"])])
 
+func submit_colony_refining(lot_id: int) -> void:
+	# No remote intercolony inventory transfer. The actual original C++
+	# refinery must be built, crewed and powered at the current colony.
+	if not _active or _session <= 0 or _pending != 0 or \
+			int(_person.get("state",-1)) != 4 or lot_id <= 0:
+		_status("Colony refining requires a resident and selected local lot")
+		return
+	var request := _next_request
+	_next_request += 1
+	_pending = request
+	_pending_refinery_kind = "REFINE"
+	_last_send = Time.get_ticks_msec()
+	_send("COLREFINE|%d|%d|%d|%d" % [_session,request,_generation,lot_id])
+
 func submit_refining(lot_id: int) -> void:
 	if not _active or _session <= 0 or _pending != 0 or int(_person.get("state", -1)) != 4 or lot_id <= 0:
 		_status("Refining request requires a selected original ore lot at the station")
@@ -376,6 +405,24 @@ func submit_refining(lot_id: int) -> void:
 	_pending_refinery_kind = "REFINE"
 	_last_send = Time.get_ticks_msec()
 	_send("REFINE|%d|%d|%d|%d" % [_session,request,_generation,lot_id])
+
+func unload_colony_docked_ship_tonne() -> void:
+	# Only the latest trusted original PERSON can pick the matching docked
+	# owned ship. A UI button does not remotely move cargo across colonies.
+	if not _active or _session <= 0 or _pending != 0 or \
+			int(_person.get("state",-1)) != 4:
+		_status("Colony logistics requires a resident and idle native writer")
+		return
+	var ship_id := int(_person.get("eligible_ship",0))
+	if ship_id <= 0:
+		_status("No physically docked owned ship at this colony")
+		return
+	var request := _next_request
+	_next_request += 1
+	_pending = request
+	_pending_refinery_kind = "UNLOAD"
+	_last_send = Time.get_ticks_msec()
+	_send("COLUNLOAD|%d|%d|%d|%d" % [_session,request,_generation,ship_id])
 
 func unload_owned_ship_tonne() -> void:
 	# The ship ID originates in the latest authenticated PERSON receipt.
