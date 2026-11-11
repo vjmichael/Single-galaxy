@@ -27,7 +27,7 @@ namespace fs=std::filesystem;
 namespace {
 constexpr PlayerId kOwner=7;
 std::uint64_t epoch(){std::random_device r;const auto n=((std::uint64_t(r())<<32)|r())&0x3fffffffffffffffULL;return n?n:1;}
-std::vector<std::string_view> split(const std::string& s){std::vector<std::string_view> v;std::size_t at=0;for(;;){const auto end=s.find('|',at);v.emplace_back(s.data()+at,(end==s.npos?s.size():end)-at);if(end==s.npos)break;at=end+1;if(v.size()>7)break;}return v;}
+std::vector<std::string_view> split(const std::string& s){std::vector<std::string_view> v;std::size_t at=0;for(;;){const auto end=s.find('|',at);v.emplace_back(s.data()+at,(end==s.npos?s.size():end)-at);if(end==s.npos)break;at=end+1;if(v.size()>8)break;}return v;}
 template<class T>bool parse(std::string_view s,T& v){if(s.empty()||s.size()>20||s[0]=='+'||s.find_first_of(" \n\r\t")!=s.npos)return false;const auto [p,ec]=std::from_chars(s.data(),s.data()+s.size(),v);return ec==std::errc{}&&p==s.data()+s.size();}
 void deny(std::uint64_t req,const char* reason){std::cout<<"DENY|2|"<<req<<'|'<<reason<<'\n'<<std::flush;}
 void send(std::uint64_t session,std::uint64_t request,const PersistentWorld& w){
