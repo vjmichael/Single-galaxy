@@ -1,0 +1,36 @@
+name: Export pinned FP3D and WO3-WO5 histories for semantic conflict resolution
+on:
+  push:
+    branches: [integration/fp3d-group2-wo3wo5-20261110]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  source-bundle:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify pinned heads, export Git object history
+        shell: bash
+        run: |
+          set -euo pipefail
+          G=dd86e3547cf2952d696eae27195ff2e0b2af5c64
+          W=d632ffc265df967da3c159252079787862a186d7
+          git fetch --no-tags origin "$G" "$W"
+          test "$(git merge-base "$G" "$W")" = "3467cab161fa4a091ae13e4ea05942fd089fd1b8"
+          git update-ref refs/heads/group2-reviewed "$G"
+          git update-ref refs/heads/wo3wo5-reviewed "$W"
+          mkdir -p export
+          git bundle create export/accepted-source.bundle refs/heads/group2-reviewed refs/heads/wo3wo5-reviewed
+          git bundle verify export/accepted-source.bundle
+          sha256sum export/accepted-source.bundle >export/SHA256SUMS
+          du -h export/accepted-source.bundle
+      - uses: actions/upload-artifact@v4
+        with:
+          name: fp3d-wo3wo5-accepted-git-bundle
+          path: export/
+          if-no-files-found: error
