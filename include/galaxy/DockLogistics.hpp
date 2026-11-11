@@ -103,6 +103,11 @@ class Ledger {
     if(it==sim.npc_records().end()||it->second.location!=station ||
        it->second.role!=NpcRole::Ship || it->second.transport_id ||
        (it->second.assigned_site && it->second.assigned_site!=station))return false;
+    const auto* home=sim.find(it->second.home_ship);
+    if(!home || home->owner_id!=owner)return false;
+    // An expired shift can be renewed without claiming a second worker.
+    {Statement expire(db_,"DELETE FROM dock_staff_v1 WHERE npc_id=? AND shift_end_tick<=?");
+     expire.bind(1,npc_id);expire.bind(2,sim.tick());expire.next();}
     Statement s(db_,"INSERT OR IGNORE INTO dock_staff_v1 "
                     "(npc_id,station,owner,assigned_tick,shift_end_tick) VALUES(?,?,?,?,?)");
     s.bind(1,npc_id);s.bind(2,station);s.bind(3,owner);
@@ -141,7 +146,9 @@ class Ledger {
     const auto it=sim.npc_records().find(npc_id);
     if(!station||!owner||it==sim.npc_records().end() ||
        it->second.location!=station || it->second.transport_id ||
-       is_staff(npc_id)|| active_jobs(station,owner,1)>=kMaxJobs ||
+       !sim.find(it->second.home_ship) ||
+       sim.find(it->second.home_ship)->owner_id!=owner ||
+       is_staff(npc_id)|| active_jobs(station,owner,0)>=kMaxJobs ||
        source_pending(station,owner,1,npc_id))return false;
     insert_job(station,owner,1,npc_id,1,sim.tick());return true;
   }
@@ -151,7 +158,7 @@ class Ledger {
     if(!station||!owner||!ship||tonnes==0||tonnes>kMaxFreightTonnes ||
        !vessel||vessel->owner_id!=owner||vessel->dock_station!=station||
        vessel->dock_state!=DockState::Docked||vessel->cargo<1||
-       active_jobs(station,owner,2)>=kMaxJobs ||
+       active_jobs(station,owner,0)>=kMaxJobs ||
        source_pending(station,owner,2,ship))return false;
     const auto outstanding=outstanding_freight(ship);
     if(outstanding>kMaxFreightTonnes-tonnes ||
@@ -189,8 +196,12 @@ class Ledger {
       const auto it=world.world().npc_records().find(source);
       if(it==world.world().npc_records().end()||it->second.location!=station||
          it->second.transport_id){hold(id);return false;}
-      world.step(); // true original-world progress, no generated passenger
-      finish(id,1,1);return true;
+      // Check-in completes an appointment ONLY. No fictional voyage, world
+      // tick, NPC location update or passenger materialization occurs here.
+      Statement checked(db_,"UPDATE dock_jobs_v1 SET completed=1,state=2 "
+                            "WHERE id=? AND kind=1 AND state=0 AND completed=0");
+      checked.bind(1,id);checked.next();
+      return sqlite3_changes(db_)==1;
     }
     const auto* vessel=world.world().find(source);
     if(!vessel||vessel->owner_id!=owner||vessel->dock_station!=station||
@@ -234,8 +245,8 @@ class Ledger {
   }
   std::uint64_t active_jobs(EntityId station,PlayerId owner,int kind)const {
     Statement q(db_,"SELECT COUNT(*) FROM dock_jobs_v1 WHERE station=? AND owner=? "
-                    "AND kind=? AND state IN(0,1,3)");
-    q.bind(1,station);q.bind(2,owner);q.bind(3,kind);
+                    "AND (?=0 OR kind=?) AND state IN(0,1,3)");
+    q.bind(1,station);q.bind(2,owner);q.bind(3,kind);q.bind(4,kind);
     return q.next()==SQLITE_ROW?q.number(0):0;
   }
   bool source_pending(EntityId station,PlayerId owner,int kind,std::uint64_t src)const {
