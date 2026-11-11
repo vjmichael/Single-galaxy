@@ -305,7 +305,8 @@ static int run_host(int argc,char** argv){
              <<'|'<<data.staff<<'|'<<data.passengers<<'|'<<data.freight_tonnes
              <<'|'<<data.freight_jobs<<'|'<<data.held_jobs
              <<'|'<<data.completed_passengers<<'|'<<data.completed_tonnes
-             <<'|'<<result<<'\n'<<std::flush;
+             <<'|'<<result<<'|'<<data.qualified_staff
+             <<'|'<<data.service_capacity<<'\n'<<std::flush;
     if(!std::cout)throw std::runtime_error("dock service response pipe closed");
     last=now;continue;
    }
