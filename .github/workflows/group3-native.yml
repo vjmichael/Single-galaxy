@@ -54,26 +54,26 @@ jobs:
         run: |
           set -euo pipefail
           cmake -S . -B build/group3 -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON -DBUILD_BENCHMARKS=OFF
-          cmake --build build/group3 --parallel 2 --target galaxy_group3_fitted_mining_tests galaxy_group3_asteroid_survey_tests galaxy_group3_native_mining_seed galaxy_desktop_player_host galaxy_group3_station_custody_tests galaxy_industry01_native_tests galaxy_play_station03b_persistent_refinery_tests galaxy_play_station04a_original_asteroid_contact_tests galaxy_group3_station_identity_tests
+          cmake --build build/group3 --parallel 2 --target galaxy_group3_fitted_mining_tests galaxy_group3_asteroid_survey_tests galaxy_group3_native_mining_seed galaxy_desktop_player_host galaxy_group3_station_custody_tests galaxy_industry01_native_tests galaxy_play_station03b_persistent_refinery_tests galaxy_play_station04a_original_asteroid_contact_tests galaxy_group3_station_identity_tests galaxy_desktop_station_host
       - name: Configure + compile true native kernel and regression (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
           cmake -S . -B build/group3 -G "Visual Studio 17 2022" -A x64 -DBUILD_TESTING=ON -DBUILD_BENCHMARKS=OFF "-DCMAKE_TOOLCHAIN_FILE=$env:SG_TOOLCHAIN" -DVCPKG_TARGET_TRIPLET=x64-windows
           if($LASTEXITCODE -ne 0){throw 'MSVC configuration failure'}
-          cmake --build build/group3 --config Release --parallel 2 --target galaxy_group3_fitted_mining_tests galaxy_group3_asteroid_survey_tests galaxy_group3_native_mining_seed galaxy_desktop_player_host galaxy_group3_station_custody_tests galaxy_industry01_native_tests galaxy_play_station03b_persistent_refinery_tests galaxy_play_station04a_original_asteroid_contact_tests galaxy_group3_station_identity_tests
+          cmake --build build/group3 --config Release --parallel 2 --target galaxy_group3_fitted_mining_tests galaxy_group3_asteroid_survey_tests galaxy_group3_native_mining_seed galaxy_desktop_player_host galaxy_group3_station_custody_tests galaxy_industry01_native_tests galaxy_play_station03b_persistent_refinery_tests galaxy_play_station04a_original_asteroid_contact_tests galaxy_group3_station_identity_tests galaxy_desktop_station_host
           if($LASTEXITCODE -ne 0){throw 'MSVC compilation failure'}
       - name: Original resource-to-refinery, owner/ledger/identity and prototype regression (Linux)
         if: runner.os == 'Linux'
         shell: bash
         run: |
           set -euo pipefail
-          ctest --test-dir build/group3 --no-tests=error -R '^(galaxy_group3_(original_(fitted_mining|asteroid_survey|station_custody)|native_mining_pipe)|galaxy_industry01_native_binding|galaxy_play_station03b_persistent_refinery|galaxy_play_station04a_original_asteroid_contact|galaxy_group3_station_material_identity)$' --output-on-failure --output-junit group3-linux.xml --timeout 120
+          ctest --test-dir build/group3 --no-tests=error -R '^(galaxy_group3_(original_(fitted_mining|asteroid_survey|station_custody)|native_mining_pipe)|galaxy_industry01_native_binding|galaxy_play_station03b_persistent_refinery|galaxy_play_station04a_original_asteroid_contact|galaxy_group3_station_material_identity|galaxy_play_station02_native_pipe|galaxy_play_station03c_refinery_native_pipe|galaxy_play_station04c_native_unload_pipe)$' --output-on-failure --output-junit group3-linux.xml --timeout 120
       - name: Original resource-to-refinery, owner/ledger/identity and prototype regression (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          ctest --test-dir build/group3 -C Release --no-tests=error -R '^(galaxy_group3_(original_(fitted_mining|asteroid_survey|station_custody)|native_mining_pipe)|galaxy_industry01_native_binding|galaxy_play_station03b_persistent_refinery|galaxy_play_station04a_original_asteroid_contact|galaxy_group3_station_material_identity)$' --output-on-failure --output-junit group3-windows.xml --timeout 120
+          ctest --test-dir build/group3 -C Release --no-tests=error -R '^(galaxy_group3_(original_(fitted_mining|asteroid_survey|station_custody)|native_mining_pipe)|galaxy_industry01_native_binding|galaxy_play_station03b_persistent_refinery|galaxy_play_station04a_original_asteroid_contact|galaxy_group3_station_material_identity|galaxy_play_station02_native_pipe|galaxy_play_station03c_refinery_native_pipe|galaxy_play_station04c_native_unload_pipe)$' --output-on-failure --output-junit group3-windows.xml --timeout 120
           if($LASTEXITCODE -ne 0){throw 'Original ore/refinery material/owner provenance, and existing prototype tests failed'}
       - uses: actions/upload-artifact@v4
         if: always()
