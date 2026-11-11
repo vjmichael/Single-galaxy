@@ -6,6 +6,7 @@ signal person_received(person: Dictionary)
 signal refinery_received(snapshot: Dictionary)
 signal colony_population_received(snapshot: Dictionary)
 signal dock_received(snapshot: Dictionary)
+signal dock_pedestrians_received(frame: Dictionary)
 signal dock_destinations_received(frame: Dictionary)
 signal regional_sources_received(frame: Dictionary)
 signal status_changed(message: String)
@@ -42,6 +43,8 @@ var _dock_initial_read_done := false
 var _dock_auto_remaining := 0
 var _dock_auto_staff := 0
 var _dock_auto_routes := 0
+var _last_pedestrian_read_ms := -10000
+const DOCK_PEDESTRIAN_READ_INTERVAL_MS := 750
 var _last_dock_automation_ms := -10000
 const DOCK_AUTO_INTERVAL_MS := 900
 var _refinery_header := {}
@@ -197,12 +200,16 @@ func poll() -> void:
 		return
 	_dispatch_queued_hangar_if_ready()
 	_automatic_dock_service()
+	_read_real_dock_pedestrians()
 
 func _integer(value: String) -> bool:
 	return not value.is_empty() and value.length() <= 19 and value.is_valid_int()
 
 func _accept_line(line: String) -> void:
 	var f := line.split("|", false)
+	if f.size() > 0 and f[0] == "DPED":
+		_accept_native_dock_pedestrians(f)
+		return
 	if f.size() > 0 and f[0] == "DREG":
 		_accept_regional_source(f)
 		return
@@ -293,6 +300,55 @@ func _accept_line(line: String) -> void:
 		_queued_hangar_ready_msec = maxi(Time.get_ticks_msec() + 75,
 			_last_send + NATIVE_HANGAR_COMMAND_GAP_MS)
 		_status("E received — synchronizing original station boarding after WALK receipt")
+
+func _accept_native_dock_pedestrians(f: PackedStringArray) -> void:
+	# Each actual native millimeter coordinate is tied to one original NPC
+	# and station; the Godot scene is never the authority for path progress.
+	if f.size()<8 or f[0]!="DPED" or f[1]!="1" or _pending_dock_kind!="PED":
+		stop("Unrequested native pedestrian frame")
+		return
+	for i in range(2,f.size()):
+		if not _integer(f[i]):
+			stop("Malformed native pedestrian identity or coordinate")
+			return
+	var count := int(f[7])
+	if count<0 or count>4 or f.size()!=8+count*4 or \
+			int(f[2])!=_session or int(f[3])!=_pending or \
+			int(f[4])<_tick or int(f[5])<_generation or \
+			int(f[6])!=int(_person.get("station",-1)) or \
+			int(_person.get("state",-1))!=4:
+		stop("Original pedestrian record belongs to another station")
+		return
+	var actors: Array[Dictionary] = []
+	var seen: Dictionary = {}
+	for i in range(count):
+		var id := int(f[8+4*i])
+		var lane := int(f[9+4*i])
+		var xx := int(f[10+4*i])
+		var zz := int(f[11+4*i])
+		if id<=0 or lane<1 or lane>3 or abs(xx)>8000 or abs(zz)>8000 or seen.has(id):
+			stop("Native dock pedestrian violates bounded physical custody")
+			return
+		seen[id]=true
+		actors.append({"npc":id,"lane":lane,"x_mm":xx,"z_mm":zz})
+	_pending=0
+	_pending_dock_kind=""
+	_tick=int(f[4])
+	_generation=int(f[5])
+	dock_pedestrians_received.emit({"station":int(f[6]),
+		"tick":_tick,"generation":_generation,"walkers":actors})
+
+func _read_real_dock_pedestrians() -> void:
+	if not _active or _pending!=0 or _session<=0 or \
+			not _dock_initial_read_done or \
+			int(_person.get("state",-1))!=4:
+		return
+	var now := Time.get_ticks_msec()
+	if now-_last_pedestrian_read_ms<DOCK_PEDESTRIAN_READ_INTERVAL_MS or \
+			now-_last_send<NATIVE_HANGAR_COMMAND_GAP_MS:
+		return
+	if _submit_dock("PED",int(_person.get("station",0))):
+		_last_pedestrian_read_ms=now
 
 func _accept_regional_source(f: PackedStringArray) -> void:
 	if f.size()!=14 or f[1]!="1" or _pending_dock_kind!="REGIONS":
@@ -472,6 +528,9 @@ func _automatic_dock_service() -> void:
 	elif _dock_auto_remaining>0 and (_dock_auto_staff>0 or _dock_auto_routes>0):
 		advance_dock_services()
 
+func request_dock_pedestrians() -> bool:
+	return _submit_dock("PED",int(_person.get("station",0)))
+
 func request_dock_status() -> bool:
 	return _submit_dock("VIEW",0)
 
@@ -530,6 +589,7 @@ func _submit_dock(kind: String, source: int, quantity: int = 0,
 	var op := {"VIEW":"DOCKVIEW","ASSIGN":"DOCKASSIGN",
 		"RELEASE":"DOCKRELEASE","PASS":"DOCKPASS","FREIGHT":"DOCKFREIGHT",
 		"WORK":"DOCKWORK","DESTS":"DOCKDESTS","RENEW":"DOCKRENEW",
+		"PED":"DOCKPED",
 		"ROUTE":"DOCKROUTE","CANCEL":"DOCKCANCEL",
 		"REGIONS":"DOCKREGIONS","BIND":"DOCKBIND"}.get(kind,"")
 	if op.is_empty():
