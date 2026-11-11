@@ -4,6 +4,7 @@ const SGDX_LAUNCH := preload("res://world/sgdx_process_launch.gd")
 ## Only the C++ host commits pose and native STEP; Godot cannot write SQLite.
 signal pose_received(pose: Dictionary)
 signal ship_state_received(ship: Dictionary)
+signal station_nav_received(nav: Dictionary)
 signal asteroid_contact_received(contact: Dictionary)
 signal status_changed(message: String)
 signal connection_changed(connected: bool)
@@ -24,6 +25,7 @@ var _ship := 0
 var _initial_ship_seen := false
 var _last_ship_telemetry_request := -1
 var _last_contact_request := -1
+var _last_nav_request := -1
 var _dock_state := -1
 var _flight_cycle := 0
 var _seat_sequence := -1
@@ -100,6 +102,7 @@ func start(save_override: String = "") -> void:
 	_initial_ship_seen = false
 	_last_ship_telemetry_request = -1
 	_last_contact_request = -1
+	_last_nav_request = -1
 	_dock_state = -1
 	_flight_cycle = 0
 	_seat_sequence = -1
@@ -152,6 +155,7 @@ func _accept_line(line: String) -> void:
 			stop("Malformed native denial receipt")
 			return
 		var request := int(parts[2])
+		var rejected_verb := _pending_flight_verb if request == _pending and _pending_kind == "FLIGHT" else ""
 		if request == _pending:
 			if _pending_kind == "FLIGHT":
 				flight_command_result.emit(request, _pending_flight_verb, "DENY",
@@ -159,7 +163,19 @@ func _accept_line(line: String) -> void:
 				_pending_flight_verb = ""
 			_pending = 0
 			_pending_kind = ""
-		_status("NATIVE DENIED action #%d: %s; original game did not accept it" % [request, parts[3]])
+		var message := "Original C++ refused %s action #%d: %s" % [
+			rejected_verb if not rejected_verb.is_empty() else "native", request, parts[3]]
+		if parts[3] == "native-flight-refused":
+			if rejected_verb == "BRAKE":
+				message = "BRAKE not admitted: already stopped/below native braking threshold or custody check denied"
+			elif rejected_verb == "DCK":
+				message = "DOCK not admitted: must be stationary within 2.5m of an original station in the same frame"
+			elif rejected_verb == "ASC" or rejected_verb == "DES":
+				message = "Vertical control not admitted: this saved world may lack native 3D physics or custody"
+		_status(message)
+		return
+	if parts.size() > 0 and (parts[0] == "NAV" or parts[0] == "NAVNONE"):
+		_accept_original_station_nav(parts)
 		return
 	if parts.size() > 0 and (parts[0] == "ROCK" or parts[0] == "ROCKNONE"):
 		_accept_original_asteroid(parts)
@@ -343,6 +359,43 @@ func _accept_original_asteroid(parts: PackedStringArray) -> void:
 		"taxonomy":taxonomy,"ship":ship,"tick":tick,"generation":generation,
 		"cargo_tonnes":cargo,"cargo_capacity":capacity,"mining_tool_online":installed,
 		"impact_rock":impact_rock,"impact_tick":impact_tick})
+
+func _accept_original_station_nav(parts: PackedStringArray) -> void:
+	# C++ returns only stations in the original ship's same physical frame.
+	# The UI neither invents a waypoint nor treats a target as docking approval.
+	var found := parts[0] == "NAV"
+	if (found and parts.size() != 11) or (not found and parts.size() != 7) or parts[1] != "1":
+		stop("Invalid native station navigation frame")
+		return
+	for i in range(2, parts.size()):
+		if not _integer(parts[i]):
+			stop("Nonnumeric original station navigation frame")
+			return
+	var session := int(parts[2])
+	var request := int(parts[3])
+	var ship := int(parts[4])
+	var tick := int(parts[5])
+	var generation := int(parts[6])
+	if session != _session or ship != _ship or tick != _tick or \
+			generation != _generation or request != _last_ship_telemetry_request or \
+			request != _last_contact_request or request <= _last_nav_request or \
+			tick < 0 or generation < 1:
+		stop("Stale or unpaired original station navigation")
+		return
+	var output := {"found":found,"ship":ship,"tick":tick,"gen":generation}
+	if found:
+		var station := int(parts[7])
+		var dx := int(parts[8])
+		var dy := int(parts[9])
+		var dz := int(parts[10])
+		const RANGE_MM := 1000000000
+		if station <= 0 or abs(dx) > RANGE_MM or abs(dy) > RANGE_MM or \
+				abs(dz) > RANGE_MM or dx*dx+dy*dy+dz*dz > RANGE_MM*RANGE_MM:
+			stop("Original station navigation outside verified physical bounds")
+			return
+		output.merge({"station":station,"dx_mm":dx,"dy_mm":dy,"dz_mm":dz}, true)
+	_last_nav_request = request
+	station_nav_received.emit(output)
 
 func submit_flight(actions: PackedStringArray) -> void:
 	if not _active or _session <= 0 or not _seated or not _initial_ship_seen or \

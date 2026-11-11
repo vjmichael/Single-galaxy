@@ -14,6 +14,10 @@ with tempfile.TemporaryDirectory() as temp:
         rock=p.stdout.readline().strip().split("|")
         assert rock[0] in ("ROCK","ROCKNONE") and rock[1:4]==["1",pose[2],"0"],rock
         assert rock[4]==pose[10] and rock[5]==ship[7] and rock[6]==ship[8],rock
+        nav=p.stdout.readline().strip().split("|")
+        assert len(nav)==11 and nav[:5]==["NAV","1",pose[2],"0",pose[10]],nav
+        assert nav[5:7]==ship[7:9] and int(nav[7])>0,nav
+        assert all(abs(int(v))<=1000000000 for v in nav[8:11]),nav
         assert len(pose)==13 and pose[:2]==["POSE","1"],pose
         assert len(ship)==17 and ship[:3]==["SHIP","1",pose[2]],ship
         assert ship[3:5]==["0","0"] and ship[6]==pose[10],ship
@@ -27,6 +31,10 @@ with tempfile.TemporaryDirectory() as temp:
             rock=p.stdout.readline().strip().split("|")
             assert rock[0] in ("ROCK","ROCKNONE") and rock[1:4]==["1",result[2],result[3]],rock
             assert rock[4]==result[6] and rock[5]==result[7] and rock[6]==result[8],rock
+            nav=p.stdout.readline().strip().split("|")
+            assert len(nav)==11 and nav[:5]==["NAV","1",result[2],result[3],result[6]],nav
+            assert nav[5:7]==result[7:9] and int(nav[7])>0,nav
+            assert sum(int(v)**2 for v in nav[8:11])<=1000000000**2,nav
         return result
     p,initial,initial_ship=open_host()
     epoch=initial[2]

@@ -108,6 +108,61 @@ void send_rock_contact(std::uint64_t session,std::uint64_t req,
     }
     if(!std::cout)throw std::runtime_error("Godot original-rock observation pipe closed");
 }
+// Read-only navigation: the nearest genuine station sharing this original
+// ship's coordinate frame. Unlike docking admission, this observation is
+// available beyond the 2.5m dock envelope. No station/ship control is granted.
+void send_original_station_nav(std::uint64_t session,std::uint64_t req,
+                               const PersistentWorld& world,EntityId ship_id) {
+    const auto& original=world.world();
+    const auto* ship=original.find(ship_id);
+    if(!ship || ship->type!=EntityType::Ship || ship->owner_id!=kLocalOwner)
+        throw std::runtime_error("native navigation missing original owned ship");
+    constexpr std::int64_t cap=1000000000LL; // bounded 1000 km, never a synthetic waypoint
+    constexpr std::size_t max_scan=8192;
+    std::int64_t best_squared=cap*cap+1;
+    EntityId nearest=0;
+    std::int64_t best_dx=0,best_dy=0,best_dz=0;
+    std::size_t scanned=0;
+    for(const auto station_id:original.entity_ids_in_system(ship->system_id)) {
+        if(++scanned>max_scan)break;
+        const auto* station=original.find(station_id);
+        if(!station || station->type!=EntityType::Station ||
+           !original.same_local_frame(ship_id,station_id) ||
+           ship->physical_galactic_authoritative!=station->physical_galactic_authoritative)
+            continue;
+        std::optional<std::int64_t> dx,dy,dz;
+        if(ship->physical_galactic_authoritative){
+            dx=space_mining_view::nearby_axis_delta(ship->physical_galactic.x,
+                station->physical_galactic.x,cap);
+            dy=space_mining_view::nearby_axis_delta(ship->physical_galactic.y,
+                station->physical_galactic.y,cap);
+            dz=space_mining_view::nearby_axis_delta(ship->physical_galactic.z,
+                station->physical_galactic.z,cap);
+        } else {
+            const auto x=station->position.x-ship->position.x;
+            const auto y=station->position.y-ship->position.y;
+            const auto z=station->position_z_mm-ship->position_z_mm;
+            if(x>=-cap&&x<=cap&&y>=-cap&&y<=cap&&z>=-cap&&z<=cap){
+                dx=x;dy=y;dz=z;
+            }
+        }
+        if(!dx||!dy||!dz)continue;
+        const auto squared=(*dx)*(*dx)+(*dy)*(*dy)+(*dz)*(*dz);
+        if(squared>cap*cap || squared>=best_squared)continue;
+        nearest=station_id;
+        best_squared=squared;
+        best_dx=*dx;best_dy=*dy;best_dz=*dz;
+    }
+    if(nearest){
+        std::cout<<"NAV|1|"<<session<<'|'<<req<<'|'<<ship_id<<'|'
+                 <<original.tick()<<'|'<<world.generation()<<'|'<<nearest<<'|'
+                 <<best_dx<<'|'<<best_dy<<'|'<<best_dz<<'\n'<<std::flush;
+    } else {
+        std::cout<<"NAVNONE|1|"<<session<<'|'<<req<<'|'<<ship_id<<'|'
+                 <<original.tick()<<'|'<<world.generation()<<'\n'<<std::flush;
+    }
+    if(!std::cout)throw std::runtime_error("original station navigation pipe closed");
+}
 bool flight_action(std::string_view name,PilotControl& out){
     if(name=="UND")out=PilotControl::Undock;
     else if(name=="DCK")out=PilotControl::Dock;
@@ -163,6 +218,7 @@ static int run_host(int argc,char** argv){
         send_pose("POSE",session,0,frame,world);
         send_ship(session,0,0,Outcome::Applied,person.flight_state(kLocalOwner));
         send_rock_contact(session,0,world,frame.ship);
+        send_original_station_nav(session,0,world,frame.ship);
         auto last_move=std::chrono::steady_clock::now()-std::chrono::milliseconds(100);
         std::string line;
         while(std::getline(std::cin,line)){
@@ -213,6 +269,7 @@ static int run_host(int argc,char** argv){
                 galaxy::server_dx::committed_breadcrumb(world.world().tick(),world.generation());
                 send_ship(session,req,command_id,*outcome,person.flight_state(kLocalOwner));
                 send_rock_contact(session,req,world,previous.ship);
+                send_original_station_nav(session,req,world,previous.ship);
                 continue;
             }
             if(walking&&expected!=previous.sequence){deny(req,"stale-pose");continue;}

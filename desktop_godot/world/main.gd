@@ -8,6 +8,7 @@ const NATIVE_PLAYER_SESSION := preload("res://world/native_player_session.gd")
 const NATIVE_STATION_SESSION := preload("res://world/native_station_session.gd")
 const REFINERY_TERMINAL_UI := preload("res://world/refinery_terminal_ui.gd")
 const FLIGHT_INSTRUMENTS := preload("res://world/native_flight_instruments.gd")
+const STATION_NAV := preload("res://world/native_station_navigation.gd")
 const INTERACTION_PROMPTS := preload("res://world/interaction_prompts.gd")
 const COLONY_DOCK_LAYOUT := preload("res://world/colony_dock_layout.gd")
 const PHYSICAL_TRACE := preload("res://world/physical_acceptance_diagnostics.gd")
@@ -25,6 +26,7 @@ var interaction_label: Label
 var retry_station_button: Button
 var fps_label: Label
 var primary_speed_label: Label
+var navigation_label: Label
 var native_label: Label
 # F3 controls visual engineering details only; C++ observer, owner, native
 # receipts, SQLite and telemetry collection remain active when hidden.
@@ -42,6 +44,7 @@ var asteroid_label: Label
 var flight_instrument_label: Label
 var _verified_flight_ship: Dictionary = {}
 var _verified_flight_rock: Dictionary = {}
+var _verified_station_nav: Dictionary = {}
 # The actual hull yaw is always set immediately from the committed C++ SHIP
 # receipt; ONLY the rendered exterior camera eases back toward its mount.
 var _exterior_camera_rest := Transform3D.IDENTITY
@@ -131,6 +134,7 @@ func _ready() -> void:
 	native_player_session = NATIVE_PLAYER_SESSION.new()
 	native_player_session.pose_received.connect(_on_native_player_pose)
 	native_player_session.ship_state_received.connect(_on_native_ship_state)
+	native_player_session.station_nav_received.connect(_on_native_station_nav)
 	native_player_session.asteroid_contact_received.connect(_on_native_asteroid_contact)
 	native_player_session.status_changed.connect(_on_native_player_status)
 	native_player_session.connection_changed.connect(_on_native_player_connection)
@@ -500,6 +504,9 @@ func _apply_technical_hud() -> void:
 		primary_speed_label.visible = not _show_technical_details and (
 			is_instance_valid(space_preview) and space_preview.visible
 			and not _verified_flight_ship.is_empty())
+	if is_instance_valid(navigation_label):
+		navigation_label.visible = (is_instance_valid(space_preview) and
+			space_preview.visible and not _verified_flight_ship.is_empty())
 
 func _show_native_location(in_station: bool) -> void:
 	# The only callers after genesis are verified native PERSON and POSE frames.
@@ -585,6 +592,15 @@ func _build_hud() -> void:
 	primary_speed_label.text = ""
 	primary_speed_label.visible = false
 	contents.add_child(primary_speed_label)
+	# Always-on (including F3 hidden) read-only station route from C++.
+	# The station and bearing are never spawned as a fake Godot world object.
+	navigation_label = Label.new()
+	navigation_label.name = "OriginalStationReturnNavigation"
+	navigation_label.text = STATION_NAV.display({})
+	navigation_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	navigation_label.add_theme_font_size_override("font_size", 13)
+	navigation_label.visible = false
+	contents.add_child(navigation_label)
 	for line in [scope_label, native_label, ship_label, status_label]:
 		line.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	retry_station_button = Button.new()
@@ -985,6 +1001,7 @@ func _capture_operator_view() -> void:
 		"original_ship":_verified_flight_ship.duplicate(true) if not joined.is_empty() else {},
 		"original_rock":_verified_flight_rock.duplicate(true) if not joined.is_empty() else {},
 		"original_target_instrument":joined,
+		"original_nearest_station":_verified_station_nav.duplicate(true),
 		"exterior_camera":is_instance_valid(exterior_camera) and exterior_camera.current,
 		"person_camera":is_instance_valid(player) and is_instance_valid(player.camera) and player.camera.current,
 		"operator_visual_judgment":"NOT YET RECORDED"
@@ -1086,6 +1103,9 @@ func _on_native_player_connection(connected: bool) -> void:
 	if not connected:
 		_verified_flight_ship.clear()
 		_verified_flight_rock.clear()
+		_verified_station_nav.clear()
+		if is_instance_valid(navigation_label):
+			navigation_label.text = STATION_NAV.display({})
 		if is_instance_valid(flight_instrument_label):
 			flight_instrument_label.text = "FLIGHT SENSOR: offline; previous native contacts are no longer live"
 	if not connected:
@@ -1102,6 +1122,22 @@ func _on_native_player_connection(connected: bool) -> void:
 		ship_label.text = "SHIP: native host disconnected; previous readout not live"
 	if is_instance_valid(scope_label):
 		scope_label.text = "PILOT LOCKED | THIRD-PERSON | ORIGINAL C++ FLIGHT" if connected else "Native cockpit unavailable — original saved world retained"
+
+func _on_native_station_nav(nav: Dictionary) -> void:
+	# NAV is a separate read-only native packet paired with the current SHIP
+	# tick and journal generation. No request, steering or SQLite authority.
+	var readout: Dictionary = STATION_NAV.from_verified_frames(_verified_flight_ship, nav)
+	if readout.is_empty():
+		_verified_station_nav.clear()
+		if is_instance_valid(navigation_label):
+			navigation_label.text = STATION_NAV.display({})
+		return
+	_verified_station_nav = readout
+	if is_instance_valid(navigation_label):
+		navigation_label.text = STATION_NAV.display(readout)
+	if _physical_trace != null and _physical_trace.enabled():
+		_physical_trace.record("original_station_navigation", readout.duplicate(true))
+	_apply_technical_hud()
 
 func _refresh_native_flight_instruments() -> void:
 	if not is_instance_valid(flight_instrument_label):
@@ -1149,6 +1185,9 @@ func _on_native_ship_state(ship: Dictionary) -> void:
 			"camera_exterior":is_instance_valid(exterior_camera) and exterior_camera.current})
 	_verified_flight_ship = ship.duplicate(true)
 	_verified_flight_rock.clear()
+	_verified_station_nav.clear()
+	if is_instance_valid(navigation_label):
+		navigation_label.text = STATION_NAV.display({})
 	_refresh_native_flight_instruments()
 	if not is_instance_valid(ship_label):
 		return

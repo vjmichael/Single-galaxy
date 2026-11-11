@@ -10,6 +10,7 @@ const COLLISION_RADIUS_M := 15.201 # 10m original rock + 5.2m greybox ship + 1mm
 var _game
 var _ship_frames: Array[Dictionary] = []
 var _rock_frames: Array[Dictionary] = []
+var _station_nav_frames: Array[Dictionary] = []
 var _error := ""
 var _visual_dir := ""
 var _visual_records: Array[Dictionary] = []
@@ -111,7 +112,7 @@ func _poll_native() -> bool:
 func _native_ready() -> bool:
 	_poll_native()
 	var n = _game.native_player_session
-	return n._active and n._session > 0 and n._initial_ship_seen and n._last_contact_request == 0
+	return n._active and n._session > 0 and n._initial_ship_seen and n._last_contact_request == 0 and n._last_nav_request == 0
 
 func _seat_ready() -> bool:
 	_poll_native()
@@ -138,6 +139,9 @@ func _on_ship(frame: Dictionary) -> void:
 
 func _on_rock(frame: Dictionary) -> void:
 	_rock_frames.append(frame.duplicate(true))
+
+func _on_station_nav(frame: Dictionary) -> void:
+	_station_nav_frames.append(frame.duplicate(true))
 
 func _submit_visible_cursor_keyboard_flight(action: String, expected: String) -> bool:
 	# Real Godot InputMap -> player intent collector -> main scene handler ->
@@ -205,11 +209,16 @@ func _run() -> void:
 	var session = _game.native_player_session
 	session.ship_state_received.connect(_on_ship)
 	session.asteroid_contact_received.connect(_on_rock)
+	session.station_nav_received.connect(_on_station_nav)
 	session.start(path)
 	if not (await _await_condition(Callable(self, "_native_ready"))):
 		_fail("original C++ host did not deliver authenticated initial POSE, SHIP and ROCK")
 	elif _rock_frames.is_empty() or _rock_frames[-1]["impact_rock"] != 0:
 		_fail("initial fixture forged or replayed original collision")
+	elif _station_nav_frames.is_empty() or not bool(_station_nav_frames[-1].get("found", false)) or \
+			int(_station_nav_frames[-1].get("station", 0)) <= 0 or \
+			int(_station_nav_frames[-1].get("tick", -1)) != int(_ship_frames[-1].get("tick", -2)):
+		_fail("original C++ seeded station failed same-tick read-only return navigation")
 	else:
 		# Exercise the actual Godot admission path with a live original SGDX
 		# guardian whose saved stop timestamp is deliberately over 3s old.
@@ -395,6 +404,7 @@ func _run() -> void:
 		restored.connection_changed.connect(_game._on_native_player_connection)
 		restored.status_changed.connect(_game._on_native_player_status)
 		restored.ship_state_received.connect(_on_ship)
+		restored.station_nav_received.connect(_on_station_nav)
 		restored.asteroid_contact_received.connect(_on_rock)
 		_game.native_player_session = restored
 		restored.start(path)
