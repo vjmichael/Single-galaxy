@@ -75,7 +75,9 @@ public:
     // Ordinal comes from live owner-reviewed list, never a user-submitted
     // SQLite scope or population. Requires original local PERSON access.
     bool bind(const PersistentWorld& world,EntityId station,PlayerId owner,
-              std::uint64_t index,std::uint32_t travel_per_million) {
+              std::uint64_t index,std::uint64_t authority_generation,
+              std::uint64_t checkpoint_revision,
+              std::uint32_t travel_per_million) {
         if(!station||!owner||index==0 || index>16 ||
            travel_per_million>1000000)return false;
         const auto* port=world.world().find(station);
@@ -87,6 +89,9 @@ public:
         const auto candidates=options();
         if(index>candidates.size())return false;
         const auto& choice=candidates[index-1];
+        if(!authority_generation || !checkpoint_revision ||
+           choice.authority_generation!=authority_generation ||
+           choice.revision!=checkpoint_revision)return false;
         execute("BEGIN IMMEDIATE");
         try{
             Sql s(db_,"INSERT INTO dock05_region_binding_v1 "
