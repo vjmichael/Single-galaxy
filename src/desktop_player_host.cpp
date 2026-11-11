@@ -236,7 +236,8 @@ static int run_host(int argc,char** argv){
             const bool fitting=fields.size()==5&&(fields[0]=="FIT"||fields[0]=="UNFIT");
             const bool fabricating=fields.size()==5&&fields[0]=="FAB";
             const bool powering=fields.size()==5&&fields[0]=="POWER";
-            if(!walking&&!seating&&!flying&&!mining&&!fitting&&!fabricating&&!powering){
+            const bool surveying=fields.size()==5&&fields[0]=="SURVEY";
+            if(!walking&&!seating&&!flying&&!mining&&!fitting&&!fabricating&&!powering&&!surveying){
                 deny(0,"malformed");continue;
             }
             std::uint64_t supplied_session=0,req=0,expected=0,desired=0;
@@ -244,12 +245,13 @@ static int run_host(int argc,char** argv){
             if(!number(fields[1],supplied_session)||!number(fields[2],req)||
                !number(fields[3],expected)||
                (walking&&(!number(fields[4],dx)||!number(fields[5],dz)))||
-               ((seating||fitting||fabricating||powering||mining)&&
+               ((seating||fitting||fabricating||powering||mining||surveying)&&
                 (!number(fields[4],desired)||
                  (seating&&desired>1)||
                  (fitting&&desired!=1)||
                  (fabricating&&desired!=1)||
-                 (powering&&desired>1)))){
+                 (powering&&desired>1)||
+                 (surveying&&desired!=1)))){
                 deny(0,"bad-integer");continue;
             }
             if(supplied_session!=session){deny(req,"session");continue;}
@@ -284,6 +286,36 @@ static int run_host(int argc,char** argv){
                 send_ship(session,req,command_id,*outcome,person.flight_state(kLocalOwner));
                 send_rock_contact(session,req,world,previous.ship);
                 send_original_station_nav(session,req,world,previous.ship);
+                continue;
+            }
+            if(surveying){
+                if(!previous.seated || expected!=previous.seat_sequence ||
+                   !world.world().find(previous.ship) ||
+                   req>10000){
+                    deny(req,"survey-requires-verified-original-pilot");continue;
+                }
+                const auto rows=mining_survey::nearby_original_asteroids(
+                    world.world(),kLocalOwner,previous.ship);
+                // One bounded observation across a stable source generation;
+                // not a mining authorization, world step or hidden ore reward.
+                const auto tick=world.world().tick();
+                const auto generation=world.generation();
+                const bool truncated=!rows.empty() && rows.front().scan_truncated;
+                std::cout<<"SHEAD|1|"<<session<<'|'<<req<<'|'<<previous.ship<<'|'
+                         <<tick<<'|'<<generation<<'|'<<rows.size()<<'|'
+                         <<(truncated?1:0)<<'\n';
+                for(const auto& row:rows){
+                    std::cout<<"SROW|1|"<<session<<'|'<<req<<'|'<<previous.ship<<'|'
+                             <<tick<<'|'<<generation<<'|'<<row.rock<<'|'
+                             <<row.x_mm<<'|'<<row.y_mm<<'|'<<row.z_mm<<'|'
+                             <<row.radius_mm<<'|'<<row.ore_tonnes<<'|'
+                             <<unsigned(row.taxonomy)<<'|'
+                             <<(row.geological_detail?1:0)<<'\n';
+                }
+                std::cout<<"SEND|1|"<<session<<'|'<<req<<'|'<<previous.ship<<'|'
+                         <<tick<<'|'<<generation<<'\n'<<std::flush;
+                if(!std::cout)throw std::runtime_error("native survey pipe closed");
+                last_move=now;
                 continue;
             }
             if(mining||fitting||fabricating||powering){
