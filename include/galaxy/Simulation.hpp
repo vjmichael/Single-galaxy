@@ -1418,6 +1418,8 @@ public:
         EntityId station,std::uint64_t npc_id,std::uint64_t voyage,
         bool ashore);
     bool has_original_station_guest_ashore(EntityId receiving_ship) const;
+    bool original_completed_ferry_guest(std::uint64_t npc_id,
+        EntityId receiving_ship,std::uint64_t voyage) const;
     bool queue_npc_station_docking(PlayerId owner,EntityId ship,
         std::uint64_t pilot,EntityId station,std::uint64_t flight_id,
         NpcFlightPurpose purpose=NpcFlightPurpose::General);
