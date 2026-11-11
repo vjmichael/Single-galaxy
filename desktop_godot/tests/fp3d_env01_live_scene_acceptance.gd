@@ -5,6 +5,7 @@ extends SceneTree
 ## cannot establish human-visible rendered pixels or driver/GPU acceptance.
 const MAIN := preload("res://world/main.gd")
 const NATIVE_SHIP := preload("res://world/native_player_session.gd")
+const INPUT_CONFIG := preload("res://world/input_contract.gd")
 const COLLISION_RADIUS_M := 15.201 # 10m original rock + 5.2m greybox ship + 1mm skin.
 var _game
 var _ship_frames: Array[Dictionary] = []
@@ -145,6 +146,15 @@ func _submit_visible_cursor_keyboard_flight(action: String, expected: String) ->
 	# human/driver gate remains independent even if this native path passes.
 	if not is_instance_valid(_game) or not is_instance_valid(_game.player):
 		_fail("real Godot pilot controller was not constructed")
+		return false
+	# Check the actual physical-key action mapping before using a synthetic
+	# pressed action. Physical keyboard delivery/window focus still needs the
+	# owner-operated GPU session; headless CI must not claim that evidence.
+	var bound_key: int = int(INPUT_CONFIG.PILOT_KEYS.get(action, 0))
+	var native_key := InputEventKey.new()
+	native_key.physical_keycode = bound_key
+	if bound_key <= 0 or not InputMap.action_has_event(action, native_key):
+		_fail("original Godot physical-key binding missing for " + action)
 		return false
 	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
 	Input.action_press(action)
