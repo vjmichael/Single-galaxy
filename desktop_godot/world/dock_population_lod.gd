@@ -81,11 +81,14 @@ func show_native_walkers(frame: Dictionary,station: int) -> void:
 	if _verified_walkers==null or _verified_walkers.multimesh==null:
 		return
 	var shown: Array = frame.get("walkers",[])
-	if station<=0 or station!=_last_station or \
-			int(frame.get("station",-1))!=station or shown.size()>MAX_NATIVE_WALKERS:
+	if station<=0 or int(frame.get("station",-1))!=station or \
+			shown.size()>MAX_NATIVE_WALKERS:
 		_verified_walkers.multimesh.visible_instance_count=0
 		_has_native_corridor_frame=false
 		return
+	if station!=_last_station:
+		clear() # station change cannot keep prior colony's people visible
+		_last_station=station
 	var seen: Dictionary={}
 	for i in range(shown.size()):
 		var person: Dictionary=shown[i]
