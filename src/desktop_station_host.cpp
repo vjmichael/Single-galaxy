@@ -222,14 +222,31 @@ static int run_host(int argc,char** argv){
       };
       if(ship!=0)appointed=recruit(ship);
       else{
-        std::uint64_t scanned=0;
+        // Choose an original identity BEFORE a world STEP swaps Simulation.
+        // Never mutate the map while iterating a reference into it.
+        std::uint64_t selected=0,scanned=0;
         for(const auto& [npc_id,npc]:world.world().npc_records()){
           if(++scanned>4096)break;
-          if((npc.location==local_station ||
-              npc.location==npc.home_ship) && recruit(npc_id)){
-            appointed=true;break;
+          if(npc.role!=NpcRole::Ship || npc.transport_id)continue;
+          const auto* hull=world.world().find(npc.home_ship);
+          if(!hull || hull->owner_id!=kOwner ||
+             hull->dock_state!=DockState::Docked ||
+             hull->dock_station!=local_station)continue;
+          if(npc.location==local_station){
+            if(dock_ledger.active_staff(world.world(),local_station,kOwner)<
+               dock::Ledger::kMaxStaff &&
+               world.world().npc_available_for_duty(npc_id)){
+              selected=npc_id;break;
+            }
+          }else if(npc.location==npc.home_ship){
+            auto preview=world.world();
+            if(preview.station_dock_worker_transfer(
+                   kOwner,npc.home_ship,local_station,npc_id,true)){
+              selected=npc_id;break;
+            }
           }
         }
+        if(selected)appointed=recruit(selected);
       }
       if(!appointed){deny(req,"no-eligible-physical-ship-crew-for-dock");continue;}
       result=1;
