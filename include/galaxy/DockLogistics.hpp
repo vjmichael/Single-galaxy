@@ -120,6 +120,13 @@ class Ledger {
     s.bind(1,npc_id);s.bind(2,station);s.bind(3,owner);
     s.next();return sqlite3_changes(db_)==1;
   }
+  bool release_first(EntityId station,PlayerId owner) {
+    Statement q(db_,"SELECT npc_id FROM dock_staff_v1 WHERE station=? AND owner=? "
+                    "ORDER BY npc_id LIMIT 1");
+    q.bind(1,station);q.bind(2,owner);
+    if(q.next()!=SQLITE_ROW)return false;
+    return release(station,owner,q.number(0));
+  }
   Snapshot snapshot(const Simulation& sim,EntityId station,PlayerId owner) const {
     Snapshot v{};v.station=station;v.staff=active_staff(sim,station,owner);
     Statement a(db_,"SELECT kind,requested-completed,state FROM dock_jobs_v1 "
