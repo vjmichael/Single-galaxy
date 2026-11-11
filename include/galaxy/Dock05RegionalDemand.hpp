@@ -32,11 +32,13 @@ public:
         }
         sqlite3_busy_timeout(db_,2000);
         execute("CREATE TABLE IF NOT EXISTS dock05_region_binding_v1("
-            "station INTEGER PRIMARY KEY CHECK(station>0),owner INTEGER NOT NULL,"
+            "station INTEGER NOT NULL CHECK(station>0),"
+            "owner INTEGER NOT NULL CHECK(owner>0),"
             "scope TEXT NOT NULL,colony TEXT NOT NULL,"
             "authority_generation INTEGER NOT NULL CHECK(authority_generation>0),"
             "checkpoint_revision INTEGER NOT NULL CHECK(checkpoint_revision>0),"
-            "travel_rate INTEGER NOT NULL CHECK(travel_rate BETWEEN 0 AND 1000000))");
+            "travel_rate INTEGER NOT NULL CHECK(travel_rate BETWEEN 0 AND 1000000),"
+            "PRIMARY KEY(station,owner))");
     }
     ~RegionalPopulation(){sqlite3_close(db_);}
     RegionalPopulation(const RegionalPopulation&)=delete;
@@ -98,8 +100,8 @@ public:
             Sql s(db_,"INSERT INTO dock05_region_binding_v1 "
                 "(station,owner,scope,colony,authority_generation,"
                 "checkpoint_revision,travel_rate) VALUES(?,?,?,?,?,?,?) "
-                "ON CONFLICT(station) DO UPDATE SET "
-                "owner=excluded.owner,scope=excluded.scope,"
+                "ON CONFLICT(station,owner) DO UPDATE SET "
+                "scope=excluded.scope,"
                 "colony=excluded.colony,"
                 "authority_generation=excluded.authority_generation,"
                 "checkpoint_revision=excluded.checkpoint_revision,"
