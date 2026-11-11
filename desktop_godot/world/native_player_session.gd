@@ -12,6 +12,7 @@ signal connection_changed(connected: bool)
 signal flight_command_sent(request_id: int, verb: String)
 signal flight_command_result(request_id: int, verb: String, disposition: String, elapsed_ms: int, outcome: int)
 signal equipment_result_received(kind: String, request_id: int, outcome: int, command_id: int)
+signal asteroid_survey_received(observation: Dictionary)
 
 const MAX_LINE := 256
 var _pid := -1
@@ -36,6 +37,7 @@ var _pending_flight_verb := ""
 var _current_rock_id := 0
 var _drill_online := false
 var _observed_cargo := 0
+var _survey_batch: Dictionary = {}
 var _generation := -1
 var _tick := -1
 var _next_request := 1
@@ -116,6 +118,7 @@ func start(save_override: String = "") -> void:
 	_current_rock_id = 0
 	_drill_online = false
 	_observed_cargo = 0
+	_survey_batch.clear()
 	_generation = -1
 	_tick = -1
 	_next_request = 1
@@ -184,6 +187,9 @@ func _accept_line(line: String) -> void:
 			elif rejected_verb == "ASC" or rejected_verb == "DES":
 				message = "Vertical control refused: this saved world may lack native 3D physics or custody"
 		_status(message)
+		return
+	if parts.size() > 0 and parts[0] in ["SHEAD","SROW","SEND"]:
+		_accept_original_survey(parts)
 		return
 	if parts.size() > 0 and (parts[0] == "NAV" or parts[0] == "NAVNONE"):
 		_accept_original_station_nav(parts)
@@ -417,6 +423,100 @@ func _accept_original_station_nav(parts: PackedStringArray) -> void:
 	_last_nav_request = request
 	station_nav_received.emit(output)
 
+func _accept_original_survey(parts: PackedStringArray) -> void:
+	var kind: String = parts[0]
+	var expected_count := 9 if kind == "SHEAD" else 15 if kind == "SROW" else 7
+	if parts.size() != expected_count or parts[1] != "1":
+		stop("Original asteroid survey packet schema mismatch")
+		return
+	for i in range(2,parts.size()):
+		if not _integer(parts[i]):
+			stop("Non-numeric original asteroid survey packet")
+			return
+	var session := int(parts[2])
+	var request := int(parts[3])
+	var ship := int(parts[4])
+	var tick := int(parts[5])
+	var generation := int(parts[6])
+	if session != _session or ship != _ship or ship <= 0 or request != _pending or
+			_pending_kind != "SURVEY" or tick != _tick or generation != _generation or
+			_last_contact_request != _last_ship_telemetry_request or
+			_last_nav_request != _last_ship_telemetry_request:
+		stop("Unsolicited or stale original asteroid survey")
+		return
+	if kind == "SHEAD":
+		if not _survey_batch.is_empty() or int(parts[7]) < 0 or
+				int(parts[7]) > 16 or int(parts[8]) not in [0,1]:
+			stop("Duplicate or unbounded original asteroid survey")
+			return
+		_survey_batch = {"ship":ship,"tick":tick,"gen":generation,
+			"request":request,"truncated":int(parts[8])==1,
+			"count":int(parts[7]),"sources":[]}
+		return
+	if _survey_batch.is_empty() or _survey_batch.get("request",-1) != request:
+		stop("Missing original asteroid survey header")
+		return
+	if kind == "SROW":
+		var rock := int(parts[7])
+		var dx := int(parts[8])
+		var dy := int(parts[9])
+		var dz := int(parts[10])
+		var radius := int(parts[11])
+		var ore := int(parts[12])
+		var taxonomy := int(parts[13])
+		var detail := int(parts[14])
+		const MAX_RANGE_MM := 8500000
+		var rows: Array = _survey_batch["sources"]
+		if rock <= 0 or rock == ship or rows.size() >= int(_survey_batch["count"]) or
+				abs(dx) > MAX_RANGE_MM or abs(dy) > MAX_RANGE_MM or
+				abs(dz) > MAX_RANGE_MM or
+				dx*dx+dy*dy+dz*dz > MAX_RANGE_MM*MAX_RANGE_MM or
+				radius <= 0 or radius > 10000000 or taxonomy not in [0,1,2,3] or
+				detail not in [0,1] or ore < -1 or ore > 1000000000000 or
+				(detail == 0 and (ore != -1 or taxonomy != 3))):
+			stop("Forged or unbounded original source asteroid")
+			return
+		for row in rows:
+			if int(row["rock"]) == rock:
+				stop("Repeated original asteroid ID within one survey")
+				return
+		rows.append({"rock":rock,"dx_mm":dx,"dy_mm":dy,"dz_mm":dz,
+			"radius_mm":radius,"ore_tonnes":ore,"taxonomy":taxonomy,
+			"geological_detail":detail==1})
+		return
+	var received: Array = _survey_batch["sources"]
+	if received.size() != int(_survey_batch["count"]):
+		stop("Incomplete original asteroid survey")
+		return
+	var result := _survey_batch.duplicate(true)
+	_survey_batch.clear()
+	_pending = 0
+	_pending_kind = ""
+	asteroid_survey_received.emit(result)
+	_status("Original C++ surveyed %d confirmed asteroid silhouettes; ore geology only from powered scanner" % received.size())
+
+func request_asteroid_survey() -> void:
+	if not _active or _session <= 0 or not _seated or not _initial_ship_seen or _pending != 0:
+		_status("Survey requires an original seated pilot and an idle native writer")
+		return
+	if _last_contact_request != _last_ship_telemetry_request or
+			_last_nav_request != _last_ship_telemetry_request:
+		_status("Survey requires a current original SHIP/ROCK/NAV observation")
+		return
+	var now := Time.get_ticks_msec()
+	if now - _last_send_msec < 110:
+		return
+	var req := _next_request
+	_next_request += 1
+	_pending = req
+	_pending_kind = "SURVEY"
+	_survey_batch.clear()
+	_last_send_msec = now
+	if not _stdout.store_line("SURVEY|%d|%d|%d|1" % [_session,req,_seat_sequence]):
+		stop("Original asteroid survey pipe failed")
+		return
+	_stdout.flush()
+
 func request_mine_one_tonne() -> void:
 	# The last original ROCK telemetry provides a candidate, not authority.
 	# Native C++ rechecks owned pilot, fitted power, collision/range and mass.
@@ -545,5 +645,6 @@ func stop(message: String = "Native player stopped; last committed pose retained
 	_stderr = null
 	_pending = 0
 	_pending_kind = ""
+	_survey_batch.clear()
 	connection_changed.emit(false)
 	_status(message)
