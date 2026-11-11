@@ -185,6 +185,8 @@ int main(){
   send_as(w,9313,10,alternate_receiver,Action::RequestJump,gate);
   w.steps(Simulation::kJumpTransitTicks+Simulation::kArrivalCloakTicks+1);
   ck(w.world().find(alternate_receiver)->system_id==2,"replacement receiver did not cross systems");
+  // Original Thrust uses amount=0 and axis choice in thrust_x; amount=1
+  // is a yaw argument and must never be combined with strafe/translation.
   for(int i=0;i<1;++i)send_as(w,9320+static_cast<std::uint64_t>(i),10,alternate_receiver,Action::Thrust,0,0,1);
   for(int i=0;i<1;++i)send_as(w,9324+static_cast<std::uint64_t>(i),10,alternate_receiver,Action::Thrust,0,0,-1);
   ck(w.world().find(alternate_receiver)->velocity.x==0,"replacement warehouse founding ship did not brake");
@@ -618,7 +620,9 @@ int main(){
       "transport fixture backup incomplete");
     sqlite3_close(to);sqlite3_close(from);
   }
-  for(const auto& file:{path,copy,corrupt,badledger})std::filesystem::remove(file);
-  return 0;
+  // Windows cannot unlink an open SQLite database. World, regional
+  // checkpoint and authority objects leave scope before fixture cleanup.
  }catch(const std::exception& e){std::cerr<<"v58 alternate destination and production host FAIL: "<<e.what()<<'\n';return 1;}
+ for(const auto& file:{path,copy,corrupt,badledger})std::filesystem::remove(file);
+ return 0;
 }

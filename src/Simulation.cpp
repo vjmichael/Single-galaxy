@@ -2601,12 +2601,21 @@ bool Simulation::submit(const Command& c) {
         c.action==Action::HostDestroyPassengerFerry?36:35);
     if(c.action==Action::TrainWorkshopTrade)
         snapshot_version_=std::max(snapshot_version_,105);
-    // Any queued post-v71 command must have durable custody for every
-    // existing ship before its new-version snapshot can be persisted.
-    // Never populate these in from_snapshot(): missing records there are
-    // potential forgery and must remain a hard readback failure.
-    if(upgrading_pre_frame_snapshot && snapshot_version_>=71)
-        ensure_ship_frame_registry();
+    // Trusted pre-v71 submission must migrate complete physical registries
+    // before a new-version journal write; decoding a persisted snapshot never
+    // manufactures missing records (forged/missing data remains fatal).
+    if(snapshot_version_>=71) {
+        bool missing_physical_system=false;
+        for(const auto id:systems_)
+            if(!physical_celestial_systems_.count(id)) {
+                missing_physical_system=true;
+                break;
+            }
+        if(missing_physical_system)ensure_physical_celestial_systems();
+        // Also preserve the separate existing-ship frame custody upgrade.
+        if(upgrading_pre_frame_snapshot || missing_physical_system)
+            ensure_ship_frame_registry();
+    }
     submitted_ids_.insert(c.id);
     commands_[c.execute_tick].push_back(c);
     return true;
@@ -2718,6 +2727,11 @@ Event Simulation::execute(const Command& c) {
                c.action!=Action::SetHardpointPower &&
                c.action!=Action::SetCyberIsolation &&
                c.action!=Action::HackConfuse &&
+               // HostRegisterDependent records a born child with the
+               // guardian already physically aboard this exact ship. It
+               // performs no remote ship control or surface interaction.
+               // Its strict server/guardian/custody gates run below.
+               c.action!=Action::HostRegisterDependent &&
                c.action!=Action::Mine &&
                c.action!=Action::StartMining &&
                c.action!=Action::StopMining){
@@ -7401,6 +7415,8 @@ EntityId surface_custody_id(const PlanetarySiteKey& key) {
          (std::uint64_t(lon)<<16) ^ revision ^
          0x5355524641434543ULL) | (1ULL<<63);
 }
+// Original manifest reads this helper before the existing shuttle definition.
+EntityId shuttle_transit_custody_id(const PlanetarySiteKey& key);
 }
 bool Simulation::build_planetary_site(PlayerId owner,EntityId ship,
     std::uint64_t body,std::uint16_t latitude,std::uint16_t longitude,
@@ -14947,12 +14963,16 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
             const auto mass=l.food_kg+l.water_kg+l.oxygen_kg+l.nutrients_kg+l.co2_kg+
                 l.crops_kg+l.compost_kg+l.wastewater_kg+l.organic_waste_kg+
                 l.sludge_kg+l.hydrogen_kg;
-            if(mass<1000 || mass>100000000 ||
+            // The 1,000 kg genesis allocation is not a permanent minimum:
+            // physical cargo transfer, consumption and shortages may leave
+            // even an empty ship reservoir. Nonnegative compartments and
+            // original whole-world mass conservation remain mandatory.
+            if(mass>100000000 ||
                (result.snapshot_version_<11 && mass%1000) || l.crops_ready_tick>result.tick_+1000000 ||
                l.cycles>result.tick_/20 || l.consecutive_supplied_cycles>l.cycles ||
                l.shortages>l.cycles || l.harvested_food_kg<0 || l.recovered_water_kg<0 ||
                l.harvested_food_kg>100000000 || l.recovered_water_kg>100000000)
-                throw std::runtime_error("snapshot: invalid life-support record");
+                throw std::runtime_error("snapshot: invalid life-support record (ship "+std::to_string(id)+", mass "+std::to_string(mass)+", cycles "+std::to_string(l.cycles)+", tick "+std::to_string(result.tick_)+")");
             result.life_support_.emplace(id,l);
         } else if(f[0]=="farm" && result.snapshot_version_>=11){
             require_fields(f,27);
@@ -15571,6 +15591,15 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                  c.action!=Action::HostReturnConstructedStock &&
                  c.action!=Action::HostTransferConsignedStock &&
                  c.issuer==Simulation::kServerAuthority) ||
+                (c.action==Action::HostTransferConsignedStock &&
+                 (result.snapshot_version_<56 ||
+                  c.issuer!=Simulation::kServerAuthority ||
+                  c.execute_tick!=result.tick_+1 || !c.actor || !c.target ||
+                  c.amount<1 || c.amount>1000 ||
+                  (c.thrust_x!=1 && c.thrust_x!=2) ||
+                  (c.thrust_y!=0 && c.thrust_y!=1) ||
+                  c.transport_id || !c.passenger_ids.empty() ||
+                  c.secondary_receiver || c.secondary_transport)) ||
                 ((c.action==Action::RefineOre || c.action==Action::FabricateModule ||
                   c.action==Action::ConstructOutpost) && (c.target!=0 || c.thrust_x || c.thrust_y ||
                   c.amount<1 || c.amount>1000 ||
@@ -16872,7 +16901,9 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                 std::int64_t(site.extractor ||
                              site.production_projects[1].phase!=0)+
                 std::int64_t(site.housing_phase!=0)+
-                std::int64_t(site.utility_phase!=0));
+                std::int64_t(site.utility_phase!=0)+
+                std::int64_t(site.service_projects[0].phase!=0)+
+                std::int64_t(site.service_projects[1].phase!=0));
             if(site.embodied_ore!=expected_installed)
                 throw std::runtime_error("snapshot: invalid regional module custody");
             if(site.extractor && !result.oasis_reserves_.count(site.region.body))
@@ -18415,9 +18446,11 @@ std::int64_t Simulation::total_ore() const {
                                    std::int64_t(site.extractor ||
                                      site.production_projects[1].phase!=0)+
                                    std::int64_t(site.housing_phase!=0)+
-                                   std::int64_t(site.utility_phase!=0)) ||
+                                   std::int64_t(site.utility_phase!=0)+
+                                   std::int64_t(site.service_projects[0].phase!=0)+
+                                   std::int64_t(site.service_projects[1].phase!=0)) ||
            site.embodied_ore>std::numeric_limits<std::int64_t>::max()-total)
-            throw std::overflow_error("invalid planetary installation mass");
+            throw std::overflow_error("invalid planetary installation mass (body "+std::to_string(std::get<0>(key))+", embodied "+std::to_string(site.embodied_ore)+", housing phase "+std::to_string(site.housing_phase)+", utility phase "+std::to_string(site.utility_phase)+", farm "+std::to_string(site.farm)+", extractor "+std::to_string(site.extractor)+", production A "+std::to_string(site.production_projects[0].phase)+", production B "+std::to_string(site.production_projects[1].phase)+", service A "+std::to_string(site.service_projects[0].phase)+", service B "+std::to_string(site.service_projects[1].phase)+", staged housing modules "+std::to_string(site.housing_modules)+")");
         total+=site.embodied_ore+2*site.housing_modules;
         const auto kg=site.water_kg+site.nutrients_kg+site.food_kg+
                       site.wastewater_kg+site.oxygen_kg+site.co2_kg+

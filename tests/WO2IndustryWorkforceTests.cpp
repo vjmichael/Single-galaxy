@@ -178,6 +178,18 @@ int main() {
             const auto before_power=w.world().utility(site)->consumed_energy;
             const auto before_scrap=w.world().workshop(site)->scrap_kg;
             CHECK(w.submit(*training));
+            if(training_id==270){
+                // The very first WO2 v105 command on a legacy original ship
+                // must prepare honest v71 frame/physical-system custody BEFORE
+                // its pending SQLite journal can be independently reopened.
+                const auto* actual=w.world().find(ship);
+                CHECK(actual!=nullptr);
+                const auto frame=w.world().ship_frames().find(ship);
+                CHECK(frame!=w.world().ship_frames().end());
+                CHECK(frame->second.system==actual->system_id &&
+                      frame->second.anchor_body==0);
+                CHECK(w.world().physical_celestial_systems().count(actual->system_id)==1);
+            }
             // An approved order ID becomes consumed at admission, even before
             // the world tick applies it. An obsolete proposal cannot be reused.
             CHECK(!workforce02::approved_original_trade_training(

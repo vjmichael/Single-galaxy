@@ -1,0 +1,153 @@
+#!/usr/bin/env python3
+"""Attest a reproduced historical *v85 saved SQLite* from the authentic pre-v109
+game kernel. This is NOT an archived v86 database or an old signed executable.
+
+The pinned original PLAY13D test already issues real native commands to an
+original PersistentWorld. We instrument ONLY that historical test's one v85
+checkpoint to copy its actual SQLite journal before later operations change
+its snapshot version. The historical game kernel, persistence library, build
+and API sources remain byte-for-byte as committed.
+"""
+import argparse
+import hashlib
+import json
+import os
+from pathlib import Path
+import subprocess
+
+SOURCE_COMMIT = "23bad9be38936d61b8c29b5be5f3900bec87fa6d"
+SOURCE_TEST_BLOB = "6add9dfbf4cbb0a19794abaadd7e699239923e08"
+SOURCE_TEST = "tests/PLAY13D_RegionalFacilitiesTests.cpp"
+CAPTURE_ENV = "SG_WO3_HISTORICAL_CAPTURE_OUTPUT"
+
+
+def sha256(path):
+    h = hashlib.sha256()
+    with Path(path).open("rb") as f:
+        for b in iter(lambda: f.read(1024 * 1024), b""):
+            h.update(b)
+    return h.hexdigest()
+
+
+def git(source, *args):
+    return subprocess.check_output(
+        ["git", "-C", str(source), *args], text=True
+    ).strip()
+
+
+def validate_checkout(source):
+    if git(source, "rev-parse", "HEAD") != SOURCE_COMMIT:
+        raise RuntimeError("historical producer Git head is not pinned")
+    if git(source, "hash-object", SOURCE_TEST) != SOURCE_TEST_BLOB:
+        raise RuntimeError("historical source test differs from actual Git blob")
+
+
+def prepare(source):
+    validate_checkout(source)
+    if git(source, "status", "--porcelain"):
+        raise RuntimeError("source must be clean before adding capture")
+    path = source / SOURCE_TEST
+    original = path.read_text(encoding="utf-8")
+    # The vintage source checks the v85 header twice; the individual
+    # disembarked-visitor arrival receipt is unique and comes after v85
+    # is durably committed by the original PersistentWorld.
+    anchor = '        CHECK(w.world().planetary_shuttles().at(key).visitor_arrival_receipts.at(passenger)==81001);'
+    if original.count(anchor) != 1:
+        raise RuntimeError("real native v85 checkpoint anchor missing/ambiguous")
+    source_injection = (
+        anchor + "\n"
+        '        if(const char* target=std::getenv("' + CAPTURE_ENV + '")) {\n'
+        '            sqlite3* source_db=nullptr,*saved_db=nullptr;\n'
+        '            const auto close=[&]() { if(saved_db)sqlite3_close(saved_db);\n'
+        '                                      if(source_db)sqlite3_close(source_db); };\n'
+        '            if(sqlite3_open_v2(db.string().c_str(),&source_db,\n'
+        '                 SQLITE_OPEN_READONLY,nullptr)!=SQLITE_OK ||\n'
+        '               sqlite3_open(target,&saved_db)!=SQLITE_OK) {\n'
+        '                 close();throw std::runtime_error("historical native SQLite open failed");\n'
+        '            }\n'
+        '            sqlite3_backup* snapshot=sqlite3_backup_init(saved_db,\n'
+        '                 "main",source_db,"main");\n'
+        '            if(!snapshot) {close();throw std::runtime_error("historical SQLite backup init failed");}\n'
+        '            const auto step=sqlite3_backup_step(snapshot,-1);\n'
+        '            const auto finished=sqlite3_backup_finish(snapshot);\n'
+        '            close();\n'
+        '            if(step!=SQLITE_DONE || finished!=SQLITE_OK)\n'
+        '                throw std::runtime_error("historical SQLite backup failed");\n'
+        '            return; // preserve original v85 journal before later operations\n'
+        '        }'
+    )
+    original = original.replace(anchor, source_injection)
+    original = original.replace("#include <chrono>\n", "#include <chrono>\n#include <cstdlib>\n#include <sqlite3.h>\n", 1)
+    main_anchor = '            scenario(dir/"farm.sqlite",true);'
+    if original.count(main_anchor) != 1:
+        raise RuntimeError("native farm scenario anchor missing/ambiguous")
+    original = original.replace(
+        main_anchor,
+        main_anchor + "\n"
+        '        if(std::getenv("' + CAPTURE_ENV + '")) {\n'
+        '            fs::remove_all(dir);\n'
+        '            return 0; // original native v85 checkpoint captured\n'
+        '        }'
+    )
+    path.write_text(original, encoding="utf-8")
+    changed = git(source, "diff", "--name-only").splitlines()
+    if changed != [SOURCE_TEST]:
+        raise RuntimeError("instrumentation attempted to modify original kernel")
+    print("Original pre-v109 game source pinned to", SOURCE_COMMIT)
+    print("Historical native core unmodified; observational test only:", SOURCE_TEST)
+
+
+def attest(source, binary, world, output, env_file):
+    if git(source, "rev-parse", "HEAD") != SOURCE_COMMIT:
+        raise RuntimeError("producer source head changed")
+    if git(source, "diff", "--name-only").splitlines() != [SOURCE_TEST]:
+        raise RuntimeError("unexpected historical producer source modification")
+    if not binary.is_file() or not world.is_file():
+        raise RuntimeError("historical native binary or original journal missing")
+    with world.open("rb") as f:
+        if f.read(16) != b"SQLite format 3\x00":
+            raise RuntimeError("historical writer did not produce native SQLite")
+    attestation = {
+        "schema": "SG-WO3-HISTORICAL-NATIVE-V85-REPRODUCTION-01",
+        "producer_source_commit": SOURCE_COMMIT,
+        "original_test_git_blob": SOURCE_TEST_BLOB,
+        "instrumentation": "SQLite online backup of unchanged producer's committed v85 journal (test-only observer)",
+        "archived_artifact": False,
+        "sqlite_sha256": sha256(world),
+        "producer_executable_sha256": sha256(binary),
+    }
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(json.dumps(attestation, indent=2) + "\n")
+    lines = [
+        "SG_WO3_V85_ORIGINAL_SQLITE=" + str(world.resolve()),
+        "SG_WO3_V85_ORIGINAL_SHA256=" + attestation["sqlite_sha256"],
+        "SG_WO3_V85_SOURCE_BINARY=" + str(binary.resolve()),
+        "SG_WO3_V85_SOURCE_BINARY_SHA256=" + attestation["producer_executable_sha256"],
+        "SG_WO3_V85_SOURCE_COMMIT=" + SOURCE_COMMIT,
+        "SG_WO3_V85_ATTESTATION=" + str(output.resolve()),
+    ]
+    with env_file.open("a", encoding="utf-8") as f:
+        f.write("\n".join(lines) + "\n")
+    print("Historical native source reproduction attested, not archived.")
+    print(json.dumps(attestation, indent=2))
+
+
+def main():
+    p = argparse.ArgumentParser()
+    p.add_argument("mode", choices=["prepare", "attest"])
+    p.add_argument("source", type=Path)
+    p.add_argument("--binary", type=Path)
+    p.add_argument("--sqlite", type=Path)
+    p.add_argument("--manifest", type=Path)
+    p.add_argument("--github-env", type=Path)
+    a = p.parse_args()
+    if a.mode == "prepare":
+        prepare(a.source)
+    else:
+        if not all((a.binary, a.sqlite, a.manifest, a.github_env)):
+            p.error("attest needs --binary --sqlite --manifest --github-env")
+        attest(a.source, a.binary, a.sqlite, a.manifest, a.github_env)
+
+
+if __name__ == "__main__":
+    main()

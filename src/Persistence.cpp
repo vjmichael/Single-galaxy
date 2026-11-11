@@ -4160,6 +4160,73 @@ public:
                     throw std::runtime_error("SQLite: duplicate autonomous command history");
             }
         }
+        // Native NPC flight controls are submitted from within a committed
+        // original simulation STEP. Unlike external submits, they have no
+        // kind=1 operation_log row. Bind each one to its immutable SQLite
+        // origin, exact step hash/tick, original flight identity and acceptance
+        // receipt before using it as historical action provenance.
+        {
+            Statement exists(db_,"SELECT 1 FROM sqlite_master WHERE type='table' "
+                "AND name='sg_native_flight_controls'");
+            if(exists.row()){
+                Statement native(db_,"SELECT id,generation,flight_id,"
+                    "original_command,snapshot_hash,digest "
+                    "FROM sg_native_flight_controls ORDER BY generation,id");
+                constexpr std::uint64_t tag=std::uint64_t{1}<<61;
+                while(native.row()){
+                    const auto id=parse_u64(sqlite3_column_text(native.get(),0));
+                    const auto gen=sqlite3_column_int64(native.get(),1);
+                    const auto flight_id=parse_u64(sqlite3_column_text(native.get(),2));
+                    const auto record=sqlite_str(native.get(),3);
+                    const auto hash=sqlite_str(native.get(),4);
+                    const auto command=decode_command(record);
+                    const auto order=restored.npc_flight_orders().find(flight_id);
+                    if(gen<=1 || static_cast<std::uint64_t>(gen)>generation ||
+                       !(id&tag) || id!=command.id ||
+                       ((id&~tag)>>9)!=flight_id || !(id&511ULL) ||
+                       command.sequence!=id || command.amount ||
+                       command.transport_id || !command.passenger_ids.empty() ||
+                       command.secondary_receiver || command.secondary_transport ||
+                       (command.action!=Action::Thrust &&
+                        command.action!=Action::RequestDock &&
+                        command.action!=Action::RequestUndock) ||
+                       order==restored.npc_flight_orders().end() ||
+                       order->second.local_commands<(id&511ULL) ||
+                       order->second.owner!=command.issuer ||
+                       order->second.ship!=command.actor ||
+                       (order->second.mode!=NpcFlightMode::LocalDock &&
+                        order->second.mode!=NpcFlightMode::LocalRendezvous) ||
+                       !restored.has_command_id(id))
+                        throw std::runtime_error(
+                            "SQLite: native flight command lacks original authority");
+                    Statement source(db_,"SELECT kind,state_hash,tick FROM operation_log "
+                        "WHERE generation=?");
+                    source.i64(1,gen);
+                    if(!source.row() || sqlite3_column_int(source.get(),0)!=2 ||
+                       sqlite_str(source.get(),1)!=hash ||
+                       command.execute_tick!=
+                           static_cast<std::uint64_t>(
+                               sqlite3_column_int64(source.get(),2))+1 ||
+                       source.row())
+                        throw std::runtime_error(
+                            "SQLite: native command has no original STEP/hash");
+                    Statement accepted(db_,"SELECT accepted_generation FROM receipts WHERE id=?");
+                    accepted.text(1,std::to_string(id));
+                    if(!accepted.row() ||
+                       sqlite3_column_int64(accepted.get(),0)!=gen ||
+                       accepted.row())
+                        throw std::runtime_error(
+                            "SQLite: native flight acceptance receipt missing");
+                    const auto body=std::to_string(id)+"|"+std::to_string(gen)+"|"+
+                        std::to_string(flight_id)+"|"+record+"|"+hash;
+                    if(sqlite_str(native.get(),5)!=
+                           social_digest("native-flight-01",body) ||
+                       !journal_commands.emplace(id,command).second)
+                        throw std::runtime_error(
+                            "SQLite: forged or duplicate native flight command");
+                }
+            }
+        }
         // WO2-I: original SQLite accepted-command history proves the exact
         // shop, owner, worker and bounded window of every surviving shift.
         // The shift may expire without an extra command, but its source
@@ -4406,6 +4473,23 @@ public:
         }
         std::map<std::uint64_t, std::uint64_t> expected_event_generation;
         {
+            // A historical kind=2 row is not necessarily a clock STEP:
+            // older native host operations (shuttle load, housing rack,
+            // handover) commit a new SQLite snapshot without advancing the
+            // original simulation tick. Only a *strictly advancing* original
+            // tick can supply immutable GRSM event provenance.
+            // Honor existing journals unchanged: never rewrite or renumber
+            // their snapshots, authority, receipt IDs or hashes.
+            std::int64_t last_tick=0;
+            if(history_start){
+                Statement boundary(db_, "SELECT tick FROM operation_log WHERE generation=?");
+                boundary.i64(1,static_cast<std::int64_t>(history_start));
+                if(!boundary.row())
+                    throw std::runtime_error("SQLite: missing historical source tick");
+                last_tick=sqlite3_column_int64(boundary.get(),0);
+                if(last_tick<0 || boundary.row())
+                    throw std::runtime_error("SQLite: invalid historical source tick");
+            }
             Statement steps(db_, "SELECT generation,tick,kind,command FROM operation_log WHERE generation>? AND kind IN (1,2) ORDER BY generation");
             steps.i64(1, static_cast<std::int64_t>(history_start));
             std::map<std::uint64_t,std::uint64_t> tick_generation;
@@ -4417,6 +4501,10 @@ public:
                 const auto g = sqlite3_column_int64(steps.get(), 0);
                 const auto tick = sqlite3_column_int64(steps.get(), 1);
                 const auto kind = sqlite3_column_int(steps.get(), 2);
+                if(g<=0 || tick<0 || tick<last_tick)
+                    throw std::runtime_error("SQLite: regressive historical step chronology");
+                const bool advanced=tick>last_tick;
+                last_tick=tick;
                 // The v52 privileged warehouse action is one atomic submit+execute
                 // entry, stored as kind=1 for legacy operation_log compatibility.
                 // Its command is replayed through a tick in the same transaction.
@@ -4426,6 +4514,14 @@ public:
                     const auto type=decode_command(reinterpret_cast<const char*>(raw)).action;
                     if(type!=Action::HostEscrowConstructedStock &&
                        type!=Action::HostReturnConstructedStock)continue;
+                    if(!advanced)
+                        throw std::runtime_error("SQLite: privileged action has no original tick");
+                }else if(!advanced) {
+                    // This is a real original host snapshot/custody commit at
+                    // the *same* tick, not a second event-generating STEP.
+                    // It still retains its own original generation/hash and
+                    // every other existing native-side custody verifier.
+                    continue;
                 }
                 if (g <= 0 || tick < 0)
                     throw std::runtime_error("SQLite: invalid historical step generation");
@@ -4437,7 +4533,7 @@ public:
                 }
                 if (tick == 0 || !tick_generation.emplace(static_cast<std::uint64_t>(tick),
                     static_cast<std::uint64_t>(g)).second)
-                    throw std::runtime_error("SQLite: duplicate historical step generation");
+                    throw std::runtime_error("SQLite: duplicate advancing historical step");
             }
             for (const auto& [id,ev] : event_by_id) {
                 const auto it=tick_generation.find(ev.tick);
@@ -6457,7 +6553,7 @@ public:
             // existing in a table without its original family and site proof.
             if(has_planetary_household){
                 Statement households(db_,"SELECT request_id,world_generation,tick,"
-                    "origin,destination,guardian,coparent,child,returning,"
+                    "origin,destination,guardian,coparent,child,\"returning\","
                     "family_scope,region_scope,region_revision,owner_generation,"
                     "coparent_event,child_event FROM sg_planet_household_migration");
                 while(households.row()){
@@ -7496,7 +7592,7 @@ public:
                 update.text(4, std::to_string(ev.command_id));
                 update.execute();
                 if (sqlite3_changes(db_) != 1)
-                    throw std::runtime_error("missing/double execution receipt");
+                    throw std::runtime_error("missing/double execution receipt for original command "+std::to_string(ev.command_id)+" at tick "+std::to_string(ev.tick));
                 // Same transaction as receipts, physical resource ledgers and
                 // snapshot. A rejected action is recorded as rejected, never
                 // inferred to have harmed people, ships or cargo.
@@ -8322,6 +8418,13 @@ public:
             Statement immigration_settled(db_,"SELECT 1 FROM sqlite_master "
                 "WHERE type='table' AND name='sg_colony_voluntary_immigration_settled'");
             const bool has_immigration_settled=immigration_settled.row();
+            // A WO3 legal household receipt is accepted only if restore can
+            // independently inspect the exact original before/after world
+            // snapshots. Pin both generations for each immutable receipt.
+            Statement household_provenance(db_,
+                "SELECT 1 FROM sqlite_master WHERE type='table' "
+                "AND name='sg_planet_household_migration'");
+            const bool has_household_provenance=household_provenance.row();
             const std::string prune_sql=std::string(
                 "DELETE FROM snapshots WHERE generation > 1 AND generation < ?")+
                 (incident_cases_exist ? " AND generation NOT IN "
@@ -8381,6 +8484,11 @@ public:
                     : "")+
                 (has_immigration_settled ? " AND generation NOT IN "
                     "(SELECT world_generation FROM sg_colony_voluntary_immigration_settled)"
+                    : "")+
+                (has_household_provenance ? " AND generation NOT IN "
+                    "(SELECT world_generation FROM sg_planet_household_migration)"
+                    " AND generation NOT IN "
+                    "(SELECT world_generation-1 FROM sg_planet_household_migration)"
                     : "")+
                 // Bind subjective diplomacy to BOTH the original physical
                 // incident and the later real NPC belief/decision generation.
@@ -9418,6 +9526,7 @@ public:
         std::string reconstructed;
         std::int64_t ore = -1;
         bool found = false;
+        std::string last_checkpoint_rejection;
         while (cp.row()) {
             const auto gen = static_cast<std::uint64_t>(sqlite3_column_int64(cp.get(), 0));
             const auto size = sqlite3_column_bytes(cp.get(), 1);
@@ -9449,7 +9558,48 @@ public:
                         if (command.action == Action::HostEscrowConstructedStock ||
                             command.action == Action::HostReturnConstructedStock) sim.step();
                     } else if (kind == 2) {
-                        sim.step();
+                        const auto recorded_tick=static_cast<std::uint64_t>(
+                            sqlite3_column_int64(journal.get(),4));
+                        if(recorded_tick==sim.tick()+1) {
+                            // Only an advancing original clock row is a STEP.
+                            sim.step();
+                        } else if(recorded_tick==sim.tick()) {
+                            // Historical host custody transactions also use
+                            // kind=2, but do not advance simulation time.
+                            // They cannot be reconstructed by fabricating a
+                            // STEP. Require the original retained snapshot
+                            // and independent journal checksum/tick/resource
+                            // witnesses before proceeding to later operations.
+                            Statement witness(db_,
+                                "SELECT state,checksum,ore_total,credit_total "
+                                "FROM snapshots WHERE generation=?");
+                            witness.i64(1,static_cast<std::int64_t>(g));
+                            if(!witness.row())
+                                throw std::runtime_error(
+                                    "recovery: missing same-tick custody checkpoint");
+                            const auto size=sqlite3_column_bytes(witness.get(),0);
+                            const auto* raw=static_cast<const char*>(
+                                sqlite3_column_blob(witness.get(),0));
+                            if(size<=0 || size>16*1024*1024 || !raw)
+                                throw std::runtime_error(
+                                    "recovery: invalid same-tick custody snapshot");
+                            auto recorded=Simulation::from_snapshot(
+                                std::string(raw,static_cast<std::size_t>(size)));
+                            const auto expected_hash=parse_u64(
+                                sqlite3_column_text(journal.get(),3));
+                            if(recorded.tick()!=recorded_tick ||
+                               recorded.state_hash()!=expected_hash ||
+                               recorded.state_hash()!=parse_u64(
+                                   sqlite3_column_text(witness.get(),1)) ||
+                               recorded.total_ore()!=ore ||
+                               recorded.total_ore()!=sqlite3_column_int64(witness.get(),2) ||
+                               recorded.total_credits()!=credit_total ||
+                               recorded.total_credits()!=sqlite3_column_int64(witness.get(),3))
+                                throw std::runtime_error(
+                                    "recovery: same-tick custody witness mismatch");
+                            sim=std::move(recorded);
+                        } else throw std::runtime_error(
+                            "recovery: regressive or missing native step");
                     } else throw std::runtime_error("recovery: invalid journal kind");
                     if (sim.state_hash() != parse_u64(sqlite3_column_text(journal.get(), 3)) ||
                         sim.tick() != static_cast<std::uint64_t>(sqlite3_column_int64(journal.get(), 4)) ||
@@ -9465,11 +9615,16 @@ public:
                 reconstructed = sim.canonical_state();
                 found = true;
                 break;
-            } catch (const std::exception&) {
-                // Try another retained checkpoint. Never guess around missing operations.
+            } catch (const std::exception& e) {
+                // Record why a candidate failed but never substitute a guessed
+                // checkpoint or bypass original command and receipt validation.
+                last_checkpoint_rejection = e.what();
             }
         }
-        if (!found) throw std::runtime_error("recovery: cannot verify latest state; refusing repair");
+        if (!found) throw std::runtime_error(
+            "recovery: cannot verify latest state; refusing repair" +
+            (last_checkpoint_rejection.empty() ? std::string{} :
+             " (last checkpoint: " + last_checkpoint_rejection + ")"));
         run(db_, "BEGIN IMMEDIATE");
         try {
             if (latest_generation(db_) != newest) throw std::runtime_error("recovery: source changed");
@@ -10538,7 +10693,7 @@ bool PersistentWorld::commit_planetary_household_settlement(
             "request_id TEXT PRIMARY KEY,world_generation INTEGER NOT NULL,"
             "tick INTEGER NOT NULL,origin TEXT NOT NULL,destination TEXT NOT NULL,"
             "guardian TEXT NOT NULL,coparent TEXT NOT NULL,child TEXT NOT NULL,"
-            "returning INTEGER NOT NULL CHECK(returning IN (0,1)),"
+            "\"returning\" INTEGER NOT NULL CHECK(\"returning\" IN (0,1)),"
             "family_scope TEXT NOT NULL,region_scope TEXT NOT NULL,"
             "region_revision INTEGER NOT NULL,owner_generation INTEGER NOT NULL,"
             "coparent_event TEXT NOT NULL UNIQUE,child_event TEXT NOT NULL UNIQUE)");
@@ -11174,8 +11329,18 @@ void PersistentWorld::step_with_dependent_registration(FailPoint fail){
     if(next.events().size()!=before+1 ||
        next.events().back().command_id!=cmd.id ||
        next.events().back().result!=Outcome::Applied ||
-       !next.physical_dependents().count(cmd.transport_id))
-        throw std::runtime_error("dependent occupancy was not physically applied");
+       !next.physical_dependents().count(cmd.transport_id)) {
+        const auto outcome=next.events().empty() ? -1 :
+            static_cast<int>(next.events().back().result);
+        const auto guardian=next.npc_records().find(cmd.passenger_ids.front());
+        const auto location=guardian==next.npc_records().end() ?
+            std::uint64_t{0} : guardian->second.location;
+        throw std::runtime_error(
+            "dependent occupancy was not physically applied (command "+
+            std::to_string(cmd.id)+", outcome "+std::to_string(outcome)+
+            ", actor "+std::to_string(cmd.actor)+
+            ", guardian location "+std::to_string(location)+")");
+    }
     const std::vector<Event> delta(next.events().begin()+
         static_cast<std::ptrdiff_t>(before),next.events().end());
     const std::vector<ActivityEvent> activity(next.activity_events().begin()+
