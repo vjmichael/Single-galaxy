@@ -438,15 +438,15 @@ func _accept_original_survey(parts: PackedStringArray) -> void:
 	var ship := int(parts[4])
 	var tick := int(parts[5])
 	var generation := int(parts[6])
-	if session != _session or ship != _ship or ship <= 0 or request != _pending or
+	if (session != _session or ship != _ship or ship <= 0 or request != _pending or
 			_pending_kind != "SURVEY" or tick != _tick or generation != _generation or
 			_last_contact_request != _last_ship_telemetry_request or
-			_last_nav_request != _last_ship_telemetry_request:
+			_last_nav_request != _last_ship_telemetry_request):
 		stop("Unsolicited or stale original asteroid survey")
 		return
 	if kind == "SHEAD":
-		if not _survey_batch.is_empty() or int(parts[7]) < 0 or
-				int(parts[7]) > 16 or int(parts[8]) not in [0,1]:
+		if (not _survey_batch.is_empty() or int(parts[7]) < 0 or
+				int(parts[7]) > 16 or int(parts[8]) not in [0,1]):
 			stop("Duplicate or unbounded original asteroid survey")
 			return
 		_survey_batch = {"ship":ship,"tick":tick,"gen":generation,
@@ -467,13 +467,13 @@ func _accept_original_survey(parts: PackedStringArray) -> void:
 		var detail := int(parts[14])
 		const MAX_RANGE_MM := 8500000
 		var rows: Array = _survey_batch["sources"]
-		if rock <= 0 or rock == ship or rows.size() >= int(_survey_batch["count"]) or
+		if (rock <= 0 or rock == ship or rows.size() >= int(_survey_batch["count"]) or
 				abs(dx) > MAX_RANGE_MM or abs(dy) > MAX_RANGE_MM or
 				abs(dz) > MAX_RANGE_MM or
 				dx*dx+dy*dy+dz*dz > MAX_RANGE_MM*MAX_RANGE_MM or
 				radius <= 0 or radius > 10000000 or taxonomy not in [0,1,2,3] or
 				detail not in [0,1] or ore < -1 or ore > 1000000000000 or
-				(detail == 0 and (ore != -1 or taxonomy != 3))):
+				(detail == 0 and (ore != -1 or taxonomy != 3)))):
 			stop("Forged or unbounded original source asteroid")
 			return
 		for row in rows:
@@ -499,8 +499,8 @@ func request_asteroid_survey() -> void:
 	if not _active or _session <= 0 or not _seated or not _initial_ship_seen or _pending != 0:
 		_status("Survey requires an original seated pilot and an idle native writer")
 		return
-	if _last_contact_request != _last_ship_telemetry_request or
-			_last_nav_request != _last_ship_telemetry_request:
+	if (_last_contact_request != _last_ship_telemetry_request or
+			_last_nav_request != _last_ship_telemetry_request):
 		_status("Survey requires a current original SHIP/ROCK/NAV observation")
 		return
 	var now := Time.get_ticks_msec()
