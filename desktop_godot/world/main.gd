@@ -12,6 +12,7 @@ const STATION_NAV := preload("res://world/native_station_navigation.gd")
 const INTERACTION_PROMPTS := preload("res://world/interaction_prompts.gd")
 const COLONY_DOCK_LAYOUT := preload("res://world/colony_dock_layout.gd")
 const PHYSICAL_TRACE := preload("res://world/physical_acceptance_diagnostics.gd")
+const WORLD_RESET := preload("res://world/world_reset_manager.gd")
 const STATION_GRAY := Color(0.47, 0.51, 0.55, 1.0)
 const SHIP_WHITE := Color(0.96, 0.97, 0.99, 1.0)
 # Visual capsule center for 1.75 m tall collider; original C++ X/Z unchanged.
@@ -24,6 +25,12 @@ var scope_label: Label
 var status_label: Label
 var interaction_label: Label
 var retry_station_button: Button
+var new_game_button: Button
+var new_game_confirm: ConfirmationDialog
+var _world_reset_pending := false
+var _world_reset_blocked := false
+var _world_reset_wait_started := 0
+var _world_reset_writer_pids: Array[int] = []
 var fps_label: Label
 var primary_speed_label: Label
 var navigation_label: Label
@@ -165,10 +172,101 @@ func _ready() -> void:
 			"godot_version":str(Engine.get_version_info().get("string", "unknown")),
 			"limitation":"adapter and Godot main-loop measurements do not alone establish physical GPU approval"})
 	if _player_session_autoconnect:
-		call_deferred("_open_saved_station_automatically")
+		# Incomplete reset journal from a genuine interrupted prior session
+		# restores the original files BEFORE we permit a new SQLite genesis.
+		var repair: Dictionary = WORLD_RESET.recover_pending(OS.get_user_data_dir(), [])
+		if not bool(repair.get("ok", false)):
+			_world_reset_blocked = true
+			_on_native_player_status("SAVE RECOVERY BLOCKED: " + str(repair.get("reason", "unknown")))
+		else:
+			if bool(repair.get("recovered", false)):
+				_on_native_player_status(str(repair.get("reason", "Original world recovered")))
+			call_deferred("_open_saved_station_automatically")
+
+func _ask_world_reset() -> void:
+	if not _player_session_autoconnect:
+		_on_native_player_status("New Game is available only in the installed, running game")
+		return
+	if _world_reset_pending or _world_reset_blocked:
+		_on_native_player_status("New Game blocked while original save recovery is unresolved")
+		return
+	if not is_instance_valid(new_game_confirm):
+		return
+	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+	new_game_confirm.popup_centered(Vector2i(530, 210))
+
+func _confirmed_world_reset() -> void:
+	if not _player_session_autoconnect or _world_reset_pending or _world_reset_blocked:
+		return
+	# Original native writers may have pending committed operations: send
+	# QUIT, collect the SGDX guardian PIDs, and wait for actual OS death.
+	_world_reset_pending = true
+	_world_reset_wait_started = Time.get_ticks_msec()
+	_world_reset_writer_pids.clear()
+	for pid in [native_player_session.process_id(), native_station_session.process_id(), _handoff_pid]:
+		if int(pid) > 0 and not _world_reset_writer_pids.has(int(pid)):
+			_world_reset_writer_pids.append(int(pid))
+	_handoff_target = ""
+	_handoff_pid = -1
+	if is_instance_valid(new_game_button):
+		new_game_button.disabled = true
+	if is_instance_valid(player):
+		player.use_native_authority(true)
+	if native_session != null and native_session.is_active():
+		native_session.stop("Closing read-only SGDX observer for backed-up new game")
+	if native_player_session != null and native_player_session.is_active():
+		native_player_session.stop("Original pilot writer closing for explicit world archive", true)
+	if native_station_session != null and native_station_session.is_active():
+		native_station_session.stop("Original station writer closing for explicit world archive", true)
+	_on_native_player_status("New Game: waiting for original SGDX processes to release SQLite before archive")
+
+func _advance_world_reset() -> void:
+	if not _world_reset_pending:
+		return
+	for pid in _world_reset_writer_pids:
+		if pid > 0 and OS.is_process_running(pid):
+			if Time.get_ticks_msec() - _world_reset_wait_started > 8000:
+				_world_reset_pending = false
+				if is_instance_valid(new_game_button):
+					new_game_button.disabled = false
+				_on_native_player_status("RESET BLOCKED: original native writer still alive; old SQLite untouched. Wait for its process to exit, then use Retry.")
+			return
+	var save_dir := OS.get_user_data_dir()
+	var archived: Dictionary = WORLD_RESET.archive_for_new_game(save_dir, _world_reset_writer_pids)
+	_world_reset_pending = false
+	if is_instance_valid(new_game_button):
+		new_game_button.disabled = false
+	if not bool(archived.get("ok", false)):
+		# Any interrupted archive keeps its recovery journal. Never launch
+		# a blank station world before verifying full original-file recovery.
+		var recovered: Dictionary = WORLD_RESET.recover_pending(save_dir, [])
+		if not bool(recovered.get("ok", false)):
+			_world_reset_blocked = true
+		_on_native_player_status("NEW GAME REFUSED: " + str(archived.get("reason", "archive error")) +
+			(". Original save recovery blocked." if _world_reset_blocked else ". Old world preserved; Retry station."))
+		return
+	# Only after the old SQLite + WAL archive has a durable manifest do we
+	# allow the original native station host to create its fresh world.
+	_station_connect_attempted = true
+	_station_connection_failure = ""
+	station_test_save_selected = false
+	last_station_player_state = -1
+	_pilot_auto_seat_attempted = false
+	_colony_return_pending = false
+	_colony_return_armed = false
+	_last_native_dock = -1
+	_verified_flight_ship.clear()
+	_verified_flight_rock.clear()
+	_verified_station_nav.clear()
+	_show_native_location(true)
+	var archive: String = str(archived.get("archive", ""))
+	_on_native_player_status("Old original world archived (not deleted): " +
+		(archive if not archive.is_empty() else "no saved world existed") +
+		" | Waiting for new original station registration")
+	_schedule_native_handoff("station", -1)
 
 func _open_saved_station_automatically() -> void:
-	if _station_connect_attempted:
+	if _world_reset_pending or _world_reset_blocked or _station_connect_attempted:
 		return
 	_station_connect_attempted = true
 	_station_connection_failure = ""
@@ -178,6 +276,9 @@ func _open_saved_station_automatically() -> void:
 	_schedule_native_handoff("station", native_player_session.process_id())
 
 func _retry_original_station() -> void:
+	if _world_reset_pending or _world_reset_blocked:
+		_on_native_player_status("Recover the original save/finish New Game before reconnecting")
+		return
 	if native_station_session.is_active():
 		_on_native_player_status("Station already connected. Walk to the cyan boarding hatch and press E.")
 		return
@@ -610,6 +711,23 @@ func _build_hud() -> void:
 	retry_station_button.pressed.connect(_retry_original_station)
 	contents.add_child(retry_station_button)
 
+	# A human-clickable reset is available even when stranded in space.
+	# It never deletes AppData or bypasses SGDX/SQLite. Godot must display
+	# the explicit confirmation BEFORE the running writer is stopped.
+	new_game_button = Button.new()
+	new_game_button.name = "NewGameArchiveCurrentWorld"
+	new_game_button.text = "New game... (backup old world)"
+	new_game_button.add_theme_font_size_override("font_size", 12)
+	new_game_button.pressed.connect(_ask_world_reset)
+	contents.add_child(new_game_button)
+	new_game_confirm = ConfirmationDialog.new()
+	new_game_confirm.name = "ConfirmArchiveAndNewGame"
+	new_game_confirm.title = "Start a new Single-Galaxy world?"
+	new_game_confirm.dialog_text = "Archive your current original SQLite world, WAL and SGDX diagnostics in a dated world-archives folder, then create a fresh world. Your old save is NOT deleted. Cancel keeps your current game."
+	new_game_confirm.ok_button_text = "Archive old world and start new game"
+	new_game_confirm.confirmed.connect(_confirmed_world_reset)
+	hud.add_child(new_game_confirm)
+
 	flight_panel = PanelContainer.new()
 	flight_panel.name = "FlightTelemetryPanel"
 	flight_panel.set_anchors_and_offsets_preset(Control.PRESET_TOP_RIGHT)
@@ -793,6 +911,10 @@ func _advance_native_handoff() -> void:
 		player.use_native_authority(_player_session_autoconnect)
 
 func _unhandled_input(event: InputEvent) -> void:
+	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_F6:
+		_ask_world_reset()
+		get_viewport().set_input_as_handled()
+		return
 	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_F3:
 		_toggle_technical_details()
 		get_viewport().set_input_as_handled()
@@ -1379,15 +1501,19 @@ func _process(delta: float) -> void:
 	if is_instance_valid(exterior_camera) and exterior_camera.current:
 		exterior_camera.transform = exterior_camera.transform.interpolate_with(
 			_exterior_camera_rest, clampf(delta * 12.0, 0.0, 1.0))
-	_advance_native_handoff()
+	if _world_reset_pending:
+		_advance_world_reset()
+	else:
+		_advance_native_handoff()
 	if native_session != null:
 		native_session.poll()
 	if native_player_session != null:
 		native_player_session.poll()
 	if native_station_session != null:
 		native_station_session.poll()
-	_ensure_native_pilot_role()
-	_refresh_interaction_prompt()
+	if not _world_reset_pending and not _world_reset_blocked:
+		_ensure_native_pilot_role()
+		_refresh_interaction_prompt()
 	if not _native_visual_evidence_buffer.is_empty() and \
 			Time.get_ticks_msec() - _last_visual_evidence_flush_ms >= NATIVE_EVIDENCE_FLUSH_INTERVAL_MS:
 		_flush_native_visual_evidence()
