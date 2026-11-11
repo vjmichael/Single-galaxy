@@ -32,7 +32,7 @@ func _ready() -> void:
 	var column := VBoxContainer.new()
 	add_child(column)
 	var heading := Label.new()
-	heading.text = "COLONY INVENTORY | LOCAL ORIGINAL SQLITE"
+	heading.text = "COLONY INVENTORY & DOCK OPERATIONS"
 	heading.add_theme_font_size_override("font_size", 18)
 	column.add_child(heading)
 	_status = Label.new()
@@ -41,7 +41,7 @@ func _ready() -> void:
 	column.add_child(_status)
 	_dock_staff = Label.new()
 	_dock_staff.name = "OriginalDockWorkerRosterStatus"
-	_dock_staff.text = "Dock workforce: awaiting original C++ station roster"
+	_dock_staff.text = "Dock workforce: checking local crew availability"
 	_dock_staff.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	column.add_child(_dock_staff)
 	var docks_heading := Label.new()
@@ -120,9 +120,9 @@ func set_dock_staff_observation(frame: Dictionary) -> void:
 	var workers := int(frame.get("dock_staff",-1))
 	var residents := int(frame.get("source_count",-1))
 	if workers < 0 or residents < 0:
-		_dock_staff.text = "Dock workers: original roster unavailable"
+		_dock_staff.text = "Dock workers: station roster unavailable"
 		return
-	_dock_staff.text = "DOCK (this colony): %d assigned original workers; %d present named NPCs%s" % [
+	_dock_staff.text = "Dock: %d assigned workers; %d named residents observed%s" % [
 		workers,residents," (bounded scan)" if bool(frame.get("scan_truncated",false)) else ""]
 	if workers == 0:
 		_dock_staff.text += " | No eligible dock worker is currently on shift"
