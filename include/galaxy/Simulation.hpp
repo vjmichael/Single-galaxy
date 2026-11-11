@@ -1409,6 +1409,9 @@ public:
         NpcFlightPurpose purpose=NpcFlightPurpose::General);
     // Same flight ledger, qualified crew and physical effect journal as
     // celestial trips. No new station-navigation algorithm or docking effect.
+    // DOCK-05: read-only proof that every embarked traveler belongs to a
+    // genuine active original voyage. Never validates rescue/stranded flights.
+    bool original_passenger_ferry_safe_to_fly(EntityId ship) const;
     bool queue_npc_station_docking(PlayerId owner,EntityId ship,
         std::uint64_t pilot,EntityId station,std::uint64_t flight_id,
         NpcFlightPurpose purpose=NpcFlightPurpose::General);
