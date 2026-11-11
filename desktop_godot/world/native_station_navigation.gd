@@ -28,6 +28,9 @@ static func from_verified_frames(ship: Dictionary, nav: Dictionary) -> Dictionar
 		"verified":true,"found":true,"station":station,
 		"range_m":offset.length()/1000.0,"bearing_deg":bearing,
 		"height_m":dz/1000.0,"speed_mm_tick":speed,
+		# Verified original relative coordinates retained for VISUAL-ONLY
+		# distant station rendering; no Godot steering or docking authority.
+		"dx_mm":int(nav["dx_mm"]),"dy_mm":int(nav["dy_mm"]),"dz_mm":int(nav["dz_mm"]),
 		"can_attempt_dock":offset.length() <= DOCK_RANGE_M*1000.0 and speed == 0.0 and
 			int(ship.get("dock", -1)) == 0
 	}
