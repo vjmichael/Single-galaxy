@@ -265,6 +265,29 @@ func _run() -> void:
 			_fail("pilot-only exterior camera did not remain active without V toggle")
 		else:
 			await _capture_visible("02-exterior-flight", _ship_frames[-1], _rock_frames[-1])
+	# An actual source-driven LEFT/RIGHT keyboard pair must alter the original
+	# C++/SQLite heading and then restore it, even when the cursor is visible.
+	# Execute steering BEFORE impact, so the separately verified native
+	# collision SHIP receipt is the final commit exactly replayed on restart.
+	if _error.is_empty():
+		var before_yaw: int = int(_ship_frames[-1]["heading"])
+		await create_timer(0.13).timeout
+		if _submit_visible_cursor_keyboard_flight("ship_yaw_left", "LEFT"):
+			if not (await _await_condition(Callable(self, "_flight_done"))):
+				_fail("native left keyboard yaw had no original C++ acknowledgement")
+			elif not session._active or _ship_frames.is_empty() or \
+					int(_ship_frames[-1]["outcome"]) != 0 or \
+					int(_ship_frames[-1]["heading"]) != (before_yaw + 15) % 360:
+				_fail("released-cursor A key did not rotate real original hull by +15 degrees")
+		if _error.is_empty():
+			await create_timer(0.13).timeout
+			if _submit_visible_cursor_keyboard_flight("ship_yaw_right", "RIGHT"):
+				if not (await _await_condition(Callable(self, "_flight_done"))):
+					_fail("native right keyboard yaw had no original C++ acknowledgement")
+				elif not session._active or _ship_frames.is_empty() or \
+						int(_ship_frames[-1]["outcome"]) != 0 or \
+						int(_ship_frames[-1]["heading"]) != before_yaw:
+					_fail("released-cursor D key did not restore original C++ heading")
 	var collided := false
 	var previous_x := -9223372036854775807
 	if _error.is_empty():
@@ -333,29 +356,6 @@ func _run() -> void:
 				break
 	if _error.is_empty() and not collided:
 		_fail("no real swept collision reached after 70 original forward commands")
-	# An actual source-driven LEFT/RIGHT keyboard pair must alter the original
-	# C++/SQLite heading and then restore it, even when the cursor is visible.
-	# Do this only AFTER capturing verified impact, so the swept-contact gate
-	# remains independent of pilot steering and retains identical physics.
-	if _error.is_empty() and collided:
-		var before_yaw: int = int(_ship_frames[-1]["heading"])
-		await create_timer(0.13).timeout
-		if _submit_visible_cursor_keyboard_flight("ship_yaw_left", "LEFT"):
-			if not (await _await_condition(Callable(self, "_flight_done"))):
-				_fail("native left keyboard yaw had no original C++ acknowledgement")
-			elif not session._active or _ship_frames.is_empty() or \
-					int(_ship_frames[-1]["outcome"]) != 0 or \
-					int(_ship_frames[-1]["heading"]) != (before_yaw + 15) % 360:
-				_fail("released-cursor A key did not rotate real original hull by +15 degrees")
-		if _error.is_empty():
-			await create_timer(0.13).timeout
-			if _submit_visible_cursor_keyboard_flight("ship_yaw_right", "RIGHT"):
-				if not (await _await_condition(Callable(self, "_flight_done"))):
-					_fail("native right keyboard yaw had no original C++ acknowledgement")
-				elif not session._active or _ship_frames.is_empty() or \
-						int(_ship_frames[-1]["outcome"]) != 0 or \
-						int(_ship_frames[-1]["heading"]) != before_yaw:
-					_fail("released-cursor D key did not restore original C++ heading")
 	var committed_ship: Dictionary = _ship_frames[-1].duplicate(true) if not _ship_frames.is_empty() else {}
 	var committed_rock: Dictionary = _rock_frames[-1].duplicate(true) if not _rock_frames.is_empty() else {}
 	if is_instance_valid(_game) and is_instance_valid(_game.native_player_session):
