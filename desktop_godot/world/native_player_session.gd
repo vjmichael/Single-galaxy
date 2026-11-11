@@ -11,6 +11,7 @@ signal connection_changed(connected: bool)
 # Read-only telemetry for an operator-initiated physical acceptance session.
 signal flight_command_sent(request_id: int, verb: String)
 signal flight_command_result(request_id: int, verb: String, disposition: String, elapsed_ms: int, outcome: int)
+signal equipment_result_received(kind: String, request_id: int, outcome: int, command_id: int)
 
 const MAX_LINE := 256
 var _pid := -1
@@ -32,6 +33,9 @@ var _seat_sequence := -1
 var _seated := false
 var _pending_kind := ""
 var _pending_flight_verb := ""
+var _current_rock_id := 0
+var _drill_online := false
+var _observed_cargo := 0
 var _generation := -1
 var _tick := -1
 var _next_request := 1
@@ -109,6 +113,9 @@ func start(save_override: String = "") -> void:
 	_seated = false
 	_pending_kind = ""
 	_pending_flight_verb = ""
+	_current_rock_id = 0
+	_drill_online = false
+	_observed_cargo = 0
 	_generation = -1
 	_tick = -1
 	_next_request = 1
@@ -156,15 +163,19 @@ func _accept_line(line: String) -> void:
 			return
 		var request := int(parts[2])
 		var rejected_verb := _pending_flight_verb if request == _pending and _pending_kind == "FLIGHT" else ""
+		var rejected_equipment := _pending_kind if request == _pending and _pending_kind in ["MINE","FIT","UNFIT","FAB","POWER"] else ""
 		if request == _pending:
 			if _pending_kind == "FLIGHT":
 				flight_command_result.emit(request, _pending_flight_verb, "DENY",
 					maxi(0, Time.get_ticks_msec() - _last_send_msec), -1)
 				_pending_flight_verb = ""
+			if not rejected_equipment.is_empty():
+				equipment_result_received.emit(rejected_equipment,request,-1,0)
 			_pending = 0
 			_pending_kind = ""
 		var message := "Original C++ refused %s action #%d: %s" % [
-			rejected_verb if not rejected_verb.is_empty() else "native", request, parts[3]]
+			rejected_verb if not rejected_verb.is_empty() else
+			rejected_equipment if not rejected_equipment.is_empty() else "native", request, parts[3]]
 		if parts[3] == "native-flight-refused":
 			if rejected_verb == "BRAKE":
 				message = "BRAKE refused: already stopped/below native braking threshold or custody check denied"
@@ -272,19 +283,25 @@ func _accept_ship(parts: PackedStringArray) -> void:
 			return
 		_initial_ship_seen = true
 	else:
-		if not _initial_ship_seen or _pending_kind != "FLIGHT" or request != _pending or \
+		if not _initial_ship_seen or _pending_kind not in ["FLIGHT","MINE","FIT","UNFIT","FAB","POWER"] or request != _pending or \
 			command_id < 1152921504606846976 or tick <= _tick or generation <= _generation:
 			stop("Unrequested or stale native flight acknowledgement")
 			return
 		var done_verb := _pending_flight_verb
+		var done_kind := _pending_kind
 		var elapsed_ms := maxi(0, Time.get_ticks_msec() - _last_send_msec)
 		_pending = 0
 		_pending_kind = ""
 		_pending_flight_verb = ""
 		_tick = tick
 		_generation = generation
-		flight_command_result.emit(request, done_verb, "ACK" if outcome == 0 else "OUTCOME",
-			elapsed_ms, outcome)
+		if done_kind == "FLIGHT":
+			flight_command_result.emit(request, done_verb, "ACK" if outcome == 0 else "OUTCOME",
+				elapsed_ms, outcome)
+		else:
+			equipment_result_received.emit(done_kind,request,outcome,command_id)
+			_status("Original %s command #%d %s; verified cargo/ore snapshot follows" % [
+				done_kind,request,"APPLIED" if outcome == 0 else "REFUSED outcome=%d" % outcome])
 	_last_ship_telemetry_request = request
 	_dock_state = dock
 	ship_state_received.emit({"ship":ship,"command_id":command_id,"outcome":outcome,
@@ -354,6 +371,9 @@ func _accept_original_asteroid(parts: PackedStringArray) -> void:
 		stop("Native ore stock or mining tool status invalid")
 		return
 	_last_contact_request = request
+	_current_rock_id = rock_id if present else 0
+	_drill_online = installed == 1
+	_observed_cargo = cargo
 	asteroid_contact_received.emit({"found":present,"rock":rock_id,
 		"ore_tonnes":ore,"dx_mm":dx,"dy_mm":dy,"dz_mm":dz,"radius_mm":radius,
 		"taxonomy":taxonomy,"ship":ship,"tick":tick,"generation":generation,
@@ -396,6 +416,49 @@ func _accept_original_station_nav(parts: PackedStringArray) -> void:
 		output.merge({"station":station,"dx_mm":dx,"dy_mm":dy,"dz_mm":dz}, true)
 	_last_nav_request = request
 	station_nav_received.emit(output)
+
+func request_mine_one_tonne() -> void:
+	# The last original ROCK telemetry provides a candidate, not authority.
+	# Native C++ rechecks owned pilot, fitted power, collision/range and mass.
+	_send_equipment("MINE",_current_rock_id)
+
+func request_fabricate_drill() -> void:
+	_send_equipment("FAB",1)
+
+func request_fit_drill() -> void:
+	_send_equipment("FIT",1)
+
+func request_unfit_drill() -> void:
+	_send_equipment("UNFIT",1)
+
+func request_drill_power(enabled: bool) -> void:
+	_send_equipment("POWER",1 if enabled else 0)
+
+func _send_equipment(kind: String, value: int) -> void:
+	if not _active or _session <= 0 or not _seated or not _initial_ship_seen or _pending != 0:
+		_status("Original fitting/mining requires seated pilot and an idle native writer")
+		return
+	if kind == "MINE" and (value <= 0 or not _drill_online or
+			_last_contact_request != _last_ship_telemetry_request):
+		_status("Mining refused: no matching original rock and powered fitted tool")
+		return
+	if kind not in ["MINE","FAB","FIT","UNFIT","POWER"] or value < 0:
+		_status("Invalid mining/equipment request")
+		return
+	var now := Time.get_ticks_msec()
+	if now - _last_send_msec < 110:
+		_status("Native equipment cooldown: retry after command interval")
+		return
+	var req := _next_request
+	_next_request += 1
+	_pending = req
+	_pending_kind = kind
+	_pending_flight_verb = ""
+	_last_send_msec = now
+	if not _stdout.store_line("%s|%d|%d|%d|%d" % [kind,_session,req,_seat_sequence,value]):
+		stop("Original equipment/mining pipe write failed; reconnect to inspect SQLite")
+		return
+	_stdout.flush()
 
 func submit_flight(actions: PackedStringArray) -> void:
 	if not _active or _session <= 0 or not _seated or not _initial_ship_seen or \
