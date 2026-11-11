@@ -100,144 +100,126 @@ static func _pipe(parent: Node3D, name: String, at: Vector3,
 	parent.add_child(part)
 
 static func _station_shell_details(parent: Node3D) -> void:
-	# These are surface cladding on the PREEXISTING station perimeter only,
-	# not fabricated player settlements or functional plants.
+	# Deliberately restrained structural shell, not the former crowded
+	# plaza-side facade. The separate dock/worker district remains readable.
 	var shell := Node3D.new()
 	shell.name = "OriginalStation_IndustrialCladding_NonOperational"
 	parent.add_child(shell)
 	for side in [-1,1]:
-		var x: float = float(side)*7.10
-		# Visible structural ribs and stamped panels, hard-SF service hatches.
-		for i in range(5):
-			var z := 1.60 + float(i)*0.95
-			_box(shell,"Retrofuturist habitation facade rib %d-%d" % [side,i],
-				Vector3(x,2.0,z),Vector3(2.82,3.84,0.065),FRAME_STEEL)
-			_box(shell,"Recessed ceramic shell panel %d-%d" % [side,i],
-				Vector3(x,2.12,z+0.13),Vector3(2.44,3.12,0.12),INDUSTRIAL_IVORY)
-			_box(shell,"Amber service plate %d-%d" % [side,i],
-				Vector3(x,0.85,z+0.22),Vector3(1.35,0.18,0.16),WEATHERED_BRASS)
-		for band in range(3):
-			_pipe(shell,"External station coolant trunk %d-%d" % [side,band],
-				Vector3(x+float(side)*1.62,1.25+float(band)*0.63,3.6),
-				4.2,0.095,FRAME_STEEL)
-		for i in range(5):
-			_box(shell,"Modular roof heat-radiator %d-%d" % [side,i],
-				Vector3(x-1.15+float(i)*0.56,3.75,3.65),
-				Vector3(0.07,0.70,2.30),FRAME_STEEL)
-	# Existing station plaza overhead communications, no gameplay beacon.
-	_pipe(shell,"Existing station mast",Vector3(-7.0,5.9,-2.7),5.5,0.14,FRAME_STEEL,true)
-	for altitude in [4.6,5.8,7.0]:
-		_box(shell,"Mast level %.1f" % altitude,
-			Vector3(-7.0,altitude,-2.7),Vector3(1.85,0.095,0.13),WEATHERED_BRASS)
-	for i in range(6):
-		var z := -5.6+float(i)*1.1
-		_box(shell,"Dock gantry overhead rib %02d" % i,Vector3(0.0,5.1,z),
-			Vector3(8.5,0.11,0.24),FRAME_STEEL)
-		for side in [-1,1]:
-			_box(shell,"Dock vertical gantry truss %d-%02d" % [side,i],
-				Vector3(float(side)*4.22,2.6,z),
-				Vector3(0.14,5.2,0.16),FRAME_STEEL)
-	for i in range(12):
-		var x := -4.5+float(i)*0.82
-		_box(shell,"Plaza bolted drainage rail %02d" % i,
-			Vector3(x,0.11,0.72),Vector3(0.045,0.018,0.71),FRAME_STEEL)
-	# A far wall of rugged material is purely atmospheric ground and not
-	# a new geological resource deposit or physically traversable terrain.
+		for i in range(13):
+			var z := -10.0+float(i)*0.91
+			_box(shell,"Pressure-shell segmented rib %d-%02d" % [side,i],
+				Vector3(float(side)*10.7,2.4,z),Vector3(0.13,4.8,0.16),FRAME_STEEL)
+			_box(shell,"Pressure-shell tempered panel %d-%02d" % [side,i],
+				Vector3(float(side)*10.65,2.55,z+0.36),Vector3(0.09,3.9,0.60),INDUSTRIAL_IVORY)
+	# A distant nonphysical horizon, never a simulated resource deposit.
 	var vista := Node3D.new()
 	vista.name = "DistantEarthworks_BackdropNotMineralInventory"
 	parent.add_child(vista)
 	for i in range(28):
 		var x := (float(i)-13.5)*20.0
-		var height := 9.0+absf(sin(float(i)*1.91))*17.0
-		_box(vista,"Distant escarpment %02d" % i,
-			Vector3(x,height*0.5,-185.0),Vector3(21.0,height,14.0),
-			Color(0.30,0.30,0.31))
-	# No additional native collision bodies, production output, or NPC data.
+		var height := 7.0+absf(sin(float(i)*1.91))*13.0
+		_box(vista,"Distant ridge %02d" % i,
+			Vector3(x,height*0.5,-210.0),Vector3(21.0,height,14.0),
+			Color(0.29,0.29,0.30))
 
 static func build(station: Node3D) -> void:
-	# Colony represents home, civilian industry and the safe walking origin.
-	# It is visibly distinct from the docked vessel and the departure berth.
+	# The dock is a logistics district WITHIN the original station, not
+	# a second gameplay colony. 3D layout is swappable by the creator;
+	# source positions stay authoritative for every existing save.
 	var colony := Node3D.new()
 	colony.name = "ColonyArrival"
 	station.add_child(colony)
-	_box(colony, "Colony plaza paving", Vector3(1.6, 0.046, 3.05),
-		Vector3(8.3, 0.06, 6.0), COLONY_DECK)
-	_box(colony, "Original native person colony spawn emblem",
-		Vector3(COLONY_SPAWN.x, 0.086, COLONY_SPAWN.z + 0.54),
-		Vector3(0.85, 0.014, 0.55), ROUTE_ACCENT, true)
-	_sign(colony, "Colony arrival wayfinding", "COLONY ARRIVALS\nHABITATS • SERVICES",
-		Vector3(1.6, 3.2, 3.4), COLONY_LIGHT)
-	# Colony buildings outside the +/-5m native corridor walls; they are
-	# skyline / production context, never unregistered collidable blockers.
-	for side in [-1, 1]:
-		var x: float = float(side) * 7.1
-		_box(colony, "Colony habitation block %d" % side,
-			Vector3(x, 1.75, 3.6), Vector3(2.7, 3.5, 3.9),
-			Color(0.41, 0.45, 0.49, 1.0))
-		_box(colony, "Colony habitat roof %d" % side,
-			Vector3(x, 3.55, 3.6), Vector3(3.1, 0.18, 4.25),
-			Color(0.31, 0.35, 0.39, 1.0))
-		for index in range(3):
-			_box(colony, "Colony window %d-%d" % [side, index],
-				Vector3(x - float(side)*1.37, 2.0, 2.6 + float(index)*0.94),
-				Vector3(0.035, 0.6, 0.58), Color(0.22, 0.72, 0.88, 1.0), true)
-	_box(colony, "Colony habitat utility tower",
-		Vector3(-7.4, 2.5, -2.8), Vector3(2.4, 5.0, 2.6),
-		Color(0.46, 0.50, 0.54, 1.0))
-	_sign(colony, "Colony departure direction", "TO DOCK  /  SHIP DEPARTURES",
-		Vector3(1.0, 2.45, 0.75), PATH_COLOR, 29)
+	_box(colony,"Civilian arrival concourse",Vector3(2.1,0.048,3.5),
+		Vector3(9.8,0.07,7.1),COLONY_DECK)
+	_box(colony,"Original native person spawn",
+		Vector3(COLONY_SPAWN.x,0.086,COLONY_SPAWN.z+0.55),
+		Vector3(0.8,0.02,0.45),ROUTE_ACCENT,true)
+	_sign(colony,"Civilian wayfinding","COLONY COMMONS  |  SERVICES",
+		Vector3(2.5,2.4,4.1),COLONY_LIGHT,26)
+	# Actual workshops/habitats require native construction. These panels
+	# merely bound the public approach, not invented inhabited structures.
+	for side in [-1,1]:
+		var x := float(side)*6.6
+		for i in range(5):
+			_box(colony,"Concourse rail upright %d-%d" % [side,i],
+				Vector3(x,0.85,0.7+float(i)*1.24),
+				Vector3(0.10,1.62,0.10),FRAME_STEEL)
+		_box(colony,"Concourse rail handhold %d" % side,
+			Vector3(x,1.56,3.2),Vector3(0.12,0.09,6.3),FRAME_STEEL)
 
-	# A short pedestrian route links original PERSON genesis directly to the
-	# exact old native (0,0) hatch so existing persisted saves still work.
 	var corridor := Node3D.new()
 	corridor.name = "ColonyToDockWalkway"
 	station.add_child(corridor)
+	_box(corridor,"Public passenger bridge",Vector3(0.80,0.082,-0.44),
+		Vector3(2.35,0.045,2.4),COLONY_DECK)
 	for i in range(5):
-		var x: float = 1.55 - float(i)*0.31
-		_box(corridor, "Native hatch directional stripe %02d" % i,
-			Vector3(x, 0.090, 0.0), Vector3(0.20, 0.014, 0.13),
-			PATH_COLOR, true)
-	_sign(corridor, "Pedestrian dock threshold", "DOCK CHECKPOINT\nBOARD AT THE CYAN RAMP",
-		Vector3(-0.05, 3.15, -1.15), PATH_COLOR)
+		_box(corridor,"Passenger flow marker %02d" % i,
+			Vector3(1.50-float(i)*0.30,0.113,-0.21),
+			Vector3(0.13,0.014,0.13),PATH_COLOR,true)
+	_sign(corridor,"Dock identity","PASSENGER AIRLOCK / DEPARTURES",
+		Vector3(0.0,2.25,-1.45),PATH_COLOR,21)
+	# One native airlock at (0,0). No second spawn, teleport, NPC or
+	# boarding rule is created by the scene.
+	_box(corridor,"Airlock threshold",Vector3(0.0,0.14,-0.78),
+		Vector3(2.0,0.12,0.20),WEATHERED_BRASS)
 
-	# The dock is the transition from the *colony* to space flight. No
-	# imaginary new planet/sector is created: the same original docked
-	# ShipID is viewed here at its real owner-controlled station berth.
 	var dock := Node3D.new()
 	dock.name = "SpacefaringDock"
 	station.add_child(dock)
-	_box(dock, "Dock charcoal deck", Vector3(0.0, 0.042, -4.0),
-		Vector3(9.0, 0.06, 7.8), DOCK_DECK)
-	_box(dock, "Ship embarkation ramp", Vector3(0.0, 0.084, -1.9),
-		Vector3(1.5, 0.014, 2.8), Color(0.48, 0.54, 0.58, 1.0))
-	# Non-colliding berth markings guide the eye to the OWNED white ship.
-	for side in [-1, 1]:
-		var edge_x: float = float(side)*3.9
-		_box(dock, "Dock hazard stripe %d" % side,
-			Vector3(edge_x, 0.081, -4.45), Vector3(0.15, 0.012, 5.4),
-			ROUTE_ACCENT, true)
-		_box(dock, "Dock berth beacon %d" % side,
-			Vector3(float(side)*3.05, 0.13, -1.15),
-			Vector3(0.23, 0.25, 0.23), PATH_COLOR, true)
-	_sign(dock, "Departure dock label", "DEPARTURES  /  TO SPACE",
-		Vector3(0.0, 4.2, -4.6), COLONY_LIGHT, 26)
-	# Make it visibly a SPACECRAFT instead of an anonymous white container.
-	# The existing white owned hull/wing bodies are built by main.gd,
-	# while these non-colliding details add landing gear, hatch and canopy.
-	_box(dock, "Owned ship dark cockpit canopy", Vector3(0.0, 2.23, -3.55),
-		Vector3(1.8, 0.64, 1.35), Color(0.19, 0.28, 0.37, 1.0))
-	_box(dock, "Owned ship nose highlight", Vector3(0.0, 1.29, -2.66),
-		Vector3(1.52, 0.63, 0.40), Color(0.91, 0.94, 0.97, 1.0))
-	_box(dock, "Owned ship entrance dark seam", Vector3(0.0, 1.05, -2.42),
-		Vector3(0.88, 1.5, 0.06), Color(0.16, 0.22, 0.29, 1.0))
-	for side in [-1, 1]:
-		var x: float = 1.05*float(side)
-		_box(dock, "Owned ship landing leg %d" % side,
-			Vector3(x, 0.42, -6.25), Vector3(0.19, 0.80, 0.22),
-			Color(0.69, 0.72, 0.76, 1.0))
-		_box(dock, "Owned ship landing foot %d" % side,
-			Vector3(x, 0.075, -6.25), Vector3(0.46, 0.10, 0.5),
-			Color(0.74, 0.77, 0.81, 1.0))
-	# White hull, ramp and active (0,0) checkpoint share the central axis.
-	# This builder deliberately creates NO collision or boarding callback.
+	# Multi-lane dock: center passenger flow, exterior independently
+	# managed cargo areas, and outboard worker dispatch. The 3D meshes
+	# have no collision; the C++ native world remains the single authority.
+	_box(dock,"Space berth pressure deck",Vector3(0,0.045,-5.2),
+		Vector3(9.1,0.065,9.1),DOCK_DECK)
+	_box(dock,"Passenger centerline",Vector3(0,0.094,-2.5),
+		Vector3(1.5,0.016,4.6),COLONY_DECK)
+	_box(dock,"Native hatch embarkation ramp",Vector3(0,0.115,-1.85),
+		Vector3(1.45,0.016,2.8),INDUSTRIAL_IVORY)
+	for side in [-1,1]:
+		var direction := float(side)
+		_box(dock,"Independent freight vehicle lane %d" % side,
+			Vector3(direction*6.6,0.05,-5.05),
+			Vector3(2.7,0.07,9.2),FRAME_STEEL)
+		_box(dock,"Freight-to-ship staging pad %d" % side,
+			Vector3(direction*7.0,0.09,-7.35),
+			Vector3(3.0,0.06,2.4),DOCK_DECK)
+		for n in range(6):
+			_box(dock,"Freight floor segmentation %d-%02d" % [side,n],
+				Vector3(direction*6.5,0.101,-8.4+float(n)*1.25),
+				Vector3(2.1,0.012,0.08),ROUTE_ACCENT,true)
+		_box(dock,"Berth safety railing %d" % side,
+			Vector3(direction*4.6,0.75,-5.6),Vector3(0.12,1.5,6.3),FRAME_STEEL)
+		_sign(dock,"Freight lane signage %d" % side,
+			"FREIGHT  /  NOT PUBLIC",
+			Vector3(direction*7.0,2.1,-1.5),ROUTE_ACCENT,21)
+	_sign(dock,"Passenger dock signage","PASSENGER BERTH  |  SHIP / SPACE",
+		Vector3(0,3.0,-7.5),COLONY_LIGHT,25)
+	# Distinct staff area is visually reserved for real named dock personnel.
+	# No free workers are created by modeling a dispatch station.
+	var staff := Node3D.new()
+	staff.name = "DockOperations_StaffAllocationRequired"
+	dock.add_child(staff)
+	_box(staff,"Dispatch floor",Vector3(-7.3,0.08,0.15),
+		Vector3(4.3,0.13,3.5),DOCK_DECK)
+	_box(staff,"Worker check-in console",Vector3(-7.3,0.77,0.45),
+		Vector3(2.8,1.3,0.62),INDUSTRIAL_IVORY)
+	_box(staff,"Staff dispatch canopy",Vector3(-7.3,2.7,0.0),
+		Vector3(4.5,0.13,3.4),FRAME_STEEL)
+	_sign(staff,"Dock worker station","DOCK OPERATIONS / STAFF DISPATCH",
+		Vector3(-7.3,2.05,0.5),COLONY_LIGHT,20)
+	# No planted refinery or manufacturing machinery. Industry is remote
+	# UI only after original physical facilities have been constructed.
+	var cargo := Node3D.new()
+	cargo.name = "DockCargoStaging_NoSeparateInventory"
+	dock.add_child(cargo)
+	_box(cargo,"Owner-specific staging platform",Vector3(7.3,0.11,0.55),
+		Vector3(4.1,0.13,3.0),COLONY_DECK)
+	_sign(cargo,"Owner hangar signage","LOCAL COLONY CARGO / I INVENTORY",
+		Vector3(7.3,1.8,0.75),COLONY_LIGHT,20)
+	# Keep the original berthing and ship-view nodes stable.
+	for side in [-1,1]:
+		_box(dock,"Physical docking cue %d" % side,
+			Vector3(float(side)*3.0,0.14,-1.2),
+			Vector3(0.19,0.22,0.19),PATH_COLOR,true)
 	_station_shell_details(station)
