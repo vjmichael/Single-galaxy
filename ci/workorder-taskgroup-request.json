@@ -2,6 +2,6 @@
   "schema": "SG-WORKORDER-GATE-01",
   "task_group": "WO5",
   "pr_number": 92,
-  "source_sha": "bb3907b4c6457a1a7c4c12abf630201dc6f0b96c",
-  "note": "WO3-F historical original pre-v109 source 23bad9be, observer-only capture via SQLite online backup of real committed v85 source journal (old vintage recover_copy unable to reconstruct same-tick checkpoint); modern independent verified PersistentWorld::recover_copy, original native legal-home v86 upgrade, precise binary/db SHA256 attestation, fail-closed corrupt/forged state checks. Rerun exact WO5 stack head 33 CTests Windows/Linux."
+  "source_sha": "d632ffc265df967da3c159252079787862a186d7",
+  "note": "Final exactly-pinned WO3–WO5 33-test Windows/Linux acceptance after documentation-only provenance string correction: producer 23bad9be, true source-generated native v85 SQLite, SHA256 archived_artifact=false manifest that correctly identifies SQLite online backup, strict source/executable/SQLite provenance, real v86 legal home upgrade and denied pre-v109 fake planetary homes, modern SQLite independent recovery, preserved matter/NPC identity, full WO4 & WO5 custody and freight. No other source changes to native game."
 }
