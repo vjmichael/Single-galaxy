@@ -49,6 +49,13 @@ checks = {
         and '_game.player.native_ship_intents.emit(intents)' in scene
         and "committed_ship" in scene
     ),
+    "keyboard-steering-commits-before-collision-checkpoint": (
+        scene.index('_submit_visible_cursor_keyboard_flight("ship_yaw_left", "LEFT")') <
+        scene.index('var collided := false') <
+        scene.index('await _capture_visible("03-native-rock-impact", sh, rock)') <
+        scene.index('var committed_ship: Dictionary')
+        and 'int(_ship_frames[-1]["heading"]) != before_yaw' in scene
+    ),
     "native-restart-same-world-and-no-replayed-impact": (
         "restored.start(path)" in scene and
         'name in ["ship", "tick", "gen"' in scene and
