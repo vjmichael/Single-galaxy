@@ -287,10 +287,10 @@ func _accept_line(line: String) -> void:
 func _accept_dock(f: PackedStringArray) -> void:
 	# Every status is a response to one local one-use command. Never allow
 	# client forecasts to replace authoritative worker or cargo counts.
-	if f.size() != 17 or f[1] != "1" or _pending_dock_kind.is_empty():
+	if f.size() != 23 or f[1] != "1" or _pending_dock_kind.is_empty():
 		stop("Unrequested dock service receipt")
 		return
-	for i in range(2, 17):
+	for i in range(2, 23):
 		if not _integer(f[i]):
 			stop("Malformed original dock receipt")
 			return
@@ -309,6 +309,12 @@ func _accept_dock(f: PackedStringArray) -> void:
 	var result := int(f[14])
 	var qualified_staff := int(f[15])
 	var service_capacity := int(f[16])
+	var boarding_waiting := int(f[17])
+	var actually_boarded := int(f[18])
+	var boarding_held := int(f[19])
+	var urgent_boarding := int(f[20])
+	var gangways := int(f[21])
+	var congestion := int(f[22])
 	var expected_result := {"VIEW":[0],"ASSIGN":[1],"RELEASE":[2],
 		"PASS":[3],"FREIGHT":[4],"WORK":[5,6]}
 	if session != _session or req != _pending or tick < _tick or generation < _generation or \
@@ -317,26 +323,32 @@ func _accept_dock(f: PackedStringArray) -> void:
 			tonnes < 0 or tonnes > 8192 or jobs < 0 or jobs > 128 or held < 0 or held > 128 or \
 			completed_people < 0 or completed_tonnes < 0 or \
 			qualified_staff<0 or qualified_staff>staff or service_capacity<0 or service_capacity>4 or \
+			boarding_waiting<0 or boarding_waiting>32 or actually_boarded<0 or \
+			boarding_held<0 or urgent_boarding<0 or urgent_boarding>boarding_waiting or \
+			gangways<0 or gangways>2 or congestion<0 or congestion>100 or \
 			not expected_result.get(_pending_dock_kind,[]).has(result):
 		stop("Original dock receipt violates source custody or queue bounds")
 		return
 	_pending = 0
 	_pending_dock_kind = ""
 	_dock_initial_read_done = true
-	_dock_auto_remaining = passengers + tonnes
+	_dock_auto_remaining = passengers + tonnes + boarding_waiting
 	_dock_auto_staff = staff
 	_tick = tick
 	_generation = generation
 	var snapshot := {"station":station,"dock_staff":staff,
 		"passengers":passengers,"freight_tonnes":tonnes,"freight_jobs":jobs,
 		"held_jobs":held,"qualified_staff":qualified_staff,
-		"service_capacity":service_capacity,"checked_in":completed_people,
+		"service_capacity":service_capacity,"boarding_waiting":boarding_waiting,
+		"actually_boarded":actually_boarded,"boarding_held":boarding_held,
+		"urgent_boarding":urgent_boarding,"gangways":gangways,
+		"congestion":congestion,"checked_in":completed_people,
 		"handled_tonnes":completed_tonnes,"result":result,
 		"tick":tick,"generation":generation}
 	dock_received.emit(snapshot)
 	_status("Dock assignment changed" if result in [1,2] else
 		"Freight service updated" if result in [4,5] else
-		"Passenger checked into local queue" if result==3 else
+		"Passenger booked against an actual local ferry berth" if result==3 else
 		"Dock workers unavailable or queue idle" if result==6 else
 		"Dock services ready")
 
