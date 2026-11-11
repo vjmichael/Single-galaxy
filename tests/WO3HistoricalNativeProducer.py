@@ -57,12 +57,27 @@ def prepare(source):
     source_injection = (
         anchor + "\n"
         '        if(const char* target=std::getenv("' + CAPTURE_ENV + '")) {\n'
-        '            PersistentWorld::recover_copy(db.string(),target);\n'
+        '            sqlite3* source_db=nullptr,*saved_db=nullptr;\n'
+        '            const auto close=[&]() { if(saved_db)sqlite3_close(saved_db);\n'
+        '                                      if(source_db)sqlite3_close(source_db); };\n'
+        '            if(sqlite3_open_v2(db.string().c_str(),&source_db,\n'
+        '                 SQLITE_OPEN_READONLY,nullptr)!=SQLITE_OK ||\n'
+        '               sqlite3_open(target,&saved_db)!=SQLITE_OK) {\n'
+        '                 close();throw std::runtime_error("historical native SQLite open failed");\n'
+        '            }\n'
+        '            sqlite3_backup* snapshot=sqlite3_backup_init(saved_db,\n'
+        '                 "main",source_db,"main");\n'
+        '            if(!snapshot) {close();throw std::runtime_error("historical SQLite backup init failed");}\n'
+        '            const auto step=sqlite3_backup_step(snapshot,-1);\n'
+        '            const auto finished=sqlite3_backup_finish(snapshot);\n'
+        '            close();\n'
+        '            if(step!=SQLITE_DONE || finished!=SQLITE_OK)\n'
+        '                throw std::runtime_error("historical SQLite backup failed");\n'
         '            return; // preserve original v85 journal before later operations\n'
         '        }'
     )
     original = original.replace(anchor, source_injection)
-    original = original.replace("#include <chrono>\n", "#include <chrono>\n#include <cstdlib>\n", 1)
+    original = original.replace("#include <chrono>\n", "#include <chrono>\n#include <cstdlib>\n#include <sqlite3.h>\n", 1)
     main_anchor = '            scenario(dir/"farm.sqlite",true);'
     if original.count(main_anchor) != 1:
         raise RuntimeError("native farm scenario anchor missing/ambiguous")
