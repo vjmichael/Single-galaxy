@@ -16577,6 +16577,28 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                 (n.location==n.assigned_site && !result.crew_rehomes_.count(n.id))))
                 throw std::runtime_error("snapshot: invalid active passenger custody");
             if(result.snapshot_version_>=32 && !n.assigned_site)throw std::runtime_error("snapshot: missing assignment");
+            // DOCK-04: original named crew may perform short-range shore
+            // duty at the station of their REAL docked home ship. This is
+            // physical custody, not a second residency or an invented voyage.
+            // The matching native SQLite shore-transfer receipt is checked
+            // by the PersistentWorld host; generic snapshots must still
+            // prove the two physical endpoints and one home-crew identity.
+            const bool genuine_shore_duty=[&](){
+                if(result.snapshot_version_<120 || n.transport_id ||
+                   n.role!=NpcRole::Ship ||
+                   n.assigned_site!=n.home_ship ||
+                   n.location==n.home_ship)return false;
+                const auto home=result.entities_.find(n.home_ship);
+                const auto station=result.entities_.find(n.location);
+                return home!=result.entities_.end() &&
+                       station!=result.entities_.end() &&
+                       home->second.type==EntityType::Ship &&
+                       station->second.type==EntityType::Station &&
+                       home->second.owner_id!=0 &&
+                       home->second.dock_state==DockState::Docked &&
+                       home->second.dock_station==station->first &&
+                       home->second.system_id==station->second.system_id;
+            }();
             if(!result.colony_ships_.count(n.home_ship) ||
                 (n.role==NpcRole::Ship && n.assigned_site!=n.home_ship) ||
                 (n.role==NpcRole::Farm && (!result.farms_.count(n.assigned_site) ||
@@ -16595,7 +16617,7 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                     return false;
                 }()) ||
                 (!n.transport_id && n.location!=n.assigned_site &&
-                 !shuttle_custody &&
+                 !shuttle_custody && !genuine_shore_duty &&
                  ![&](){for(const auto& [voyage_id,v]:result.voyages_){(void)voyage_id;
                      if((v.status==2 || v.status==5) && v.destination==n.location &&
                         std::binary_search(v.passengers.begin(),v.passengers.end(),id))return true;}
