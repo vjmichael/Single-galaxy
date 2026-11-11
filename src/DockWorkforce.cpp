@@ -8,6 +8,39 @@ namespace galaxy {
 // this real ship's finite CREW ROSTER (crew is a contract/headcount), but their
 // authoritative physical location moves between a docked hull and its station.
 // A separate native station receipt is committed with the world snapshot.
+bool Simulation::npc_available_for_shore_duty(std::uint64_t npc_id,
+                                                EntityId station) const {
+    const auto it=npcs_.find(npc_id);
+    if(it==npcs_.end() || !station)return false;
+    const auto& person=it->second;
+    if(person.role!=NpcRole::Ship || !person.home_ship ||
+       person.location!=station || person.transport_id ||
+       person.mentor_id ||
+       (person.assigned_site && person.assigned_site!=person.home_ship))
+        return false;
+    const auto* home=find(person.home_ship);
+    if(!home || home->type!=EntityType::Ship ||
+       home->dock_state!=DockState::Docked ||
+       home->dock_station!=station)return false;
+    for(const auto& [key,sh]:planetary_shuttles_){
+        (void)key;
+        if(sh.pilot_npc==npc_id ||
+           std::binary_search(sh.passenger_ids.begin(),sh.passenger_ids.end(),npc_id) ||
+           std::binary_search(sh.disembarked_ids.begin(),sh.disembarked_ids.end(),npc_id))
+            return false;
+    }
+    for(const auto& [id,flight]:npc_flight_orders_){
+        (void)id;
+        if(flight.pilot_npc==npc_id &&
+           (flight.phase==NpcFlightPhase::Planned ||
+            flight.phase==NpcFlightPhase::InTransit))return false;
+    }
+    const auto health=npc_health_status(npc_id);
+    return health==NpcHealthStatus::Healthy ||
+           health==NpcHealthStatus::Treated ||
+           health==NpcHealthStatus::Recovered;
+}
+
 bool Simulation::station_dock_worker_transfer(
     PlayerId owner,EntityId ship,EntityId station,std::uint64_t npc_id,
     bool disembark) {
