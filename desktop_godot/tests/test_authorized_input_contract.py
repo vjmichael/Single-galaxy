@@ -30,6 +30,18 @@ assert 'func toggle_seat()' in p and 'SEAT|%d|%d|%d|%d' in p
 assert 'seat_sequence != _seat_sequence + 1' in p
 assert 'if native_seated and native_in_ship:' in c and 'native_seat_intent.emit()' in c
 assert 'native_ship_intents.emit(pilot_actions)' in c and 'if get_window().has_focus():' in c
+assert 'Input.mouse_mode == Input.MOUSE_MODE_CAPTURED' in c
+assert 'if Input.mouse_mode == Input.MOUSE_MODE_CAPTURED and \\' in c # only mouse yaw
+assert 'if native_seated and native_in_ship:' in c
+real=(root/'tests/fp3d_env01_live_scene_acceptance.gd').read_text()
+assert '_submit_visible_cursor_keyboard_flight("ship_undock", "UND")' in real
+assert '_submit_visible_cursor_keyboard_flight("ship_dock", "DCK")' in real
+assert '_submit_visible_cursor_keyboard_flight("ship_thrust_forward", "FWD")' in real
+assert '_submit_visible_cursor_keyboard_flight("ship_yaw_left", "LEFT")' in real
+assert '_submit_visible_cursor_keyboard_flight("ship_yaw_right", "RIGHT")' in real
+assert '_game.player.native_ship_intents.emit(intents)' in real
+assert 'session.submit_flight(PackedStringArray([' not in real
+assert 'int(_ship_frames[-1]["heading"]) != before_yaw' in real
 assert 'player.native_ship_intents.connect(' in m
 assert 'native_player_session.submit_flight(actions)' in m
 assert 'ship_state_received.connect' in m

@@ -43,7 +43,11 @@ checks = {
         'session.start(path)' in scene and
         "session.ship_state_received.connect(_on_ship)" in scene and
         "session.asteroid_contact_received.connect(_on_rock)" in scene and
-        "session.submit_flight(PackedStringArray" in scene
+        '_submit_visible_cursor_keyboard_flight("ship_thrust_forward", "FWD")' in scene
+        and '_submit_visible_cursor_keyboard_flight("ship_yaw_left", "LEFT")' in scene
+        and '_submit_visible_cursor_keyboard_flight("ship_yaw_right", "RIGHT")' in scene
+        and '_game.player.native_ship_intents.emit(intents)' in scene
+        and "committed_ship" in scene
     ),
     "native-restart-same-world-and-no-replayed-impact": (
         "restored.start(path)" in scene and

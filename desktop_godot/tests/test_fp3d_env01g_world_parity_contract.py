@@ -54,7 +54,9 @@ checks = {
         "station_player_action(" in world_test and
         "PersistentWorld recovered" in world_test,
     "real Godot test docks before second undock":
-        'session.submit_flight(PackedStringArray(["DCK"]))' in godot_test and
+        '_submit_visible_cursor_keyboard_flight("ship_dock", "DCK")' in godot_test and
+        '_submit_visible_cursor_keyboard_flight("ship_undock", "UND")' in godot_test and
+        '_game.player.native_ship_intents.emit(intents)' in godot_test and
         "second original launch after docking failed" in godot_test,
     "no new client mining or resource creation":
         all(tok not in scene for tok in ["Action::Mine", "Action::UnloadOre"]) and

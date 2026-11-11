@@ -35,7 +35,10 @@ checks = {
         and "stale ROCK must not join current SHIP" in smoke
         and "other owner's ship must never produce a target instrument" in smoke
         and "no space target from a docked C++ ship" in smoke,
-    "real C++ Godot test integrated": "session.submit_flight" in real
+    "real Godot keyboard to original C++ collision test integrated":
+        '_submit_visible_cursor_keyboard_flight("ship_thrust_forward", "FWD")' in real
+        and '_game.player.native_ship_intents.emit(intents)' in real
+        and '"FLIGHT"' in real
         and "read-only pilot instrument did not join real original impact receipt" in real,
     "no new client-side motion or ore authority": all(v not in instruments for v in
         ("Simulation", "Action::Mine", "OS.execute", "store_line", "sqlite", "submit_flight")),
