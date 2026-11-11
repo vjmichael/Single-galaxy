@@ -9720,8 +9720,8 @@ PersistentWorld::PersistentWorld(const std::string& path, Simulation initial_wor
         // Some original genesis worlds receive scanner/probe equipment
         // (and hence snapshot v64+) before named crew enrollment. Convert
         // only the already-existing finite crew at first SQLite genesis.
-        if(!world_.npc_next_seen_ && world_.npcs_.empty() &&
-           !world_.colony_ships_.empty())
+        if(world_.snapshot_version_>=64 && !world_.npc_next_seen_ &&
+           world_.npcs_.empty() && !world_.colony_ships_.empty())
             world_.enable_individual_workforce();
         resource_origin_ = world_.total_ore();
         credit_origin_ = world_.total_credits();
