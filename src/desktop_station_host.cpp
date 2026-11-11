@@ -253,8 +253,24 @@ static int run_host(int argc,char** argv){
     }else if(dock_release){
       // End shore duty by returning the SAME named person to the SAME
       // physically docked original ship; keep shift if return is refused.
-      const std::uint64_t candidate=ship?ship:
+      std::uint64_t candidate=ship?ship:
           dock_ledger.first_assigned(local_station,kOwner);
+      if(!candidate){
+        // A crash after original shore movement but before shift insert
+        // must not strand crew. Recovery searches real canonical custody,
+        // not a fabricated staff list or an arbitrary station teleport.
+        std::uint64_t scanned=0;
+        for(const auto& [id,npc]:world.world().npc_records()){
+          if(++scanned>4096)break;
+          const auto* home=world.world().find(npc.home_ship);
+          if(npc.role==NpcRole::Ship && npc.location==local_station &&
+             home && home->owner_id==kOwner &&
+             home->dock_state==DockState::Docked &&
+             home->dock_station==local_station){
+            candidate=id;break;
+          }
+        }
+      }
       const auto it=world.world().npc_records().find(candidate);
       if(!candidate || it==world.world().npc_records().end() ||
          it->second.location!=local_station ||
@@ -263,8 +279,9 @@ static int run_host(int argc,char** argv){
         deny(req,"dock-worker-cannot-return-to-original-berth");continue;
       }
       galaxy::server_dx::committed_breadcrumb(world.world().tick(),world.generation());
-      if(!dock_ledger.release(local_station,kOwner,candidate))
-        throw std::runtime_error("returned dock worker retained stale shift");
+      // A recovery return may legitimately have no appointment because
+      // the previous process crashed after the original custody commit.
+      (void)dock_ledger.release(local_station,kOwner,candidate);
       result=2;
     }else if(dock_passenger){
       // A real local named-NPC check-in appointment, not boarding/migration.
