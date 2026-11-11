@@ -325,9 +325,9 @@ int main(){
         // the fault-injected execution tick. Only the execution/physical
         // inventory must remain unchanged after its rolled-back receipt.
         CHECK(fault.world().state_hash()!=unchanged);
-        CHECK(fault.world().tick()==unchanged_tick);
+        CHECK(fault.world().tick()==initial_tick);
         CHECK(fault.world().habitat(site)->life.water_kg==
-              unchanged_habitat_water);
+              destination_water);
         CHECK(fault.generation()==initial_generation+1);
         CHECK(fault.world().has_command_id(11));
         CHECK(fault.world().tick()==initial_tick &&
