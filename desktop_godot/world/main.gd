@@ -1547,9 +1547,9 @@ func _clear_group3_survey_markers() -> void:
 func _on_group3_asteroid_survey(result: Dictionary) -> void:
 	# Native Godot parser already checks the SHEAD/SROW/SEND join. The UI
 	# repeats ship/tick/generation pairing before drawing one passive marker.
-	if int(result.get("ship",-1)) != int(_verified_flight_ship.get("ship",-2)) or
+	if (int(result.get("ship",-1)) != int(_verified_flight_ship.get("ship",-2)) or
 			int(result.get("tick",-1)) != int(_verified_flight_ship.get("tick",-2)) or
-			int(result.get("gen",-1)) != int(_verified_flight_ship.get("gen",-2)):
+			int(result.get("gen",-1)) != int(_verified_flight_ship.get("gen",-2))):
 		return
 	if is_instance_valid(_mining_panel):
 		_mining_panel.show_original_survey(result)
