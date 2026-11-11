@@ -111,7 +111,7 @@ def attest(source, binary, world, output, env_file):
         "schema": "SG-WO3-HISTORICAL-NATIVE-V85-REPRODUCTION-01",
         "producer_source_commit": SOURCE_COMMIT,
         "original_test_git_blob": SOURCE_TEST_BLOB,
-        "instrumentation": "v85 SQLite recover_copy of source's original native journal",
+        "instrumentation": "SQLite online backup of unchanged producer's committed v85 journal (test-only observer)",
         "archived_artifact": False,
         "sqlite_sha256": sha256(world),
         "producer_executable_sha256": sha256(binary),

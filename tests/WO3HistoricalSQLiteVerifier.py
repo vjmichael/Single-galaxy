@@ -62,6 +62,7 @@ def main():
         "producer_source_commit": SOURCE_COMMIT,
         "original_test_git_blob": SOURCE_BLOB,
         "archived_artifact": False,
+        "instrumentation": "SQLite online backup of unchanged producer's committed v85 journal (test-only observer)",
         "sqlite_sha256": world_sha.lower(),
         "producer_executable_sha256": binary_sha.lower(),
     }
