@@ -124,7 +124,7 @@ func _unhandled_input(event: InputEvent) -> void:
 			get_window().has_focus() and not native_in_ship and not native_seated:
 		toggle_run()
 		get_viewport().set_input_as_handled()
-	elif if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_ESCAPE:
+	elif event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_ESCAPE:
 		Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
 		get_viewport().set_input_as_handled()
 	elif event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
