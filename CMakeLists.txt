@@ -2373,3 +2373,15 @@ if(BUILD_TESTING AND Python3_Interpreter_FOUND)
       $<TARGET_FILE:galaxy_desktop_player_host>)
   set_tests_properties(galaxy_group3_native_mining_pipe PROPERTIES TIMEOUT 180)
 endif()
+
+# GROUP3-D/E: actual v126 drill -> finite 1t rock -> original ship/hangar
+# -> real staffed/powered refinery -> mineral custody and provenance. The
+# INDUSTRY-01 catalogue prevents claiming unapproved drill manufacturing.
+if(BUILD_TESTING)
+  add_executable(galaxy_group3_station_custody_tests tests/Group3StationCustodyE2E.cpp)
+  target_link_libraries(galaxy_group3_station_custody_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_group3_original_station_custody
+    COMMAND galaxy_group3_station_custody_tests
+      ${CMAKE_CURRENT_BINARY_DIR}/group3_station_custody.sqlite)
+  set_tests_properties(galaxy_group3_original_station_custody PROPERTIES TIMEOUT 200)
+endif()
