@@ -71,7 +71,7 @@ public:
         const auto* here=sim.find(origin);
         if(!here || here->type!=EntityType::Station)return out;
         for(const auto& [id,ship]:sim.entities()){
-            if(out.size()>=6)break;
+            if(out.size()>=4)break;
             if(ship.type!=EntityType::Ship || ship.owner_id!=owner ||
                ship.dock_state!=DockState::Docked ||
                !ship.dock_station || ship.dock_station==origin ||
