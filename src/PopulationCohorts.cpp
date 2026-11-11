@@ -20,6 +20,13 @@ std::uint64_t PopulationCohorts::count(CohortKey key) const noexcept {
     const auto it=groups_.find(key);return it==groups_.end()?0:it->second;
 }
 std::uint64_t PopulationCohorts::population() const noexcept {return population_;}
+std::uint64_t PopulationCohorts::population_at(std::uint64_t settlement) const noexcept {
+    std::uint64_t local=0;
+    for(const auto& [key,count]:groups_) {
+        if(key.settlement==settlement)local+=count;
+    }
+    return local;
+}
 void PopulationCohorts::transfer(CohortKey from,CohortKey to,std::uint64_t n){
     validate(from);validate(to);
     if(n>count(from))throw std::invalid_argument("transfer exceeds source cohort");
