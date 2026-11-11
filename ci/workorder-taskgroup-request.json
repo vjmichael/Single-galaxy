@@ -2,6 +2,6 @@
   "schema": "SG-WORKORDER-GATE-01",
   "task_group": "WO5",
   "pr_number": 92,
-  "source_sha": "14c4619e62de25c7b034a4828a9cea6486db6d1e",
-  "note": "WO3 historical migration contract audit: 2026-11-05 source d2cf352 v86 upgrade preserves ColonyShip legal residences; original native saved journal at v85 is produced with authentic pinned v86-era kernel, test-only observation, Git source blob and native binary+SQLite SHA256 manifests. No fake v86 planet resident, no altered genesis or skipped journal. Modern real v109+ planetary settlement positive tests are separate. Run all 33 registered WO3-WO5 exact-head Windows/Linux CTests including authenticated vintage original native DB, authorized denial and independent recovery."
+  "source_sha": "4cedbe9a11ca7e74599246b8e17599a058c2f202",
+  "note": "WO3–WO5 source-attested native vintage SQLite gate rerun after fixing duplicate v85 test-anchor matching; historical source d2cf352 and production core are immutable, capture only at unique visitor-arrival proof. Exact-head 33 original native CTests on Ubuntu/Windows after real historical source-generated v85 SQLite and true v86 legal residence upgrade (no fictional pre-v109 planetary homes)."
 }
