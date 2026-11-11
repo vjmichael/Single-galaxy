@@ -61,7 +61,7 @@ jobs:
         if: env.WORK_GROUP == 'WO3' || env.WORK_GROUP == 'WO4' || env.WORK_GROUP == 'WO5' || env.WORK_GROUP == 'STAGE6'
         with:
           repository: vjmichael/Single-galaxy
-          ref: 19c58bca0b75a6899eb0a38cb79e0e0a77a37f3b
+          ref: 23bad9be38936d61b8c29b5be5f3900bec87fa6d
           path: historical-original-v86
           persist-credentials: false
       - name: Verify canonical industry and optional WO2 generated data
