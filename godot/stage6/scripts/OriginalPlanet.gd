@@ -231,7 +231,10 @@ func _show_verified_surface_inspection(data: Dictionary, tiles: Array) -> void:
     var lon_raw: Variant = data.get("landing_lon", null)
     if not receipt.is_valid_int() or not surface_id.is_valid_int() or not pilot_id.is_valid_int() or \
             int(receipt) <= 0 or int(surface_id) <= 0 or int(pilot_id) <= 0 or \
-            typeof(lat_raw) != TYPE_INT or typeof(lon_raw) != TYPE_INT:
+            (typeof(lat_raw) != TYPE_INT and typeof(lat_raw) != TYPE_FLOAT) or \
+            (typeof(lon_raw) != TYPE_INT and typeof(lon_raw) != TYPE_FLOAT) or \
+            not is_finite(float(lat_raw)) or not is_finite(float(lon_raw)) or \
+            float(lat_raw) != floor(float(lat_raw)) or float(lon_raw) != floor(float(lon_raw)):
         push_error("Incomplete original-world landed shuttle evidence")
         _clear_surface_inspection()
         return
