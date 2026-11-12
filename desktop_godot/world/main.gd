@@ -1148,6 +1148,10 @@ func _unhandled_input(event: InputEvent) -> void:
 		get_viewport().set_input_as_handled()
 		return
 	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_F6:
+		if native_planet_surface_session != null and native_planet_surface_session.is_active():
+			_on_native_player_status("F6 reset unavailable while original planetary writer owns the saved world")
+			get_viewport().set_input_as_handled()
+			return
 		_ask_world_reset()
 		get_viewport().set_input_as_handled()
 		return

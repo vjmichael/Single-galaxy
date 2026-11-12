@@ -2247,6 +2247,12 @@ endif()
 add_executable(galaxy_desktop_player_host src/desktop_player_host.cpp)
 target_link_libraries(galaxy_desktop_player_host PRIVATE galaxy_fp3d02c_interior)
 if(BUILD_TESTING AND Python3_Interpreter_FOUND)
+  add_test(NAME galaxy_stage6f5c_original_planet_host_refusal
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/STAGE6F5C_PlanetHostNoGenesisTests.py
+      $<TARGET_FILE:galaxy_desktop_player_host>)
+  set_tests_properties(galaxy_stage6f5c_original_planet_host_refusal PROPERTIES TIMEOUT 90)
+endif()
+if(BUILD_TESTING AND Python3_Interpreter_FOUND)
   add_test(NAME galaxy_fp3d02f_local_authorized_pipe
     COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/FP3D02F_DesktopCommandPipelineTests.py
       $<TARGET_FILE:galaxy_desktop_player_host>)
