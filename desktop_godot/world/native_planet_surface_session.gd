@@ -222,7 +222,7 @@ func _accept(line: String) -> void:
             _pending=0
     _tick=tick
     _generation=gen
-    _last_pose={"ship":ship,"body":body,"lat":lat,"lon":lon,"site":site,
+    _last_pose={"session":sess,"ship":ship,"body":body,"lat":lat,"lon":lon,"site":site,
         "x_mm":x,"y_mm":y,"z_mm":z,"latitude_pdeg":lat_pdeg,
         "longitude_pdeg":lon_pdeg,"last_move_tick":move_tick,
         "receipt":receipt,"tick":tick,"gen":gen,
