@@ -43,19 +43,82 @@ No native C++ build, CTest, CI, installed Godot or physical Windows Radeon
 operator acceptance was executed at this source head. Compiler and runtime
 acceptance remain OPEN.
 
-## Remaining engineering
+## S6-D5 — Original finite source extraction (v129)
 
-1. S6-D5 actual authorized extraction remains LOCKED. Debit finite region
-   source and the matching physical phase once, credit exactly one existing
-   colony-local inventory and verify original owner, NPC skill, equipment,
-   energy, legal site access, cancellation, journal and replay receipts.
-   A scan cannot grant extraction rights. Never duplicate OasisReserve water.
-2. Across-region surface runoff, ocean exchange, groundwater connectivity and
-   sediment transport require real debit/credit between physical region keys.
-   Current source conservation and processes are local.
-3. S6-E: attach hazard consequences and actual water/energy requirements to
-   original machinery, farms, industry and named-worker schedules.
-4. S6-G: complete native Windows/Linux compile/CTest, old SQLite upgrades,
-   full recovery/load matrix, installed Godot UI and physical Radeon acceptance.
+Status: SOURCE IMPLEMENTED provisionally in the existing Simulation and
+PersistentWorld; native compile, real positive extraction and installed
+acceptance still OPEN. Existing OasisReserve extraction is unchanged.
 
-S6-D1–D4 source present; D5 and cross-region/industry integration OPEN.
+- The immutable S6-C registered source remains the *only* geological input.
+  An authorized source operation moves original physical kilograms into the
+  actual preexisting PlanetarySiteFacility at the *same exact body+region*.
+  No long-range teleport to a ship, global inventory or second material ledger.
+- Water transfers actual liquid surface or groundwater phase kg into the
+  site.water_kg inventory. Ice and atmospheric moisture cannot be collected as
+  liquid without another separately conserved phase process.
+- Stable topsoil transfers into the site.local regional_geology_kg[0], and
+  mineral/volatile deposits into [1]/[2] at the original constructed site.
+  Source stock_kg is irreversibly debited by precisely the credited amount.
+  Physical phase balances are debited in tandem for water/soil.
+- Admission requires authenticated owner, correct original ship and anchored
+  body, matching previously owner-discovered original geography, a real
+  commissioned on-site extractor (not automatically built from a survey),
+  production project completed, powered surface utility, installed working
+  equipment, no unsafe flood/cold/heat, paused autonomous policy, one original
+  Shape-certified healthy physically deployed NPC, bounded whole-tonne amount
+  and sufficient actual source stock. Groundwater requires double electricity.
+- One unique request ID yields one canonical immutable planetrelease receipt:
+  worker, owner, ship, source body/region/revision, exact resource and phase,
+  kg, electricity debited and committed tick. Replays, stale/cross-owner
+  requests and insufficient inventories are refused before mutation.
+- V129 canonical restore validates ORIGINAL funded kg as:
+  body.original_kg = body.unallocated_kg + sum(region remaining stock_kg)
+                      + sum(immutable extraction receipts kg).
+  It verifies each physical water/soil phase subaccount against remaining
+  geological stock. The original-world material origin still counts site
+  inventory once, and original region source once; receipts never add mass.
+  Empty depleted source rows are real zero inventories, not regenerated ore.
+- All authorized transfers are candidate-and-commit through the SAME existing
+  PersistentWorld SQLite transaction and generation CAS, including injected
+  failpoint rollback. No separate local DB, synthetic NPC, or resource writer.
+  Pre-commit refusal/cancellation has no effects; an accepted receipt is
+  irreversible rather than refunding mass upon replay.
+- Native PLANET_GEO_EXTRACT and authenticated relay action
+  colonyPlanetGeoExtract are separate from PLANET_EXTRACT (legacy OasisReserve).
+  Owner survey records remain mandatory. The web UI exposes selected source,
+  water phase, amount and qualified worker. PLANET_SOURCE_TRANSFER is strictly
+  parsed and displayed. Original shuttle water transfer remains available;
+  the new on-site soil/mineral/volatile inventory is not automatically cargo
+  aboard a spacecraft.
+
+## Source-staged D5 regression
+
+- Stage06AuthorizedSourceTests.cpp and the CMake target
+  galaxy_stage06_authorized_source: canonical v129 migration, original finite
+  source initialization, denied cross-owner / ice / missing machinery / NPC /
+  non-whole-tonne extraction, unchanged snapshot and material origin on denial,
+  forged release refusal, old v128 SQLite rollback injection, idempotent upgrade
+  and restart.
+- PLAY13D_PlanetSurveyNodeTests.js: strict original-source transfer receipt
+  decoding, invalid phase and malformed transfer refusal, complete depletion
+  readback and host/relay/UI route structure.
+
+**Not run:** native compiler, CTest/Node, genuine positive equipped-site
+extraction with a qualified NPC, Windows/Linux host end-to-end, installed
+Godot owner-operated workflow and historical multi-world stress. Source
+staging alone is not passing acceptance.
+
+## Remaining downstream Stage 6 work
+
+1. Cross-region watershed runoff, groundwater connectivity, ocean exchange
+   and sediment movement require independent physical region-to-region debit
+   and credit under the same original world transaction.
+2. S6-E: ecology, actual crops, sustained environmental costs, worker duty
+   and broader facility/industry coupling. Non-water collected geology must
+   be moved through later actual shuttle/freight goods support, not by
+   teleporting site-local source inventories into a ship.
+3. S6-G: consolidated exact-head Windows/Linux kernel, native-host, CTest,
+   SQLite recovery/corruption, long-running performance, Godot installed,
+   owner physical Radeon and human acceptance. All OPEN.
+
+S6-D1–D5 SOURCE STAGED; native/installed acceptance OPEN. No merge/release.
