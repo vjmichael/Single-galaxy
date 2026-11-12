@@ -149,8 +149,8 @@ int run(const std::string& save_utf8) {
         for(std::size_t i=0;i<options.size();++i) {
             const auto& o=options[i];
             const auto phase=world.world().planetary_shuttles().at(o.key).flight_phase;
-            std::cout<<"TSITE|1|"<<session<<'|'<<i<<'|'<<o.std::get<0>(key)<<'|'
-                <<o.std::get<1>(key)<<'|'<<o.std::get<2>(key)<<'|'<<o.surface<<'|'
+            std::cout<<"TSITE|1|"<<session<<'|'<<i<<'|'<<std::get<0>(o.key)<<'|'
+                <<std::get<1>(o.key)<<'|'<<std::get<2>(o.key)<<'|'<<o.surface<<'|'
                 <<unsigned(phase)<<'\n';
         }
         std::cout<<std::flush;
@@ -220,9 +220,10 @@ int run(const std::string& save_utf8) {
                     accepted=live.size()==options.size();
                     if(accepted) {
                         for(std::size_t i=0;i<options.size();++i) {
-                            if(live[i].std::get<0>(key)!=options[i].std::get<0>(key) ||
-                               live[i].std::get<1>(key)!=options[i].std::get<1>(key) ||
-                               live[i].std::get<2>(key)!=options[i].std::get<2>(key) ||
+                            if(std::get<0>(live[i].key)!=std::get<0>(options[i].key) ||
+                               std::get<1>(live[i].key)!=std::get<1>(options[i].key) ||
+                               std::get<2>(live[i].key)!=std::get<2>(options[i].key) ||
+                               std::get<3>(live[i].key)!=std::get<3>(options[i].key) ||
                                live[i].surface!=options[i].surface) {
                                 accepted=false;break;
                             }
