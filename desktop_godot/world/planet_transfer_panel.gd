@@ -75,8 +75,8 @@ func present(frame: Dictionary, options: Array[Dictionary], pending: bool=false)
         _refreshing=true
         _sites.clear()
         for o in options:
-            _sites.add_item("Body %d / latitude %d / longitude %d / original site %d" % [
-                int(o["body"]),int(o["lat"]),int(o["lon"]),int(o["site"])])
+            _sites.add_item("Body %s / latitude %d / longitude %d / original site %d" % [
+                str(o["body"]),int(o["lat"]),int(o["lon"]),int(o["site"])])
         _refreshing=false
         _last_site_key=key
     _refreshing=true
@@ -87,9 +87,9 @@ func present(frame: Dictionary, options: Array[Dictionary], pending: bool=false)
     var person_location := "ORIGINAL SHIP" if state==0 else (
         "IN NATIVE SHUTTLE" if state==5 else "IN NATIVE TRANSIT")
     var shuttle_phase := ["ORBIT","DESCENDING","LANDED","ASCENDING"][phase]
-    _status.text="%s | shuttle %s\nWorld tick %d | SQLite generation %d\nOriginal body %d, site %d\nEvery action requires an independent committed native receipt." % [
+    _status.text="%s | shuttle %s\nWorld tick %d | SQLite generation %d\nOriginal body %s, site %d\nEvery action requires an independent committed native receipt." % [
         person_location,shuttle_phase,int(frame["tick"]),int(frame["gen"]),
-        int(frame["body"]),int(frame["site"])]
+        str(frame["body"]),int(frame["site"])]
     for action in _actions.keys():
         _actions[action].disabled=true
     if not pending:
