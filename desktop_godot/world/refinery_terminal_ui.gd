@@ -578,10 +578,10 @@ func _update_industrial_next_step() -> void:
 			next="Train an eligible actual local cut-trade worker three times, then appoint a certified panel supervisor."
 		elif not cut_job.is_empty() and int(cut_job.get("worker",0))==0:
 			next="Schedule a native 16-tick panel-operator shift, or assign an eligible original resident; supervisor and operator must be distinct."
+		elif stocked_kg<20 and found_aluminum<20 and waiting_aluminum<20:
+			next="No physical workshop feed exists here; mine original geological silicates in space and separate their plagioclase in your colony ship."
 		elif stocked_kg<20:
 			next="Replenish 20 kg original aluminum via ship → warehouse → workshop. Training has consumed real feed."
-		elif found_aluminum<20 and waiting_aluminum<20 and stocked_kg<20:
-			next="No physical workshop feed exists here; obtain original geological plagioclase in space and separate it in your colony ship."
 		else:
 			next="Approve one original 20 kg aluminum → 19 kg panels batch, then run bounded native ticks and verify source output. If approval is disabled, inspect native shift, power and supervisor gates."
 	_industrial_next_step.text="DOCK-09 | NEXT ORIGINAL STEP: "+next
