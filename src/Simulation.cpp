@@ -18538,6 +18538,40 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
             }
         }
     }
+    // S6-D7/v136: every kilogram in the original site, shuttle or source
+    // ship must have a real immutable geological extraction receipt.
+    if(result.snapshot_version_>=136) {
+        std::array<std::int64_t,3> extracted{},held{};
+        for(const auto& [id,receipt]:result.planetary_source_transfers_) {
+            (void)id;
+            const auto index=unsigned(receipt.resource);
+            if(index>=1 && index<=3) {
+                if(extracted[index-1]>1000000000-receipt.kilograms)
+                    throw std::runtime_error("snapshot: geological extraction receipt overflow");
+                extracted[index-1]+=receipt.kilograms;
+            }
+        }
+        for(const auto& [key,site]:result.planetary_sites_) {
+            (void)key;
+            for(std::size_t i=0;i<3;++i)held[i]+=site.regional_geology_kg[i];
+        }
+        for(const auto& [key,shuttle]:result.planetary_shuttles_) {
+            (void)key;
+            for(std::size_t i=0;i<3;++i)held[i]+=shuttle.regional_geology_kg[i];
+        }
+        static const char* goods[]={"planetary_soil","planetary_mineral",
+                                    "planetary_volatile"};
+        for(const auto& [ship,stock]:result.colony_ships_) {
+            (void)ship;
+            for(std::size_t i=0;i<3;++i) {
+                const auto it=stock.goods_kg.find(goods[i]);
+                if(it!=stock.goods_kg.end())held[i]+=it->second;
+            }
+        }
+        for(std::size_t i=0;i<3;++i)
+            if(held[i]!=extracted[i])
+                throw std::runtime_error("snapshot: unbacked or missing original geological freight mass");
+    }
     if(result.snapshot_version_>=130 &&
        parsed_ecological_sites.size()!=result.planetary_sites_.size())
         throw std::runtime_error("snapshot: missing ecological site state");
