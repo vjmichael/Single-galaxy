@@ -5,6 +5,7 @@ const SGDX_LAUNCH := preload("res://world/sgdx_process_launch.gd")
 signal person_received(person: Dictionary)
 signal refinery_received(snapshot: Dictionary)
 signal industry_received(snapshot: Dictionary)
+signal industry_management_received(snapshot: Dictionary)
 signal colony_population_received(snapshot: Dictionary)
 signal dock_received(snapshot: Dictionary)
 signal dock_pedestrians_received(frame: Dictionary)
@@ -53,6 +54,13 @@ var _refinery_lots: Array[Dictionary] = []
 var _refinery_minerals := {}
 var _pending_industry_kind := ""
 var _industry_auto_refresh_pending := false
+var _management_auto_refresh_pending := false
+var _pending_management_kind := ""
+var _pending_management_selector := 0
+var _management_receiving := false
+var _management_header := {}
+var _management_workers: Array[Dictionary] = []
+var _management_options := {}
 var _industry_receiving := false
 var _industry_head := {}
 var _industry_stocks: Array[Dictionary] = []
@@ -159,6 +167,13 @@ func start() -> void:
 	_queued_hangar_intent = false
 	_queued_hangar_ready_msec = 0
 	_pending_refinery_kind = ""
+	_pending_management_kind = ""
+	_pending_management_selector = 0
+	_management_receiving = false
+	_management_header.clear()
+	_management_workers.clear()
+	_management_options.clear()
+	_management_auto_refresh_pending = false
 	_pending_population = false
 	_pending_dock_kind = ""
 	_dock_initial_read_done = false
@@ -207,6 +222,7 @@ func poll() -> void:
 		return
 	_dispatch_queued_hangar_if_ready()
 	_refresh_industry_if_idle()
+	_refresh_industry_management_if_idle()
 	_automatic_dock_service()
 	_read_real_dock_pedestrians()
 
@@ -215,6 +231,9 @@ func _integer(value: String) -> bool:
 
 func _accept_line(line: String) -> void:
 	var f := line.split("|", false)
+	if f.size() > 0 and f[0] in ["IMHEAD","IMWORK","IMOPT","IMEND"]:
+		_accept_industry_management_line(f)
+		return
 	if f.size() > 0 and f[0] in ["IHEAD", "ISTOCK", "IJOB", "IEND"]:
 		_accept_industry_line(f)
 		return
@@ -249,6 +268,12 @@ func _accept_line(line: String) -> void:
 				_queued_hangar_ready_msec = 0
 				_status("Native WALK rejected; press E again after reaching the hatch")
 			_pending_refinery_kind = ""
+			_pending_management_kind = ""
+			_pending_management_selector = 0
+			_management_receiving = false
+			_management_header.clear()
+			_management_workers.clear()
+			_management_options.clear()
 			_pending_industry_kind = ""
 			_industry_receiving = false
 			_industry_head.clear()
@@ -769,6 +794,159 @@ func _accept_refinery_line(f: PackedStringArray) -> void:
 		return
 	stop("Unknown refinery source frame")
 
+func _accept_industry_management_line(f: PackedStringArray) -> void:
+	var kind := f[0]
+	if kind=="IMHEAD":
+		if f.size()!=25 or f[1]!="1" or _management_receiving or \
+				_pending<=0 or _pending_management_kind.is_empty():
+			stop("Unrequested native industrial management header")
+			return
+		for index in range(2,25):
+			if not _integer(f[index]) or int(f[index])<0:
+				stop("Invalid native facility and workforce header")
+				return
+		var station := int(f[6])
+		var result := int(f[23])
+		var chosen := int(f[24])
+		if int(f[2])!=_session or int(f[3])!=_pending or \
+				int(f[4])<_tick or int(f[5])<_generation or \
+				int(_person.get("state",-1))!=4 or \
+				station!=int(_person.get("station",0)) or \
+				(_pending_management_kind=="VIEW" and (result!=0 or chosen!=0)) or \
+				(_pending_management_kind=="APPLY" and (result not in [1,2] or \
+				chosen!=_pending_management_selector)) or \
+				int(f[8]) not in [0,1] or int(f[9]) not in [0,1] or \
+				int(f[10]) not in [0,1] or int(f[11]) not in [0,1] or \
+				int(f[12]) not in [0,1] or int(f[13]) not in [0,1] or \
+				int(f[14]) not in [0,1] or int(f[19]) not in [0,1] or \
+				int(f[22]) not in [0,1,2]:
+			stop("Native facility result or physical colony identity mismatch")
+			return
+		_management_header = {
+			"station":station,"tick":int(f[4]),"generation":int(f[5]),
+			"source_ship":int(f[7]),"docked":int(f[8])==1,
+			"workshop":int(f[9])==1,"storage":int(f[10])==1,
+			"utility":int(f[11])==1,"habitat":int(f[12])==1,
+			"finisher":int(f[13])==1,"refinery":int(f[14])==1,
+			"modules":int(f[15]),"residents":int(f[16]),
+			"technicians":int(f[17]),"energy":int(f[18]),
+			"powered":int(f[19])==1,"spares":int(f[20]),
+			"supervisor":int(f[21]),"supervisor_trade":int(f[22]),
+			"result":result,"chosen":chosen}
+		_management_workers.clear()
+		_management_options.clear()
+		_management_receiving=true
+		return
+	if not _management_receiving or f.size()<4 or f[1]!="1" or \
+			not _integer(f[2]) or not _integer(f[3]) or \
+			int(f[2])!=_session or int(f[3])!=_pending:
+		stop("Unsolicited original management source frame")
+		return
+	if kind=="IMWORK":
+		if f.size()!=11 or not _management_header["workshop"] or \
+				_management_workers.size()>=2:
+			stop("Unverified original workshop staff row")
+			return
+		for i in range(4,11):
+			if not _integer(f[i]) or int(f[i])<0:
+				stop("Invalid original named staff identity")
+				return
+		var trade := int(f[4])
+		if trade not in [1,2] or int(f[5])>7 or int(f[6])>9:
+			stop("Invalid original workshop labor gate")
+			return
+		for row in _management_workers:
+			if row["trade"]==trade:
+				stop("Duplicate original workshop trade row")
+				return
+		_management_workers.append({"trade":trade,
+			"gate":int(f[5]),"state":int(f[6]),
+			"worker":int(f[7]),"suggested":int(f[8]),
+			"training_units":int(f[9]),"shift_end":int(f[10])})
+		return
+	if kind=="IMOPT":
+		if f.size()!=6 or _management_options.size()>=28 or \
+				not _integer(f[4]) or not _integer(f[5]):
+			stop("Invalid original industrial option")
+			return
+		var selector := int(f[4])
+		if selector<1 or selector>28 or int(f[5]) not in [0,1] or \
+				_management_options.has(selector):
+			stop("Duplicate or invented industrial work operation")
+			return
+		_management_options[selector]=int(f[5])==1
+		return
+	if kind=="IMEND":
+		if f.size()!=10:
+			stop("Invalid native workforce closeout")
+			return
+		for i in range(4,10):
+			if not _integer(f[i]) or int(f[i])<0:
+				stop("Invalid original workforce receipt")
+				return
+		if int(f[4])!=int(_management_header["tick"]) or \
+				int(f[5])!=int(_management_header["generation"]) or \
+				int(f[6])!=_management_workers.size() or int(f[7])!=28 or \
+				_management_workers.size()!=(2 if _management_header["workshop"] else 0) or \
+				_management_options.size()!=28 or \
+				int(f[8])!=int(_management_header["result"]) or \
+				int(f[9])!=int(_management_header["chosen"]):
+			stop("Original workforce and facility snapshot receipt mismatch")
+			return
+		_tick=int(f[4])
+		_generation=int(f[5])
+		_pending=0
+		_pending_management_kind=""
+		_pending_management_selector=0
+		_management_receiving=false
+		var snapshot := _management_header.duplicate(true)
+		snapshot["workers"]=_management_workers.duplicate(true)
+		snapshot["options"]=_management_options.duplicate(true)
+		_management_header.clear()
+		_management_workers.clear()
+		_management_options.clear()
+		if int(snapshot["result"])!=0:
+			_industry_auto_refresh_pending=true
+		industry_management_received.emit(snapshot)
+		_status("Native colony facility/workforce operation committed" if int(snapshot["result"])==1 else
+			"Original world refused a proposed industrial work operation" if int(snapshot["result"])==2 else
+			"Local industrial facilities and workforce inspected")
+		return
+	stop("Unknown original industrial management frame")
+
+func _refresh_industry_management_if_idle() -> void:
+	if not _management_auto_refresh_pending or not _active or _pending!=0 or \
+			int(_person.get("state",-1))!=4 or \
+			Time.get_ticks_msec()-_last_send<NATIVE_HANGAR_COMMAND_GAP_MS:
+		return
+	if request_colony_management():
+		_management_auto_refresh_pending=false
+
+func _submit_colony_management(kind: String, selector: int) -> bool:
+	if not _active or _session<=0 or _pending!=0 or \
+			int(_person.get("state",-1))!=4 or \
+			int(_person.get("station",0))<=0 or \
+			Time.get_ticks_msec()-_last_send<NATIVE_HANGAR_COMMAND_GAP_MS:
+		_status("Facility/workforce management requires idle local original station")
+		return false
+	var opcode := "IMVIEW" if kind=="VIEW" else "IMAPPLY" if kind=="APPLY" else ""
+	if opcode.is_empty() or (kind=="APPLY" and (selector<1 or selector>28)):
+		return false
+	var request := _next_request
+	_next_request+=1
+	_pending=request
+	_pending_management_kind=kind
+	_pending_management_selector=selector if kind=="APPLY" else 0
+	_last_send=Time.get_ticks_msec()
+	_send("%s|%d|%d|%d|%d" % [opcode,_session,request,_generation,selector])
+	return true
+
+func request_colony_management() -> bool:
+	return _submit_colony_management("VIEW",int(_person.get("station",0)))
+
+func apply_colony_management(selector: int) -> bool:
+	return _submit_colony_management("APPLY",selector)
+
 func _industrial_item_code(code: String) -> bool:
 	if code.is_empty() or code.length()>60:
 		return false
@@ -958,6 +1136,7 @@ func request_colony_inventory() -> void:
 	_pending = request
 	_pending_refinery_kind = "VIEW"
 	_industry_auto_refresh_pending = true
+	_management_auto_refresh_pending = true
 	_last_send = Time.get_ticks_msec()
 	_send("COLVIEW|%d|%d|%d|%d" % [
 		_session,request,_generation,int(_person["station"])])
@@ -1151,6 +1330,13 @@ func stop(message: String = "Station session closed", graceful: bool = false) ->
 	_queued_hangar_ready_msec = 0
 	_pending_refinery_kind = ""
 	_pending_industry_kind = ""
+	_pending_management_kind = ""
+	_pending_management_selector = 0
+	_management_receiving = false
+	_management_header.clear()
+	_management_workers.clear()
+	_management_options.clear()
+	_management_auto_refresh_pending = false
 	_industry_auto_refresh_pending = false
 	_industry_receiving = false
 	_industry_head.clear()
