@@ -9,9 +9,11 @@ namespace fs=std::filesystem;
 using namespace galaxy;
 #define CHECK(x) do{if(!(x))throw std::runtime_error("DOCK07 line "+std::to_string(__LINE__)+": " #x);}while(0)
 static Event applied(PersistentWorld& w,std::uint64_t& seq,EntityId actor,
-                     Action action,EntityId target=0,std::int64_t quantity=1){
+                     Action action,EntityId target=0,std::int64_t quantity=1,
+                     int item=0,int direction=0){
     Command c{};c.id=++seq;c.sequence=c.id;c.execute_tick=w.world().tick()+1;
     c.issuer=7;c.actor=actor;c.action=action;c.target=target;c.amount=quantity;
+    c.thrust_x=item;c.thrust_y=direction;
     CHECK(w.submit(c));
     w.step();
     const auto event=w.world().events().back();
@@ -37,6 +39,8 @@ int main(int argc,char** argv){
             other=s.add_station({75000,0});
             s.provision_colony_genesis(ship,1000,3000,1000,1000,1000);
             const auto raw=s.add_asteroid({2000,0},150);
+            const auto silicate=s.add_geological_asteroid(
+                {1000,0},AsteroidClass::Silicate,30,2500);
             s.enable_individual_workforce();
             PersistentWorld w(file,std::move(s));
             applied(w,seq,ship,Action::Mine,raw,80);
@@ -47,6 +51,12 @@ int main(int argc,char** argv){
             CHECK(local!=other);
             applied(w,seq,ship,Action::ConstructWorkshop,local);
             applied(w,seq,ship,Action::ConstructStorage,local);
+            // Real original geology and processing create the finite
+            // aluminum feed; the native station panel never supplies it.
+            applied(w,seq,ship,Action::Mine,silicate,45);
+            applied(w,seq,ship,Action::RefineMineral,10,18000);
+            CHECK(w.world().ship_inventory_snapshot(ship)
+                .amount("good/aluminum")>=20);
             applied(w,seq,ship,Action::RequestDock,local);
             w.steps(Simulation::kDockTransitionTicks);
             CHECK(w.world().find(ship)->dock_state==DockState::Docked);
@@ -58,6 +68,21 @@ int main(int argc,char** argv){
             CHECK(!colony_industry::local_source_ship(w.world(),local,8));
             CHECK(colony_industry::native_workshop_at(w.world(),local,7));
             CHECK(colony_industry::native_storage_at(w.world(),local,7));
+            const auto physical_mass=w.world().total_material_kg();
+            const auto ship_before=w.world().ship_inventory_snapshot(ship)
+                .amount("good/aluminum");
+            // No Godot stock edit: source original ship -> constructed
+            // warehouse -> original workshop, 20 kg each with exact receipts.
+            applied(w,seq,ship,Action::TransferStorageStack,local,20,0,0);
+            CHECK(w.world().storage_inventory_snapshot(local)
+                .amount("good/aluminum")==20);
+            CHECK(w.world().ship_inventory_snapshot(ship)
+                .amount("good/aluminum")==ship_before-20);
+            applied(w,seq,ship,Action::TransferStorageStack,local,20,0,3);
+            CHECK(w.world().storage_inventory_snapshot(local)
+                .amount("good/aluminum")==0);
+            CHECK(w.world().workshop(local)->aluminum_kg==20);
+            CHECK(w.world().total_material_kg()==physical_mass);
             CHECK(!colony_industry::native_storage_at(w.world(),other,7));
             const auto before=w.world().state_hash();
             const auto before_mass=w.world().total_material_kg();
@@ -66,6 +91,8 @@ int main(int argc,char** argv){
             CHECK(saved.find("IJOB|1|11|1|1|0|")!=std::string::npos);
             CHECK(saved.find("IJOB|1|11|1|2|0|")!=std::string::npos);
             CHECK(saved.find("IEND|1|11|1|")!=std::string::npos);
+            CHECK(saved.find("|H|0|good/aluminum|")!=std::string::npos);
+            CHECK(saved.find("|W|0|good/aluminum|20")!=std::string::npos);
             CHECK(saved.find("|"+std::to_string(local)+"|1|")!=std::string::npos);
             CHECK(w.world().state_hash()==before);
             CHECK(w.world().total_material_kg()==before_mass);
