@@ -12,7 +12,6 @@ import json
 import os
 from pathlib import Path
 import re
-import shutil
 import subprocess
 import sys
 import time
@@ -188,7 +187,7 @@ def main():
             continue
         regex="^("+ "|".join(re.escape(x) for x in available)+")$"
         result=run(["ctest","--test-dir",str(build),"-C",args.config,
-                    "--output-on-failure","--no-tests=error","-R",regex],2400)
+                    "--output-on-failure","-R",regex],2400)
         report["phases"][group]=result
         if result["exit_code"]!=0:
             failed.append(group)
