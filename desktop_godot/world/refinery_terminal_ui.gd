@@ -63,6 +63,7 @@ var _management_workers: Label
 var _management_action: OptionButton
 var _management_apply: Button
 var _management_snapshot := {}
+var _industrial_next_step: Label
 
 func _ready() -> void:
 	name = "ColonyInventoryAndOperations"
@@ -79,6 +80,10 @@ func _ready() -> void:
 	heading.text = "COLONY INVENTORY & DOCK OPERATIONS"
 	heading.add_theme_font_size_override("font_size", 18)
 	column.add_child(heading)
+	_industrial_next_step=Label.new()
+	_industrial_next_step.text="DOCK-09 | Build and reach an original outpost to begin industrial production"
+	_industrial_next_step.autowrap_mode=TextServer.AUTOWRAP_WORD_SMART
+	column.add_child(_industrial_next_step)
 	_status = Label.new()
 	_status.text = "No native refinery information"
 	_status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -456,6 +461,8 @@ func show_waiting() -> void:
 	_current.clear()
 	_industry_state.clear()
 	_management_snapshot.clear()
+	if is_instance_valid(_industrial_next_step):
+		_industrial_next_step.text="DOCK-09 | Inspecting original source colony and physical factory..."
 	if is_instance_valid(_management_status):
 		_management_status.text="Inspecting original local factory facilities and named workers..."
 	if is_instance_valid(_management_workers):
@@ -518,6 +525,67 @@ func _on_industry_transfer_pressed(selector: int) -> void:
 	button.disabled = true
 	industry_transfer_requested.emit(selector)
 
+func _update_industrial_next_step() -> void:
+	if not is_instance_valid(_industrial_next_step):
+		return
+	var ind: Dictionary = _industry_state
+	var mgmt: Dictionary = _management_snapshot
+	if ind.is_empty():
+		_industrial_next_step.text="DOCK-09 | Inspecting real colony and existing source stocks..."
+		return
+	var next := ""
+	if not bool(ind.get("constructed",false)):
+		next="This is a starter station, not a built factory. Board the real colony ship, mine finite ore, refine it and form at least four modules. In space, stop clear of the starter dock, build your outpost, dock there and reopen I."
+	elif mgmt.is_empty() or int(mgmt.get("station",-1))!=int(ind.get("station",-2)):
+		next="Built outpost found. Inspect original local facilities and staff before authorizing any work."
+	elif not bool(mgmt.get("workshop",false)):
+		next="Select 'Build workshop' in the facility menu; it consumes an original construction module."
+	elif not bool(mgmt.get("storage",false)):
+		next="Construct the local warehouse so ship goods can physically reach the workshop."
+	elif not bool(mgmt.get("utility",false)):
+		next="Construct local utility service from two original modules; the workshop cannot run without native power."
+	elif not bool(mgmt.get("habitat",false)):
+		next="Construct habitat from two original modules; factory labor must be housed locally."
+	elif int(mgmt.get("residents",0))<=0:
+		next="Transfer actual food, water and oxygen to the habitat, then assign an existing ship resident; a factory does not spawn workers."
+	else:
+		var found_aluminum := 0
+		var waiting_aluminum := 0
+		var panels_kg := 0
+		var stocked_kg := 0
+		for row in ind.get("stocks",[]):
+			if row.get("kind","")=="H" and row.get("code","")=="good/aluminum":
+				found_aluminum=int(row.get("kg",0))
+			elif row.get("kind","")=="S" and int(row.get("bin",0))==0 and row.get("code","")=="good/aluminum":
+				waiting_aluminum=int(row.get("kg",0))
+			elif row.get("kind","")=="W" and row.get("code","")=="good/aluminum":
+				stocked_kg=int(row.get("kg",0))
+			elif row.get("kind","")=="W" and row.get("code","")=="good/aluminum_panels":
+				panels_kg=int(row.get("kg",0))
+		var cut_job := {}
+		for job in ind.get("jobs",[]):
+			if int(job.get("trade",0))==1:
+				cut_job=job
+		if panels_kg>=19 and not cut_job.is_empty() and \
+				int(cut_job.get("completed",0))>=1:
+			next="A real panel batch is complete. Physically transfer 19 kg panels to the local warehouse and verify its stock row."
+		elif not cut_job.is_empty() and bool(cut_job.get("approved",false)) and \
+				int(cut_job.get("completed",0))<int(cut_job.get("target",0)):
+			next="One original panel batch is approved. Run the bounded 16 native ticks; a result without physical output is explicitly marked stalled."
+		elif int(mgmt.get("supervisor",0))==0 and stocked_kg<3:
+			next="Load aluminum into the workshop from the docked ship via warehouse; local cut-trade training consumes real aluminum."
+		elif int(mgmt.get("supervisor",0))==0:
+			next="Train an eligible actual local cut-trade worker three times, then appoint a certified panel supervisor."
+		elif not cut_job.is_empty() and int(cut_job.get("worker",0))==0:
+			next="Schedule a native 16-tick panel-operator shift, or assign an eligible original resident; supervisor and operator must be distinct."
+		elif stocked_kg<20:
+			next="Replenish 20 kg original aluminum via ship → warehouse → workshop. Training has consumed real feed."
+		elif found_aluminum<20 and waiting_aluminum<20 and stocked_kg<20:
+			next="No physical workshop feed exists here; obtain original geological plagioclase in space and separate it in your colony ship."
+		else:
+			next="Approve one original 20 kg aluminum → 19 kg panels batch, then run bounded native ticks and verify source output. If approval is disabled, inspect native shift, power and supervisor gates."
+	_industrial_next_step.text="DOCK-09 | NEXT ORIGINAL STEP: "+next
+
 func _update_management_apply() -> void:
 	if not is_instance_valid(_management_apply) or \
 			not is_instance_valid(_management_action):
@@ -548,6 +616,7 @@ func set_industry_management(snapshot: Dictionary) -> void:
 	if not is_instance_valid(_management_status):
 		return
 	_management_snapshot=snapshot.duplicate(true)
+	_update_industrial_next_step()
 	var msg := "Colony #%d | founding hull #%d %s\n" % [
 		int(snapshot.get("station",0)),int(snapshot.get("source_ship",0)),
 		"docked here" if bool(snapshot.get("docked",false)) else "not docked here"]
@@ -607,6 +676,7 @@ func set_industry(snapshot: Dictionary) -> void:
 	if not is_instance_valid(_industry_status):
 		return
 	_industry_state = snapshot.duplicate(true)
+	_update_industrial_next_step()
 	var constructed := bool(snapshot.get("constructed",false))
 	var plant := bool(snapshot.get("refinery",false))
 	var workshop := bool(snapshot.get("workshop",false))
