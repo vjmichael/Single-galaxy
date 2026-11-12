@@ -1389,6 +1389,13 @@ if(BUILD_TESTING)
   target_link_libraries(galaxy_stage6_native_surface_movement_tests PRIVATE galaxy_kernel)
   add_test(NAME galaxy_stage6_native_surface_movement
     COMMAND galaxy_stage6_native_surface_movement_tests)
+  # S6-F5-B: header-only deterministic fixed-point source-triangle
+  # geometry; no original SQLite host needed for mathematical seam fixtures.
+  add_executable(galaxy_stage6f5b_continuous_surface_math_tests
+    tests/STAGE6F5B_ContinuousSurfaceMathTests.cpp)
+  target_link_libraries(galaxy_stage6f5b_continuous_surface_math_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_stage6f5b_continuous_surface_math
+    COMMAND galaxy_stage6f5b_continuous_surface_math_tests)
   find_program(SG_STAGE6F5_NODE NAMES node node.exe)
   if(SG_STAGE6F5_NODE)
     add_test(NAME galaxy_stage6f5_surface_packet_contract
