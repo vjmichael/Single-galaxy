@@ -1396,6 +1396,14 @@ if(BUILD_TESTING)
   target_link_libraries(galaxy_stage6f5b_continuous_surface_math_tests PRIVATE galaxy_kernel)
   add_test(NAME galaxy_stage6f5b_continuous_surface_math
     COMMAND galaxy_stage6f5b_continuous_surface_math_tests)
+  # S6-F5-C v135: source atmosphere/pressure and sealed equipment
+  # decisions. The full original-player/SQLite integration is exercised in
+  # galaxy_stage6_native_surface_movement, including failed writes and replay.
+  add_executable(galaxy_stage6f5c_atmosphere_source_tests
+    tests/STAGE6F5C_AtmosphereSourceTests.cpp)
+  target_link_libraries(galaxy_stage6f5c_atmosphere_source_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_stage6f5c_atmosphere_source
+    COMMAND galaxy_stage6f5c_atmosphere_source_tests)
   # S6-F5-C v134: immutable source mass and original SQLite player
   # survival/jump/oxygen receipt/restart integration.
   add_executable(galaxy_stage6f5c_body_gravity_tests

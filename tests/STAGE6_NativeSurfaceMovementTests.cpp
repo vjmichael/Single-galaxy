@@ -2,6 +2,8 @@
 #include "galaxy/PlanetarySurfaceMovement.hpp"
 #include "galaxy/PlanetaryBodyGravity.hpp"
 #include "galaxy/PlanetaryVerticalPhysics.hpp"
+#include "galaxy/PlanetaryAtmosphere.hpp"
+#include "galaxy/Stage6WalkingPatch.hpp"
 #include <algorithm>
 #include <chrono>
 #include <filesystem>
@@ -275,6 +277,78 @@ try {
     try{(void)Simulation::from_snapshot(tampered_mass);}
     catch(const std::exception&){mass_tamper_refused=true;}
     CHECK(mass_tamper_refused);
+    // Same exact original world, verified landed PERSON and source survey.
+    // Installed render mesh must be source-backed, bounded and non-authority.
+    const auto walkpatch=stage6::original_walking_patch(world,7,ship,key);
+    CHECK(walkpatch);
+    CHECK(walkpatch->find("SG-STAGE6-WALKPATCH-01")!=std::string::npos);
+    CHECK(walkpatch->find(R"("width":17)")!=std::string::npos);
+    CHECK(!stage6::original_walking_patch(world,8,ship,key));
+
+    // Never assume an existing v134 player has atmospheric oxygen simply
+    // from a biosphere or life-support tank. The original v135 migration
+    // must be source-verified, journaled and recoverable after failpoints.
+    const auto v135_file=(dir/"v135-original-atmosphere.sqlite").string();
+    PersistentWorld::recover_copy(db,v135_file);
+    {
+        PersistentWorld native(v135_file,Simulation(613));
+        const auto before_migration=native.world().state_hash();
+        const auto before_generation=native.generation();
+        bool injected=false;
+        try{native.ensure_planetary_atmosphere_manifest(
+             FailPoint::AfterSnapshotWrite);}
+        catch(const std::exception&){injected=true;}
+        CHECK(injected);
+        CHECK(native.world().state_hash()==before_migration);
+        CHECK(native.generation()==before_generation);
+        native.ensure_planetary_atmosphere_manifest();
+        const auto migration_generation=native.generation();
+        native.ensure_planetary_atmosphere_manifest();
+        CHECK(native.generation()==migration_generation); // idempotent
+        CHECK(native.world().original_surface_atmosphere_enabled());
+        const auto verified=native.world().celestial_navigation_anchor(
+            7,ship,selected.body);
+        CHECK(verified);
+        const galaxy::planetary::air::State source_air{
+            verified->atmosphere_pressure_pa,
+            verified->atmosphere_oxygen_permille,
+            verified->atmosphere_toxic};
+        CHECK(galaxy::planetary::air::valid(source_air));
+        const auto denied_before=native.world().state_hash();
+        CHECK(!native.planetary_surface_suit_action(7,ship,key,
+              Simulation::OriginalSuitAction::Equip,88001));
+        CHECK(!native.planetary_surface_treatment(7,ship,key,88002));
+        CHECK(native.world().state_hash()==denied_before);
+        // Actual original world STEP advances survival without any client
+        // PMOVE/PSTEP/JUMP. No separate simulation health record is created.
+        const auto previous_tick=native.world().player_people().at(7)
+                                    .surface_survival.last_vertical_tick;
+        native.step();
+        const auto& survival=native.world().player_people().at(7)
+                               .surface_survival;
+        CHECK(survival.last_vertical_tick>previous_tick);
+        const auto hash_after_tick=native.world().state_hash();
+        CHECK(Simulation::from_snapshot(native.world().canonical_state())
+              .state_hash()==hash_after_tick);
+        auto tampered_air=native.world().canonical_state();
+        const auto first_celestial=tampered_air.find("celestial|");
+        CHECK(first_celestial!=std::string::npos);
+        const auto newline=tampered_air.find('\n',first_celestial);
+        const auto separator=tampered_air.rfind('|',newline);
+        CHECK(newline!=std::string::npos && separator>first_celestial);
+        const auto prior_value=tampered_air.substr(
+            separator+1,newline-separator-1);
+        tampered_air.replace(separator+1,newline-separator-1,
+                             prior_value=="0"?"1":"0");
+        bool tamper_refused=false;
+        try{(void)Simulation::from_snapshot(tampered_air);}
+        catch(const std::exception&){tamper_refused=true;}
+        CHECK(tamper_refused);
+        const auto durable_copy=(dir/"v135-durable-copy.sqlite").string();
+        PersistentWorld::recover_copy(v135_file,durable_copy);
+        PersistentWorld restored(durable_copy,Simulation(613));
+        CHECK(restored.world().state_hash()==native.world().state_hash());
+    }
 
     CHECK(world.planetary_player_shuttle_action(
         7,ship,key,PlanetaryPlayerAction::Reboard,81103));
