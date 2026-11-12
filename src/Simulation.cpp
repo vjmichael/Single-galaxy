@@ -20106,6 +20106,18 @@ std::int64_t Simulation::total_ore() const {
             life_mass_kg+=amount;
         }
     }
+    // S6-F5-C: already-allocated original air and manufactured suit matter
+    // physically carried by a PlayerPerson remain part of the same whole
+    // world's budget. Without these the 1-kg oxygen transfer would destroy
+    // world mass and make its SQLite conservation check reject the action.
+    for(const auto& [owner,person]:player_people_){
+        (void)owner;
+        const auto& sv=person.surface_survival;
+        const auto kg=sv.oxygen_kg+sv.exhaled_co2_kg+sv.suit_embodied_kg;
+        if(kg<0 || kg>1000 || kg>1000000000LL-life_mass_kg)
+            throw std::overflow_error("invalid original personal atmosphere/equipment mass");
+        life_mass_kg+=kg;
+    }
     // Only the WHOLE world must conserve complete ore-equivalent mass;
     // individual inventories can now hold a single kilogram stack.
     if(colony_cargo_kg>std::numeric_limits<std::int64_t>::max()-life_mass_kg)

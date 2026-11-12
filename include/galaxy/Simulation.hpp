@@ -1589,7 +1589,7 @@ public:
     // Explicit ORIGINAL owner action. Make/retire only aboard actual ship;
     // equip/unequip and charge only at the original landed site.
     enum class OriginalSuitAction : std::uint8_t {
-        Manufacture=1, Retire=2, Equip=3, Unequip=4, Charge=5
+        Manufacture=1, Retire=2, Equip=3, Unequip=4, Charge=5, Repair=6
     };
     bool planetary_surface_suit_action(PlayerId owner,EntityId ship,
         const PlanetarySiteKey& key,OriginalSuitAction action,std::uint64_t receipt);

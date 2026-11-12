@@ -3,6 +3,7 @@
 #include "galaxy/PlanetaryContinuousSurface.hpp"
 #include "galaxy/PlanetaryBodyGravity.hpp"
 #include "galaxy/PlanetaryVerticalPhysics.hpp"
+#include "galaxy/PlanetaryAtmosphere.hpp"
 #include <algorithm>
 #include <cstdlib>
 #include <vector>
@@ -483,6 +484,199 @@ bool Simulation::planetary_surface_oxygen_action(PlayerId owner,EntityId ship,
 // Called once per ACTUAL Simulation::step (game-time 100 ms), never per
 // Godot render frame or client claimed delta. Physics follows the original
 // surveyed geometry; medical injury is an original PlayerPerson fact.
+// v135: the original inhabited vessel is physically at the same source body.
+// Compact, wearable pressure equipment consumes EXACT already-manufactured
+// mineral goods; it is not printed from ship atmosphere, nonexistent plastic,
+// or Godot dressing. The 10kg stays in the ORIGINAL PlayerPerson inventory.
+bool Simulation::planetary_surface_suit_action(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,OriginalSuitAction action,
+        std::uint64_t receipt) {
+    if(!owner || owner==kServerAuthority || !ship || !receipt ||
+       receipt>=(std::uint64_t{1}<<60) ||
+       surface_move_receipts_.size()>=100000 ||
+       surface_move_receipts_.count(receipt) ||
+       player_planet_receipts_.count(receipt) ||
+       shuttle_flight_request_ids_.count(receipt) ||
+       planetary_family_booking_ids_.count(receipt) ||
+       submitted_ids_.count(receipt) || voyages_.count(receipt) ||
+       pending_celestial_transits_.count(receipt) ||
+       completed_celestial_transits_.count(receipt))return false;
+    auto it=player_people_.find(owner);
+    auto site=planetary_sites_.find(key);
+    auto shuttle=planetary_shuttles_.find(key);
+    auto colony=colony_ships_.find(ship);
+    const auto* vessel=find(ship);
+    const auto frame=ship_frames_.find(ship);
+    if(it==player_people_.end() || site==planetary_sites_.end() ||
+       shuttle==planetary_shuttles_.end() || colony==colony_ships_.end() ||
+       !vessel || vessel->owner_id!=owner || vessel->hull<=0 ||
+       vessel->type!=EntityType::Ship ||
+       vessel->dock_state!=DockState::InSpace ||
+       vessel->jump_state!=ShipJumpState::Ready ||
+       frame==ship_frames_.end() ||
+       frame->second.anchor_body!=std::get<0>(key) ||
+       site->second.owner!=owner || site->second.source_ship!=ship ||
+       site->second.spaceport_phase!=3 || !site->second.surface_location ||
+       shuttle->second.owner!=owner || shuttle->second.source_ship!=ship)
+        return false;
+    auto& p=it->second;
+    auto& sv=p.surface_survival;
+    const bool aboard=p.state==PlayerPersonState::AboardOwnShip &&
+        p.home_ship==ship && p.physical_ship==ship;
+    const bool ashore=p.state==PlayerPersonState::AtPlanetarySurface &&
+        p.home_ship==ship && !p.physical_ship &&
+        p.planet_body==std::get<0>(key) &&
+        p.planet_latitude==std::get<1>(key) &&
+        p.planet_longitude==std::get<2>(key) &&
+        p.planet_revision==std::get<3>(key) &&
+        p.planet_descent_receipt &&
+        shuttle->second.flight_phase==2 &&
+        shuttle->second.descent_receipt==p.planet_descent_receipt;
+    const auto enough=[&](const char* good,std::int64_t needed){
+        const auto found=colony->second.goods_kg.find(good);
+        return found!=colony->second.goods_kg.end() && found->second>=needed;
+    };
+    constexpr std::int64_t kSuitMassKg=10;
+    if(action==OriginalSuitAction::Manufacture){
+        if(!aboard || sv.suit_embodied_kg ||
+           !enough("aluminum_frames",5) ||
+           !enough("ceramic",3) ||
+           !enough("glass",1) ||
+           !enough("carbon_feed",1))return false;
+    }else if(action==OriginalSuitAction::Retire){
+        if(!aboard || sv.suit_embodied_kg!=kSuitMassKg ||
+           sv.suit_equipped || sv.suit_charge>10 ||
+           colony->second.goods_kg["aluminum_scrap"]>1000000000-kSuitMassKg)
+            return false;
+    }else if(action==OriginalSuitAction::Repair){
+        if(!aboard || sv.suit_embodied_kg!=kSuitMassKg ||
+           sv.suit_equipped || sv.suit_integrity==100 ||
+           !enough("ceramic",1) || !enough("glass",1) ||
+           !enough("carbon_feed",1) ||
+           colony->second.goods_kg["aluminum_scrap"]>1000000000-3)
+            return false;
+    }else if(action==OriginalSuitAction::Equip){
+        if(!ashore || sv.suit_embodied_kg!=kSuitMassKg ||
+           sv.suit_equipped || sv.suit_integrity<60 ||
+           (sv.initialized&&!sv.grounded))return false;
+    }else if(action==OriginalSuitAction::Unequip){
+        if(!ashore || !sv.suit_equipped ||
+           (sv.initialized&&!sv.grounded))return false;
+    }else if(action==OriginalSuitAction::Charge){
+        if(!ashore || sv.suit_embodied_kg!=kSuitMassKg ||
+           !near_original_shuttle_hatch(p.surface_pose,key) ||
+           site->second.utility_phase!=2 ||
+           site->second.stored_electricity<2 || sv.suit_charge>=10 ||
+           (sv.initialized&&!sv.grounded))return false;
+    }else return false;
+    if(!establish_original_surface_atmosphere())return false;
+    if(action==OriginalSuitAction::Manufacture){
+        colony->second.goods_kg["aluminum_frames"]-=5;
+        colony->second.goods_kg["ceramic"]-=3;
+        --colony->second.goods_kg["glass"];
+        --colony->second.goods_kg["carbon_feed"];
+        sv.suit_embodied_kg=kSuitMassKg;
+        sv.suit_integrity=100;sv.suit_charge=0;
+        sv.suit_power_ticks=0;sv.suit_equipped=false;
+        sv.suit_manufacture_receipt=receipt;
+    }else if(action==OriginalSuitAction::Retire){
+        // All ten original kilos become physically present recyclable scrap.
+        colony->second.goods_kg["aluminum_scrap"]+=kSuitMassKg;
+        sv.suit_embodied_kg=0;sv.suit_integrity=0;sv.suit_charge=0;
+        sv.suit_power_ticks=0;sv.suit_equipped=false;
+        sv.suit_manufacture_receipt=0;
+    }else if(action==OriginalSuitAction::Repair){
+        --colony->second.goods_kg["ceramic"];
+        --colony->second.goods_kg["glass"];
+        --colony->second.goods_kg["carbon_feed"];
+        colony->second.goods_kg["aluminum_scrap"]+=3;
+        sv.suit_integrity=100;
+    }else if(action==OriginalSuitAction::Equip){
+        sv.suit_equipped=true;
+    }else if(action==OriginalSuitAction::Unequip){
+        sv.suit_equipped=false;
+    }else if(action==OriginalSuitAction::Charge){
+        site->second.stored_electricity-=2;
+        sv.suit_charge=10;sv.suit_power_ticks=0;
+    }
+    surface_move_receipts_.insert(receipt);
+    p.last_update_tick=tick_;
+    snapshot_version_=std::max(snapshot_version_,135);
+    return true;
+}
+
+// The existing ORIGINAL planetary service project #1 is the constructed
+// medical-support room; this operation requires its exact qualified named
+// supervisor, local site stock, and source energy. No separate clinic,
+// free medicine, or off-planet NPC treatment is invented.
+bool Simulation::planetary_surface_treatment(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,std::uint64_t receipt) {
+    if(!owner || owner==kServerAuthority || !ship || !receipt ||
+       receipt>=(std::uint64_t{1}<<60) ||
+       surface_move_receipts_.size()>=100000 ||
+       surface_move_receipts_.count(receipt) ||
+       player_planet_receipts_.count(receipt) ||
+       shuttle_flight_request_ids_.count(receipt) ||
+       planetary_family_booking_ids_.count(receipt) ||
+       submitted_ids_.count(receipt) || voyages_.count(receipt) ||
+       pending_celestial_transits_.count(receipt) ||
+       completed_celestial_transits_.count(receipt))return false;
+    auto p=player_people_.find(owner);
+    auto s=planetary_sites_.find(key);
+    auto sh=planetary_shuttles_.find(key);
+    const auto* vessel=find(ship);
+    const auto frame=ship_frames_.find(ship);
+    if(p==player_people_.end() || s==planetary_sites_.end() ||
+       sh==planetary_shuttles_.end() || !vessel ||
+       vessel->owner_id!=owner || vessel->type!=EntityType::Ship ||
+       vessel->hull<=0 || vessel->dock_state!=DockState::InSpace ||
+       frame==ship_frames_.end() ||
+       frame->second.anchor_body!=std::get<0>(key) ||
+       p->second.state!=PlayerPersonState::AtPlanetarySurface ||
+       p->second.home_ship!=ship || p->second.physical_ship ||
+       p->second.planet_body!=std::get<0>(key) ||
+       p->second.planet_latitude!=std::get<1>(key) ||
+       p->second.planet_longitude!=std::get<2>(key) ||
+       p->second.planet_revision!=std::get<3>(key) ||
+       !p->second.planet_descent_receipt ||
+       sh->second.flight_phase!=2 ||
+       sh->second.descent_receipt!=p->second.planet_descent_receipt ||
+       s->second.owner!=owner || s->second.source_ship!=ship ||
+       s->second.spaceport_phase!=3 ||
+       s->second.service_projects[1].phase!=2 ||
+       s->second.utility_phase!=2 ||
+       s->second.stored_electricity<1 ||
+       s->second.water_kg<1 || s->second.nutrients_kg<1 ||
+       s->second.wastewater_kg>=100000000 ||
+       s->second.organic_waste_kg>=100000000 ||
+       !near_original_shuttle_hatch(p->second.surface_pose,key) ||
+       (p->second.surface_survival.initialized &&
+        !p->second.surface_survival.grounded) ||
+       p->second.surface_survival.injury_points==0 ||
+       p->second.surface_survival.medical_treatments>=100000 ||
+       tick_<=p->second.surface_survival.last_medical_tick+19)
+        return false;
+    const auto medic=s->second.service_projects[1].supervisor;
+    const auto n=npcs_.find(medic);
+    if(!medic || n==npcs_.end() ||
+       n->second.home_ship!=ship ||
+       n->second.location!=s->second.surface_location ||
+       n->second.transport_id)return false;
+    if(!establish_original_surface_atmosphere())return false;
+    // One kg water -> wastewater and one kg substrate -> organic waste,
+    // original powered medical service, one genuine named supervisor.
+    --s->second.water_kg;--s->second.nutrients_kg;
+    ++s->second.wastewater_kg;++s->second.organic_waste_kg;
+    --s->second.stored_electricity;
+    auto& sv=p->second.surface_survival;
+    sv.injury_points=sv.injury_points<=20?0:sv.injury_points-20;
+    ++sv.medical_treatments;sv.last_medical_tick=tick_;
+    surface_move_receipts_.insert(receipt);
+    p->second.last_update_tick=tick_;
+    snapshot_version_=std::max(snapshot_version_,135);
+    return true;
+}
+
 void Simulation::process_original_surface_survival() {
     namespace grid=planetary::continuous_surface;
     for(auto& [owner,p]:player_people_){
@@ -546,28 +740,63 @@ void Simulation::process_original_surface_survival() {
             sv.injury_points=std::min(100U,sv.injury_points+
                 std::uint32_t((physics->impact_speed_mm_s-
                     planetary::vertical::kHardImpactMmS)/1000+10));
-        // No atmosphere survey exists yet, so missing carried oxygen is a
-        // source-uncertainty exposure flag, NOT fabricated hypoxia damage.
-        if(sv.oxygen_kg>0){
+        if(snapshot_version_>=135 && physics->impact &&
+           physics->impact_speed_mm_s>=planetary::vertical::kHardImpactMmS &&
+           sv.suit_embodied_kg==10 && sv.suit_integrity>1)
+            sv.suit_integrity=std::max(1U,sv.suit_integrity-10);
+        const bool atmospheric_source=snapshot_version_>=135;
+        const planetary::air::State atmosphere{
+            source_body->atmosphere_pressure_pa,
+            source_body->atmosphere_oxygen_permille,
+            source_body->atmosphere_toxic};
+        const bool ambient_breathable=atmospheric_source &&
+            planetary::air::breathable(atmosphere) &&
+            hazard!=planetary::PhysicalHazard::Flood;
+        const bool protected_air=atmospheric_source &&
+            planetary::air::sealed_and_supplied(sv.suit_equipped,
+                sv.suit_integrity,sv.suit_charge,sv.oxygen_kg);
+        const bool severe_thermal=hazard==planetary::PhysicalHazard::Heat ||
+            hazard==planetary::PhysicalHazard::Cold ||
+            hazard==planetary::PhysicalHazard::Flood;
+        const bool protected_heat=atmospheric_source &&
+            planetary::air::thermally_protected(
+                sv.suit_equipped,sv.suit_integrity,sv.suit_charge);
+        if(!atmospheric_source){
+            // Old v134 saves never asserted an original air composition.
+            // Unknown is a recorded uncertainty, not invented hypoxia harm.
+            if(sv.unverified_air_exposure_ms<1000000000000ULL-100)
+                sv.unverified_air_exposure_ms+=100;
+        }else if(!ambient_breathable && !protected_air){
+            if(sv.hypoxia_exposure_ms<1000000000000ULL-100){
+                sv.hypoxia_exposure_ms+=100;
+                if(sv.hypoxia_exposure_ms%1000==0)
+                    sv.injury_points=std::min(100U,sv.injury_points+2);
+            }
+        }
+        if(!ambient_breathable && protected_air){
             ++sv.oxygen_consumption_ticks;
             if(sv.oxygen_consumption_ticks>=600){
                 sv.oxygen_consumption_ticks=0;
                 --sv.oxygen_kg;
-                ++sv.exhaled_co2_kg; // whole-kg conservation, retained on original player
+                ++sv.exhaled_co2_kg;
             }
-        }else if(sv.unverified_air_exposure_ms<1000000000000ULL-100)
-            sv.unverified_air_exposure_ms+=100;
-        // Injury applies only to ACTUAL committed original environmental
-        // hazards and observed impacts. A complete protective suit is NOT
-        // inferred from the ship life-support tank or from Godot visuals.
-        if(hazard==planetary::PhysicalHazard::Heat ||
-           hazard==planetary::PhysicalHazard::Cold ||
-           hazard==planetary::PhysicalHazard::Flood){
-            if(sv.thermal_exposure_ms<1000000000000ULL-100){
-                sv.thermal_exposure_ms+=100;
-                if(sv.thermal_exposure_ms%1000==0)
-                    sv.injury_points=std::min(100U,sv.injury_points+1);
+        }
+        if(atmospheric_source && sv.suit_equipped &&
+           (protected_air || (severe_thermal && protected_heat))){
+            ++sv.suit_power_ticks;
+            if(sv.suit_power_ticks>=600){
+                sv.suit_power_ticks=0;
+                if(sv.suit_charge)--sv.suit_charge;
+                // Wear stays on the manufactured original artifact and
+                // must be repaired aboard the original source ship.
+                if(sv.suit_integrity>1)--sv.suit_integrity;
             }
+        }
+        if(severe_thermal && !protected_heat &&
+           sv.thermal_exposure_ms<1000000000000ULL-100){
+            sv.thermal_exposure_ms+=100;
+            if(sv.thermal_exposure_ms%1000==0)
+                sv.injury_points=std::min(100U,sv.injury_points+1);
         }
     }
 }
