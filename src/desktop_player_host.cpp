@@ -21,6 +21,7 @@
 #include <atomic>
 #include <mutex>
 #include <thread>
+#include <tuple>
 #include "galaxy/PlanetaryAtmosphere.hpp"
 #include "galaxy/Stage6WalkingPatch.hpp"
 #include <fstream>
