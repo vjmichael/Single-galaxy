@@ -125,6 +125,17 @@ try {
     CHECK(onfoot.surface_pose.last_move_receipt==82001);
     CHECK(onfoot.surface_pose.surface_location==
           world.world().planetary_sites().at(key).surface_location);
+    const auto native_origin=planetary::continuous_surface::cell_center(
+        {selected.lat,selected.lon});
+    CHECK(native_origin);
+    const auto expected_native=planetary::continuous_surface::native_step(
+        *native_origin,300,0,
+        world.world().celestial_navigation_anchor(
+            7,ship,selected.body)->physical_radius_mm);
+    CHECK(expected_native);
+    CHECK(onfoot.surface_pose.latitude_pdeg==expected_native->latitude_pdeg);
+    CHECK(onfoot.surface_pose.longitude_pdeg==expected_native->longitude_pdeg);
+    CHECK(world.world().canonical_state().find("galaxy-kernel-v133|")==0);
     const stage6::RenderTileAddress mesh_tile{
         static_cast<std::uint8_t>(std::min<unsigned>(selected.lat/7,4)),
         static_cast<std::uint8_t>(selected.lon/6),1};
@@ -150,6 +161,10 @@ try {
         PersistentWorld restored(in_motion_copy,Simulation(613));
         const auto& pos=restored.world().player_people().at(7).surface_pose;
         CHECK(pos.x_mm==600 && pos.last_move_receipt==82002);
+        CHECK(pos.surface_location==
+              world.world().planetary_sites().at(key).surface_location);
+        CHECK(pos.longitude_pdeg>native_origin->longitude_pdeg);
+        CHECK(pos.latitude_pdeg==native_origin->latitude_pdeg);
         CHECK(restored.world().state_hash()==world.world().state_hash());
         CHECK(!restored.planetary_surface_move(7,ship,key,0,300,0,82002));
     }
