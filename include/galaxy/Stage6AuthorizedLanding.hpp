@@ -62,4 +62,40 @@ inline std::optional<NativeLandingObservation> observe_native_landed_shuttle(
     result.original_shuttle_landed=true;
     return result;
 }
+// S6-F4: a *real original player-person* surface arrival, separate from
+// NPC shuttle landing and from a Godot spectator transform. It is true only
+// after explicit human disembarkation under the same journaled descent.
+struct NativePlayerSurfaceObservation {
+    NativeLandingObservation landing{};
+    PlayerId owner=0;
+    std::uint64_t player_disembark_receipt=0;
+    bool still_current(const PersistentWorld& source) const {
+        return landing.still_current(source) &&
+            source.world().player_people().count(owner) &&
+            source.world().player_people().at(owner).state==
+                PlayerPersonState::AtPlanetarySurface &&
+            source.world().player_people().at(owner).last_receipt==
+                player_disembark_receipt;
+    }
+};
+inline std::optional<NativePlayerSurfaceObservation> observe_native_landed_player(
+    const PersistentWorld& native,PlayerId owner,EntityId source_ship,
+    const PlanetarySiteKey& key) {
+    const auto landed=observe_native_landed_shuttle(
+        native,owner,source_ship,key);
+    if(!landed)return std::nullopt;
+    const auto it=native.world().player_people().find(owner);
+    if(it==native.world().player_people().end())return std::nullopt;
+    const auto& p=it->second;
+    if(p.state!=PlayerPersonState::AtPlanetarySurface ||
+       p.owner!=owner || p.home_ship!=source_ship || p.physical_ship ||
+       p.physical_station || !p.last_receipt ||
+       p.planet_body!=std::get<0>(key) ||
+       p.planet_latitude!=std::get<1>(key) ||
+       p.planet_longitude!=std::get<2>(key) ||
+       p.planet_revision!=std::get<3>(key) ||
+       p.planet_descent_receipt!=landed->original_descent_receipt ||
+       p.planet_ascent_receipt)return std::nullopt;
+    return NativePlayerSurfaceObservation{*landed,owner,p.last_receipt};
+}
 } // namespace galaxy::stage6
