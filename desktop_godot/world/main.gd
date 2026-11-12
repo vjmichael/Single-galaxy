@@ -173,6 +173,7 @@ func _ready() -> void:
 	native_player_session.flight_command_sent.connect(_on_physical_flight_sent)
 	native_player_session.flight_command_result.connect(_on_physical_flight_result)
 	native_player_session.equipment_result_received.connect(_on_group3_equipment_receipt)
+	native_player_session.colony_onboarding_received.connect(_on_colony_onboarding_source)
 	native_player_session.asteroid_survey_received.connect(_on_group3_asteroid_survey)
 	player.native_motion_intent.connect(_on_native_player_intent)
 	player.native_seat_intent.connect(_on_native_player_seat_intent)
@@ -917,6 +918,7 @@ func _build_hud() -> void:
 	_mining_panel.fit_requested.connect(func(): native_player_session.request_fit_drill())
 	_mining_panel.unfit_requested.connect(func(): native_player_session.request_unfit_drill())
 	_mining_panel.power_requested.connect(func(on: bool): native_player_session.request_drill_power(on))
+	_mining_panel.colony_ship_work_requested.connect(func(op: int): native_player_session.request_colony_ship_construction(op))
 
 	flight_panel = PanelContainer.new()
 	flight_panel.name = "FlightTelemetryPanel"
@@ -1716,6 +1718,16 @@ func _on_native_ship_state(ship: Dictionary) -> void:
 		primary_speed_label.text = "SPEED %.0f mm/tick  |  HEADING %d°" % [
 			speed, int(ship["heading"])]
 	_apply_technical_hud()
+
+func _on_colony_onboarding_source(snapshot: Dictionary) -> void:
+	# DOCK-09: original one-writer readback, no fabricated stock or colony.
+	if (int(snapshot.get("ship",0))!=int(_verified_flight_ship.get("ship",-1)) or
+			int(snapshot.get("tick",-1))!=int(_verified_flight_ship.get("tick",-2)) or
+			int(snapshot.get("gen",-1))!=int(_verified_flight_ship.get("gen",-2))):
+		return
+	if is_instance_valid(_mining_panel):
+		_mining_panel.set_original_colony_source(snapshot)
+	_record_native_projection("ONBOARD",snapshot)
 
 func _on_group3_equipment_receipt(kind: String, request: int,
 		outcome: int, command_id: int) -> void:
