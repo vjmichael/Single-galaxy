@@ -9533,6 +9533,14 @@ bool Simulation::queue_npc_flight(PlayerId owner,EntityId ship,
         std::uint64_t pilot,std::uint64_t destination,
         std::uint64_t id,std::uint64_t transit,
         NpcFlightPurpose purpose){
+    for(const auto& [principal,p]:player_people_){
+        (void)principal;
+        if(p.home_ship==ship &&
+           (p.state==PlayerPersonState::InPlanetaryShuttle ||
+            p.state==PlayerPersonState::PlanetaryTransit ||
+            p.state==PlayerPersonState::AtPlanetarySurface))
+            return false;
+    }
     const auto e=entities_.find(ship);
     const auto frame=ship_frames_.find(ship);
     const auto selected_pilot=select_npc_flight_pilot(ship,pilot);
@@ -9907,6 +9915,14 @@ bool Simulation::cancel_npc_flight(PlayerId owner,std::uint64_t id){
 // scanner/geometry/docking/shuttle/command and vessel restrictions.
 bool Simulation::begin_native_celestial_transit(
         PlayerId owner,EntityId ship,std::uint64_t body,std::uint64_t id){
+    for(const auto& [principal,p]:player_people_){
+        (void)principal;
+        if(p.home_ship==ship &&
+           (p.state==PlayerPersonState::InPlanetaryShuttle ||
+            p.state==PlayerPersonState::PlanetaryTransit ||
+            p.state==PlayerPersonState::AtPlanetarySurface))
+            return false;
+    }
     for(const auto& [key,sh]:planetary_shuttles_){
         (void)key;
         if(sh.source_ship==ship && sh.flight_phase!=0)return false;
@@ -18192,6 +18208,15 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                   shuttle->second.flight_phase!=0))))
                 throw std::runtime_error("snapshot: invalid courier flight phase");
         }
+    }
+    if(result.snapshot_version_>=131){
+        for(const auto id:result.player_planet_receipts_)
+            if(result.shuttle_flight_request_ids_.count(id) ||
+               result.submitted_ids_.count(id) ||
+               result.planetary_family_booking_ids_.count(id) ||
+               result.pending_celestial_transits_.count(id) ||
+               result.completed_celestial_transits_.count(id))
+                throw std::runtime_error("snapshot: reused original player transport receipt");
     }
     if(result.snapshot_version_>=98){
         std::set<PlanetarySiteKey> occupied_player_shuttles;
