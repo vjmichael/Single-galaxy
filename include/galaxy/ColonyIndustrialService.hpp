@@ -89,6 +89,19 @@ inline std::string make_snapshot(const PersistentWorld& world,PlayerId owner,
            <<'|'<<code<<'|'<<kg<<'\n';
         rows.push_back(out.str());
     };
+    // Physically present founding hull is a separate local source.
+    // Its construction modules are discrete items, NOT kilograms; the UI
+    // labels this one explicit module row as units instead of kg.
+    const auto* vessel=ship?sim.find(ship):nullptr;
+    if(vessel && vessel->dock_state==DockState::Docked &&
+       vessel->dock_station==station){
+        const auto* cargo=sim.colony_ship(ship);
+        if(cargo){
+            for(const auto& [name,kg]:cargo->goods_kg)
+                add('H',0,"good/"+name,kg);
+            add('C',0,"module/construction",cargo->modules);
+        }
+    }
     if(plant)for(const auto& [name,kg]:plant->mineral_kg)
         add('R',0,"mineral/"+name,kg);
     if(shop){
