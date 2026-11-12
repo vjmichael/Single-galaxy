@@ -18,7 +18,7 @@ The shared sequence uses existing PersistentWorld generation-fenced commits, in 
 
 Original source reparse, tick, material kilograms, ore equivalents, credits, player people, sites and shuttles are checked before and after. The stages are individually durable/idempotent commits, **not one all-or-nothing five-stage transaction**. A failure must be reconciled from committed SQLite; no automatic original-save reset is allowed.
 
-The F6 --planet-recover preflight remains **read-only**, without migration or world STEP. Only the subsequently admitted original writer can migrate. The audit allows a legitimately docked orbital shuttle without an assigned pilot but does not permit flight without real pilot custody.
+The F6 --planet-recover preflight remains **read-only**, without migration or world STEP. Only the subsequently admitted original writer can migrate. The audit preserves real uncrewed, damaged or stranded physical shuttles as material custody in otherwise valid historical saves; actual boarding/flight and on-shuttle player recovery remain independently denied without real pilot authorization.
 
 ## G2. Original saved-world audit and five-person-state matrix
 
