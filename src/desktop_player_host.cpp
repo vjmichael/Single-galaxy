@@ -274,6 +274,10 @@ static int run_planet_host(const std::string& save_utf8){
         };
         if(!landed())throw std::runtime_error(
             "original player not verified ashore; no native planet session");
+        // This is a deterministic source-only manifest migration under
+        // the already acquired original OS writer lease and SQLite journal.
+        // Not an automatic landing, equipment grant or oxygen supply.
+        world.ensure_planetary_atmosphere_manifest();
         const auto session=new_epoch();
         const auto receipt_base=(new_epoch()&((std::uint64_t{1}<<60)-1))
               & ~((std::uint64_t{1}<<20)-1);

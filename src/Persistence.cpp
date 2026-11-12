@@ -11561,6 +11561,25 @@ void PersistentWorld::ensure_physical_planetary_environment(FailPoint fail) {
     world_.swap(next);
     ++generation_;
 }
+// S6-F5-C v135: a single original SQLite writer seals pressure, oxygen
+// fraction and toxicity only after matching every existing astronomical
+// body against its original deterministic source. No tank is filled.
+void PersistentWorld::ensure_planetary_atmosphere_manifest(FailPoint fail) {
+    if(world_.original_surface_atmosphere_enabled())return;
+    auto next=world_;
+    if(!next.establish_original_surface_atmosphere())
+        throw std::runtime_error("original planetary atmosphere migration refused");
+    if(next.total_ore()!=resource_origin_ ||
+       next.total_credits()!=credit_origin_ ||
+       next.total_material_kg()!=world_.total_material_kg())
+        throw std::logic_error("original atmospheric source changed finite matter");
+    if(Simulation::from_snapshot(next.canonical_state()).state_hash()!=
+       next.state_hash())
+        throw std::logic_error("original planetary atmosphere cannot recover");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);++generation_;
+}
 void PersistentWorld::ensure_planetary_ecology(FailPoint fail) {
     auto next=world_;
     next.enable_planetary_ecology();
