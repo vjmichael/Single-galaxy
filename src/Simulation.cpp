@@ -7634,6 +7634,73 @@ void Simulation::process_physical_planetary_environment() {
             watershed->at(lat,lon).ocean,tick_,
             src->second.stock_kg[0],src->second.stock_kg[1]);
     }
+    // S6-D6: ONE ORIGINAL WORLD STEP moves existing literal phase kg
+    // along canonical watershed edges. Every transfer simultaneously
+    // debits/credits the v127 regional source (not the immutable genesis
+    // allocation or a synthetic weather precipitation score). The exact
+    // state is durably committed by the enclosing PersistentWorld.step().
+    if(planetary_physical_environment_.size()<2)return;
+    struct Edge {
+        PlanetarySiteKey from{},to{};
+        planetary::NeighborPhysicalFlux mass{};
+    };
+    std::vector<Edge> edges;
+    std::map<PlanetarySiteKey,std::array<std::int64_t,2>> incoming;
+    std::uint64_t transport_body=0;
+    std::optional<planetary::WatershedMap> drainage;
+    for(const auto& [from,phase]:planetary_physical_environment_) {
+        const auto body=std::get<0>(from);
+        const auto geology=planetary_genesis_.find(body);
+        if(geology==planetary_genesis_.end())
+            throw std::logic_error("regional physical transport body missing genesis");
+        if(!drainage || transport_body!=body) {
+            drainage=planetary::generate_watersheds(
+                geology->second.key,geology->second.envelope);
+            transport_body=body;
+        }
+        const auto lat=std::get<1>(from),lon=std::get<2>(from);
+        const auto downstream=drainage->at(lat,lon).downstream;
+        if(downstream<0)continue; // no invented sea/off-map material
+        const auto dst_lat=std::uint16_t(downstream/planetary::kWatershedColumns);
+        const auto dst_lon=std::uint16_t(downstream%planetary::kWatershedColumns);
+        const PlanetarySiteKey to{body,dst_lat,dst_lon,std::get<3>(from)};
+        const auto dest=planetary_physical_environment_.find(to);
+        const auto src_stock=planetary_region_sources_.find(from);
+        const auto dst_stock=planetary_region_sources_.find(to);
+        if(dest==planetary_physical_environment_.end() ||
+           src_stock==planetary_region_sources_.end() ||
+           dst_stock==planetary_region_sources_.end())continue;
+        auto flux=planetary::propose_neighbor_flux(
+            phase,dest->second,src_stock->second.stock_kg,
+            dst_stock->second.stock_kg,true,
+            drainage->at(dst_lat,dst_lon).ocean);
+        // Several tributaries may enter one cell on this tick. Reserve
+        // headroom for every earlier incoming edge before committing any
+        // state, so iteration order never temporarily exceeds bounds.
+        auto& reserved=incoming[to];
+        const auto room_water=std::max<std::int64_t>(0,
+            100000000-dst_stock->second.stock_kg[0]-reserved[0]);
+        flux.liquid_kg=std::min(flux.liquid_kg,room_water);
+        flux.aquifer_kg=std::min(flux.aquifer_kg,
+            room_water-flux.liquid_kg);
+        flux.sediment_kg=std::min(flux.sediment_kg,
+            std::max<std::int64_t>(0,
+            100000000-dst_stock->second.stock_kg[1]-reserved[1]));
+        if(flux.empty())continue;
+        reserved[0]+=flux.liquid_kg+flux.aquifer_kg;
+        reserved[1]+=flux.sediment_kg;
+        edges.push_back({from,to,flux});
+    }
+    const auto original_ore=total_ore();
+    for(const auto& edge:edges) {
+        planetary::apply_neighbor_flux(
+            planetary_physical_environment_.at(edge.from),
+            planetary_physical_environment_.at(edge.to),
+            planetary_region_sources_.at(edge.from).stock_kg,
+            planetary_region_sources_.at(edge.to).stock_kg,edge.mass);
+    }
+    if(total_ore()!=original_ore)
+        throw std::logic_error("cross-region drainage changed original mass");
 }
 std::optional<planetary::PhysicalEnvironment>
 Simulation::scan_planetary_physical_environment(
