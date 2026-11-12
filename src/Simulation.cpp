@@ -7422,6 +7422,118 @@ void Simulation::ensure_ship_frame_registry() {
     }
     snapshot_version_=std::max(snapshot_version_,71);
 }
+// STAGE6-C / v127: the original physical catalogue is the ONLY body source.
+// Migration creates a stable envelope and ZERO kg. No old-world ore, water,
+// oasis claim, region, NPC or survey is relocated or recreated.
+void Simulation::ensure_planetary_genesis_manifest() {
+    if(physical_celestial_systems_.size()!=systems_.size())
+        ensure_physical_celestial_systems();
+    for(const auto& [system,bodies]:physical_celestial_systems_) {
+        for(const auto& body:bodies) {
+            if(body.kind!=CelestialKind::Planet &&
+               body.kind!=CelestialKind::Moon)continue;
+            const auto envelope=planetary_envelope_for_body(body);
+            const planetary::PlanetaryWorldKey key{
+                kAstronomicalGalaxySeed,system,body.id,1};
+            const auto it=planetary_genesis_.find(body.id);
+            if(it!=planetary_genesis_.end()) {
+                const auto& old=it->second;
+                if(old.key.galaxy_seed!=key.galaxy_seed ||
+                   old.key.system!=key.system || old.key.body!=key.body ||
+                   old.key.generator_revision!=key.generator_revision ||
+                   old.envelope.climate!=envelope.climate ||
+                   old.envelope.water_coverage!=envelope.water_coverage ||
+                   old.envelope.average_celsius!=envelope.average_celsius ||
+                   old.envelope.biosphere_present!=envelope.biosphere_present)
+                    throw std::logic_error("immutable planetary genesis differs from native catalogue");
+                continue;
+            }
+            if(planetary_genesis_.size()>=10000)
+                throw std::overflow_error("planetary genesis catalogue full");
+            planetary_genesis_.emplace(body.id,
+                PlanetaryGenesisBody{key,envelope,{},{}}); // ZERO new material
+        }
+    }
+    snapshot_version_=std::max(snapshot_version_,127);
+}
+void Simulation::provision_planetary_body_genesis(
+    std::uint64_t body,const std::array<std::int64_t,4>& kilograms) {
+    if(tick_ || !submitted_ids_.empty() || !commands_.empty())
+        throw std::invalid_argument("planetary matter can only enter at original world genesis");
+    ensure_planetary_genesis_manifest();
+    auto it=planetary_genesis_.find(body);
+    if(it==planetary_genesis_.end())
+        throw std::invalid_argument("unknown or nonplanetary physical body genesis");
+    if(it->second.original_kg!=std::array<std::int64_t,4>{} ||
+       it->second.unallocated_kg!=std::array<std::int64_t,4>{})
+        throw std::invalid_argument("planetary genesis cannot be reissued");
+    std::int64_t total=0;
+    for(const auto amount:kilograms) {
+        if(amount<0 || amount>100000000 || amount%1000)
+            throw std::invalid_argument("planetary genesis needs bounded whole-tonne input");
+        total+=amount;
+    }
+    if(!total)throw std::invalid_argument("zero genesis adds no resources");
+    // Explicit caller-supplied genesis mass joins the SAME original material
+    // conservation invariant. No scanner or global climate query creates it.
+    auto next=*this;
+    auto& record=next.planetary_genesis_.at(body);
+    record.original_kg=kilograms;
+    record.unallocated_kg=kilograms;
+    (void)next.total_ore(); // bounds-check original material accounting
+    swap(next);
+}
+void Simulation::place_planetary_region_genesis(
+    std::uint64_t body,std::uint16_t latitude,std::uint16_t longitude,
+    const std::array<std::int64_t,4>& kilograms) {
+    if(tick_ || !submitted_ids_.empty() || !commands_.empty() ||
+       latitude>=planetary::kWatershedRows ||
+       longitude>=planetary::kWatershedColumns)
+        throw std::invalid_argument("region resources require original zero-tick genesis");
+    const auto it=planetary_genesis_.find(body);
+    if(it==planetary_genesis_.end())
+        throw std::invalid_argument("planetary source requires a registered body");
+    const auto& genesis=it->second;
+    const PlanetarySiteKey region{body,latitude,longitude,genesis.key.generator_revision};
+    if(planetary_region_sources_.count(region) ||
+       planetary_region_sources_.size()>=10000)
+        throw std::invalid_argument("planetary source region is already immutable");
+    const auto map=planetary::generate_watersheds(genesis.key,genesis.envelope);
+    const auto geo=planetary::survey_geographic_site(
+        map,genesis.key,genesis.envelope,latitude,longitude);
+    std::int64_t amount_total=0;
+    for(std::size_t i=0;i<kilograms.size();++i) {
+        const auto amount=kilograms[i];
+        if(amount<0 || amount>100000000 || amount%1000 ||
+           amount>genesis.unallocated_kg[i])
+            throw std::invalid_argument("planetary regional resource not paid from finite source");
+        amount_total+=amount;
+    }
+    if(!amount_total || (kilograms[0] && !genesis.envelope.water_coverage) ||
+       (geo.landscape.region.surface_water &&
+        (kilograms[1] || kilograms[2])))
+        throw std::invalid_argument("regional source conflicts with real terrain and genesis");
+    for(std::size_t i=0;i<kilograms.size();++i)
+        it->second.unallocated_kg[i]-=kilograms[i];
+    planetary_region_sources_.emplace(region,PlanetaryRegionalSource{
+        {body,genesis.key.generator_revision,latitude,longitude},kilograms});
+}
+std::optional<PlanetaryRegionalSource>
+Simulation::scan_planetary_region_source(PlayerId owner,EntityId ship,
+    std::uint64_t body,std::uint16_t latitude,std::uint16_t longitude) const {
+    const auto geography=scan_planetary_geography(owner,ship,body,latitude,longitude);
+    if(!geography)return std::nullopt;
+    const auto genesis=planetary_genesis_.find(body);
+    if(genesis==planetary_genesis_.end() ||
+       genesis->second.key.generator_revision!=geography->key.revision)
+        return std::nullopt;
+    const PlanetarySiteKey key{
+        body,latitude,longitude,geography->key.revision};
+    const auto entry=planetary_region_sources_.find(key);
+    return entry==planetary_region_sources_.end()?std::nullopt:
+           std::optional<PlanetaryRegionalSource>(entry->second);
+}
+
 void Simulation::ensure_physical_celestial_systems() {
     // v70 snapshots require the colony's existing aggregate crew to be
     // represented by named NPCs. Only unused genesis worlds can convert.
@@ -7439,6 +7551,9 @@ void Simulation::ensure_physical_celestial_systems() {
         physical_celestial_systems_.emplace(system,generated);
     }
     snapshot_version_=std::max(snapshot_version_,70);
+    // A previously v127-migrated world may discover an additional original
+    // system; new body identity must receive only ZERO-mass envelopes.
+    if(snapshot_version_>=127)ensure_planetary_genesis_manifest();
 }
 std::vector<PhysicalCelestialBody> Simulation::scan_physical_celestials(
     PlayerId owner,EntityId ship) const {
