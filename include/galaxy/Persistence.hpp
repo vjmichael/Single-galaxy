@@ -950,6 +950,11 @@ public:
     bool planetary_player_shuttle_action(PlayerId owner,EntityId ship,
         const PlanetarySiteKey& key,PlanetaryPlayerAction action,
         std::uint64_t receipt,FailPoint fail=FailPoint::None);
+    // One original SQLite commit, no second native avatar authority.
+    bool planetary_surface_move(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,std::uint64_t npc_id,
+        std::int64_t dx_mm,std::int64_t dz_mm,std::uint64_t receipt,
+        FailPoint fail=FailPoint::None);
     // One original SQLite world step, immutable dock movement receipt and
     // original NPC custody mutation in one atomic transaction. Host only.
     bool station_dock_worker_transfer(PlayerId owner,EntityId ship,
