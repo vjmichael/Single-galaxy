@@ -181,6 +181,7 @@ func _ready() -> void:
 	native_station_session.person_received.connect(_on_native_station_person)
 	native_station_session.refinery_received.connect(_on_native_refinery_state)
 	native_station_session.industry_received.connect(_on_native_industry_state)
+	native_station_session.industry_management_received.connect(_on_native_industry_management)
 	native_station_session.colony_population_received.connect(_on_native_colony_population)
 	native_station_session.dock_received.connect(_on_native_dock_status)
 	native_station_session.dock_pedestrians_received.connect(_on_native_dock_pedestrians)
@@ -194,6 +195,8 @@ func _ready() -> void:
 	refinery_terminal.industry_batch_requested.connect(_on_industry_batch_requested)
 	refinery_terminal.industry_tick_requested.connect(_on_industry_tick_requested)
 	refinery_terminal.industry_transfer_requested.connect(_on_industry_transfer_requested)
+	refinery_terminal.industry_management_refresh_requested.connect(_on_management_refresh_requested)
+	refinery_terminal.industry_management_apply_requested.connect(_on_management_apply_requested)
 	refinery_terminal.dock_status_requested.connect(_on_dock_status_requested)
 	refinery_terminal.dock_worker_requested.connect(_on_dock_worker_requested)
 	refinery_terminal.dock_release_requested.connect(_on_dock_release_requested)
@@ -1387,6 +1390,21 @@ func _on_industry_tick_requested() -> void:
 func _on_industry_transfer_requested(selector: int) -> void:
 	if _dock_commands_allowed():
 		native_station_session.transfer_local_industrial_goods(selector)
+
+func _on_native_industry_management(snapshot: Dictionary) -> void:
+	# One original resident-local source, no separate facility or NPC ledger.
+	if _dock_commands_allowed():
+		refinery_terminal.set_industry_management(snapshot)
+
+func _on_management_refresh_requested() -> void:
+	if _dock_commands_allowed():
+		native_station_session.request_colony_management()
+
+func _on_management_apply_requested(selector: int) -> void:
+	# Player explicitly chooses one original action; native authorizes it
+	# using current physical modules, local people and immutable receipts.
+	if _dock_commands_allowed():
+		native_station_session.apply_colony_management(selector)
 
 func _hide_refinery_terminal() -> void:
 	if is_instance_valid(refinery_terminal):
