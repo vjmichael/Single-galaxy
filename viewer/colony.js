@@ -486,6 +486,37 @@
       return {...e,id,latitude,longitude,elevation,ocean:!!ocean,
         terrain,watercourse,runoff,downLatitude,downLongitude,revision};
     }
+    if(t==='PLANET_SEASON'){
+      // STAGE6-ENV01: derived seasonal model scores, NEVER water kg,
+      // actual weather, source rights, or mining/farming authorization.
+      if(v.length!==19)throw Error('Malformed native planetary climate');
+      const signed=x=>{
+        if(!/^(0|-[1-9][0-9]*|[1-9][0-9]*)$/.test(x))
+          throw Error('Invalid planetary temperature');
+        const n=Number(x);
+        if(!Number.isSafeInteger(n)||n< -150||n>100)
+          throw Error('Out-of-range planetary temperature');
+        return n;
+      };
+      const id=numeric(v[4],Number.MAX_SAFE_INTEGER),
+        latitude=numeric(v[5],35),longitude=numeric(v[6],71),
+        revision=numeric(v[7],100000),modelRevision=numeric(v[8],100000),
+        quarter=numeric(v[9],3),temperature=signed(v[10]),
+        precipitation=numeric(v[11],1000000),
+        evaporation=numeric(v[12],1000000),
+        snowpack=numeric(v[13],1000000),
+        runoff=numeric(v[14],1000000),
+        discharge=numeric(v[15],Number.MAX_SAFE_INTEGER),
+        liquid=numeric(v[16],1),seaIce=numeric(v[17],1),
+        risk=numeric(v[18],3);
+      if(!id||!revision||!modelRevision||evaporation>precipitation||
+         runoff>discharge|| (liquid&&temperature<=0)||
+         (seaIce&&temperature> -2) || (seaIce&&liquid))
+        throw Error('Invalid seasonal environmental assessment');
+      return {...e,id,latitude,longitude,revision,modelRevision,quarter,
+        temperature,precipitation,evaporation,snowpack,runoff,
+        discharge,liquid:!!liquid,seaIce:!!seaIce,risk};
+    }
     if(t==='OASIS_REGION'){
       if(v.length!==8)throw Error('Malformed finite oasis region waypoint');
       const id=numeric(v[4],Number.MAX_SAFE_INTEGER),
@@ -901,6 +932,7 @@
  const deployedProbes=new Map();
  const signatureContacts=new Map();
  const celestialBodies=new Map(), localOreTaxonomy=new Map(),oasises=new Map();
+ const discoveredSeasonalSites=new Map(); // bounded, view-only current survey frames
  let probeCarried=0,probeLauncher=false,probeChoice='';
  const discoveries=new Map();
  const pilotSaveKey='single-galaxy:fleet-pilot-preference:v1';
@@ -2239,6 +2271,11 @@
           '. Use Check spaceport progress for the current state.';
      }
      if(e.type==='PLANET_REGION'){
+       const seasonalKey=[e.id,e.latitude,e.longitude,e.revision].join(':');
+       if(discoveredSeasonalSites.size()>=64)
+         discoveredSeasonalSites.delete(discoveredSeasonalSites.keys().next().value);
+       discoveredSeasonalSites.set(seasonalKey,{
+         tick:e.tick,quarters:new Map(),region:e});
        const terrains=['Deep ocean','Shallow sea','Coast','Wetland','Grassland',
          'Forest','Dryland','Desert','Mountain','Ice','Bare rock'];
        const channels=['No channel','Dry arroyo','Seasonal stream','Perennial river'];
@@ -2248,6 +2285,31 @@
          ' · '+channels[e.watercourse]+' · watershed runoff score '+e.runoff+
          ' · geographic version '+e.revision+
          ' (survey potential, not extractable water).';
+     }
+     if(e.type==='PLANET_SEASON'){
+       const seasonalKey=[e.id,e.latitude,e.longitude,e.revision].join(':');
+       const seen=discoveredSeasonalSites.get(seasonalKey);
+       if(!seen||seen.tick!==e.tick)return;
+       const quarters=seen.quarters;
+       if(quarters.has(e.quarter) &&
+          JSON.stringify(quarters.get(e.quarter))!==JSON.stringify(e))return;
+       quarters.set(e.quarter,e);
+       if(quarters.size===4){
+         const rows=[0,1,2,3].map(q=>quarters.get(q));
+         if(rows.some(x=>!x||x.modelRevision!==e.modelRevision))return;
+         const ice=rows.filter(x=>x.seaIce).length;
+         const liquid=rows.filter(x=>x.liquid).length;
+         q('signatureFeedback').textContent=
+           'Planet #'+e.id+' region ('+e.latitude+','+e.longitude+
+           ') · four modeled quarters '+rows.map(x=>x.temperature+'°C').join(' / ')+
+           ' · open-liquid candidate '+liquid+'/4'+
+           ' · sea ice '+ice+'/4'+
+           ' · model rainfall '+rows.reduce((a,x)=>a+x.precipitation,0)+
+           ' · watershed seasonal peak '+Math.max(...rows.map(x=>x.discharge))+
+           ' · hazards '+rows.map(x=>x.risk).join('/')+
+           '. These are derived prospect scores only: no extractable water, vegetation, '+
+           'weather events, or construction permit is granted.';
+       }
      }
      if(e.type==='OASIS_REGION'){
        if(celestialBodies.has(e.id)){
