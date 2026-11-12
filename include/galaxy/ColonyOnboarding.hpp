@@ -90,18 +90,26 @@ inline std::string source_frame(const PersistentWorld& persistent,
     const auto& sim=persistent.world();
     const auto* hull=sim.find(ship);
     const auto* cargo=sim.colony_ship(ship);
-    if(!hull || hull->type!=EntityType::Ship || hull->owner_id!=owner ||
-       !cargo)throw std::runtime_error("invalid original colony build source");
-    const auto plagioclase=cargo->minerals_kg.find("plagioclase");
-    const auto aluminum=cargo->goods_kg.find("aluminum");
+    if(!hull || hull->type!=EntityType::Ship || hull->owner_id!=owner)
+        throw std::runtime_error("invalid original owner ship source");
+    // The separate standalone cockpit has an ordinary source ship. It
+    // must continue to fly without a fictitious colony-ship manufacturing
+    // registry. Render real cargo but zero unavailable factory materials.
+    const auto* minerals=cargo?&cargo->minerals_kg:nullptr;
+    const auto* goods=cargo?&cargo->goods_kg:nullptr;
+    const auto plagioclase=minerals?minerals->find("plagioclase"):
+        std::map<std::string,std::int64_t>::const_iterator{};
+    const auto aluminum=goods?goods->find("aluminum"):
+        std::map<std::string,std::int64_t>::const_iterator{};
     const auto site=constructed_site(sim,owner,ship);
     // A fixed-size read-only frame; all amounts retain their original units.
     std::ostringstream o;
     o<<"ONBOARD|1|"<<session<<'|'<<request<<'|'<<ship
      <<'|'<<sim.tick()<<'|'<<persistent.generation()
-     <<'|'<<hull->cargo<<'|'<<cargo->refined<<'|'<<cargo->modules
-     <<'|'<<(plagioclase==cargo->minerals_kg.end()?0:plagioclase->second)
-     <<'|'<<(aluminum==cargo->goods_kg.end()?0:aluminum->second)
+     <<'|'<<hull->cargo<<'|'<<(cargo?cargo->refined:0)
+     <<'|'<<(cargo?cargo->modules:0)
+     <<'|'<<(!minerals || plagioclase==minerals->end()?0:plagioclase->second)
+     <<'|'<<(!goods || aluminum==goods->end()?0:aluminum->second)
      <<'|'<<site;
     for(unsigned i=1;i<=4;++i)
         o<<'|'<<(propose(sim,owner,ship,0x7000000000000000ULL+i,
