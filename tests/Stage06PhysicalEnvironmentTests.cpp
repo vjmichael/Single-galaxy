@@ -120,13 +120,17 @@ static void world_processes(const std::string& db){
     const auto unchanged=sim.canonical_state();
     sim.enable_physical_planetary_environment();
     CHECK(sim.canonical_state()==unchanged);
-    sim.steps(80);
-    CHECK(sim.total_ore()==mass);
-    const auto observed=sim.scan_planetary_physical_environment(
+    {
+        // Create the SQLite world at original tick zero, then advance its
+        // journal. Never adopt a nonzero-tick transient simulation as genesis.
+        PersistentWorld world(db,std::move(sim));
+        world.steps(80);
+    CHECK(world.world().total_ore()==mass);
+    const auto observed=world.world().scan_planetary_physical_environment(
         7,ship,body,latitude,longitude);
     CHECK(observed && observed->updated_tick==80);
     planetary::verify_physical_environment(*observed,6000,12000);
-    const auto canonical=sim.canonical_state();
+    const auto canonical=world.world().canonical_state();
     CHECK(canonical.find("galaxy-kernel-v128|")==0);
     CHECK(Simulation::from_snapshot(canonical).canonical_state()==canonical);
     auto altered=canonical;
@@ -139,8 +143,7 @@ static void world_processes(const std::string& db){
     // Missing physical process row must always be rejected.
     altered.erase(begin,end-begin+1);
     CHECK(denies([&]{(void)Simulation::from_snapshot(altered);}));
-    {
-        PersistentWorld world(db,std::move(sim));
+        // The same original writer owns the full physical environment test.
         CHECK(world.world().total_ore()==mass);
         const auto generation=world.generation();
         world.ensure_physical_planetary_environment(); // exact idempotent
