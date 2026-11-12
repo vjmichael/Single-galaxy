@@ -108,6 +108,7 @@ static void recovery(const std::string& db){
     Simulation seed(613,1);
     seed.add_colony_ship(7,{0,0},50,5);
     seed.ensure_physical_celestial_systems();
+    seed.enable_native_galactic_physics({{1,galactic::Point{{0,100000},{0,100000},{0,100000}}}});
     seed.ensure_planetary_genesis_manifest();
     seed.enable_planetary_source_custody();
     CHECK(!seed.planetary_ecology_enabled());
@@ -150,6 +151,7 @@ static void recovery(const std::string& db){
     Simulation new_world(777,1);
     const auto ship=new_world.add_colony_ship(7,{0,0},50,5);
     new_world.provision_starter_exploration_scanner(ship);
+    new_world.enable_native_galactic_physics({{1,galactic::Point{{0,100000},{0,100000},{0,100000}}}});
     (void)stage6::provision_first_planet_seed(new_world);
     CHECK(new_world.planetary_ecology_enabled());
     CHECK(new_world.canonical_state().find("galaxy-kernel-v130|")==0);
