@@ -1372,6 +1372,80 @@ void apply(PersistentWorld& world,EntityId ship,FleetSelection& fleet,const std:
         }
         return;
     }
+    // S6-F4: original PLAYER shuttle authority is distinct from the named
+    // NPC manifest and the renderer. Registration is an explicit authenticated
+    // action, never inferred from a visible Godot terrain character.
+    if(v.size()==1 && v[0]=="PLANET_PLAYER_REGISTER"){
+        if(!world.register_player_person(principal,ship)){
+            announce(world.world(),"ERROR|PLANET_PLAYER_REGISTER_DENIED");
+        }else{
+            announce(world.world(),"PLANET_PLAYER_REGISTERED|"+
+                std::to_string(principal)+"|"+std::to_string(ship)+"|"+
+                std::to_string(world.generation()));
+        }
+        return;
+    }
+    if(!v.empty() && v[0]=="PLANET_PLAYER"){
+        try{
+            if(v.size()!=5 && v.size()!=6)
+                throw std::invalid_argument("invalid player transport arity");
+            const auto body=integer(v[1]),lat=integer(v[2]),
+                       lon=integer(v[3]);
+            if(body<=0 || lat<0 || lat>=36 || lon<0 || lon>=72)
+                throw std::invalid_argument("invalid original planet region");
+            const PlanetarySiteKey key{std::uint64_t(body),
+                std::uint16_t(lat),std::uint16_t(lon),1};
+            const auto action=v[4];
+            if(action=="STATUS" && v.size()==5){
+                // Read only. Never authorize surface access by polling.
+            }else{
+                if(v.size()!=6)throw std::invalid_argument("missing receipt");
+                const auto raw=integer(v[5]);
+                if(raw<=0 || raw>=(std::int64_t{1}<<60))
+                    throw std::invalid_argument("invalid player receipt");
+                PlanetaryPlayerAction kind{};
+                if(action=="BOARD")kind=PlanetaryPlayerAction::Board;
+                else if(action=="DISEMBARK")kind=PlanetaryPlayerAction::Disembark;
+                else if(action=="REBOARD")kind=PlanetaryPlayerAction::Reboard;
+                else if(action=="EXIT")kind=PlanetaryPlayerAction::Exit;
+                else throw std::invalid_argument("unknown player transport action");
+                if(!world.planetary_player_shuttle_action(
+                    principal,ship,key,kind,std::uint64_t(raw)))
+                    throw std::invalid_argument("player original custody refused");
+                announce(world.world(),"PLANET_PLAYER_COMMITTED|"+
+                    std::to_string(principal)+"|"+
+                    std::to_string(body)+"|"+std::to_string(lat)+"|"+
+                    std::to_string(lon)+"|"+action+"|"+
+                    std::to_string(raw)+"|"+
+                    std::to_string(world.generation()));
+            }
+            const auto person=world.world().player_people().find(principal);
+            if(person==world.world().player_people().end() ||
+               person->second.home_ship!=ship ||
+               (person->second.planet_body &&
+                (person->second.planet_body!=std::uint64_t(body) ||
+                 person->second.planet_latitude!=std::uint16_t(lat) ||
+                 person->second.planet_longitude!=std::uint16_t(lon))))
+                throw std::invalid_argument("unavailable original player location");
+            const auto& p=person->second;
+            announce(world.world(),"PLANET_PLAYER_STATUS|"+
+                std::to_string(principal)+"|"+std::to_string(ship)+"|"+
+                std::to_string(unsigned(p.state))+"|"+
+                std::to_string(p.planet_body)+"|"+
+                std::to_string(p.planet_latitude)+"|"+
+                std::to_string(p.planet_longitude)+"|"+
+                std::to_string(p.planet_revision)+"|"+
+                std::to_string(p.planet_flight_receipt)+"|"+
+                std::to_string(p.planet_descent_receipt)+"|"+
+                std::to_string(p.planet_ascent_receipt)+"|"+
+                std::to_string(p.last_receipt)+"|"+
+                std::to_string(world.world().tick())+"|"+
+                std::to_string(world.generation()));
+        }catch(const std::exception&){
+            announce(world.world(),"ERROR|PLANET_PLAYER_DENIED");
+        }
+        return;
+    }
     // PLAY-13D.4C.4: authenticated, owner-scoped native orbital shuttle
     // commands. The relay supplies strictly typed fields; native validates again.
     if(!v.empty() && v[0]=="PLANET_SHUTTLE") {
