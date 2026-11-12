@@ -2344,6 +2344,52 @@
          }
        });
      }
+     if(e.type==='PLANET_PLAYER_REGISTERED'||e.type==='PLANET_PLAYER_COMMITTED'||
+        e.type==='PLANET_PLAYER_STATUS'||e.type==='PLANET_SURFACE_COMMITTED'||
+        e.type==='PLANET_SURFACE_POSE'){
+       const cards=q('celestialBodyList').querySelectorAll('[data-shuttle-body]');
+       cards.forEach(panel=>{
+         const matchingCell=e.type==='PLANET_PLAYER_REGISTERED'||
+           e.type==='PLANET_SURFACE_COMMITTED'||
+           (e.type==='PLANET_PLAYER_STATUS'&&e.body===0)||
+           (panel.dataset.shuttleBody===String(e.body)&&
+            panel.dataset.shuttleRegion===e.latitude+','+e.longitude);
+         if(!matchingCell)return;
+         const person=panel.querySelector('[data-native-player-status]');
+         const pose=panel.querySelector('[data-native-pose-status]');
+         if(e.type==='PLANET_PLAYER_REGISTERED'&&person){
+           person.textContent='Original player registered on ship #'+e.ship+
+             ', SQLite generation '+e.generation+'. Select site and Board when ready.';
+         }else if(e.type==='PLANET_PLAYER_COMMITTED'&&person){
+           person.textContent='Original player '+e.operation+
+             ' committed (receipt '+e.receipt+
+             ', generation '+e.generation+'). Refresh player custody.';
+         }else if(e.type==='PLANET_PLAYER_STATUS'&&person){
+           const states=['Aboard original ship','Rescued','Detained','Stranded',
+             'At station','Aboard original shuttle','Shuttle in planetary transit',
+             'On original planetary surface'];
+           person.textContent=states[e.state]+
+             ' · original body #'+e.body+' · region ('+e.latitude+','+
+             e.longitude+') · flight '+e.flight+' · descent '+e.descent+
+             ' · ascent '+e.ascent+' · last action '+e.last+
+             ' · world tick '+e.worldTick+' · generation '+e.generation;
+         }else if(e.type==='PLANET_SURFACE_COMMITTED'&&pose){
+           pose.textContent='Original '+(e.npc?'named NPC #'+e.npc:'player')+
+             ' step committed · receipt '+e.receipt+
+             ' · generation '+e.generation+'. Await actual pose.';
+         }else if(e.type==='PLANET_SURFACE_POSE'&&pose){
+           pose.textContent=(e.npc?'Original NPC #'+e.npc:'Original player')+
+             ' native feet (mm): X '+e.x+', Y '+e.y+', Z '+e.z+
+             ' · motion receipt '+e.receipt+' · tick '+e.lastMoveTick+
+             ' · world '+e.worldTick+' · SQLite generation '+e.generation;
+         }
+       });
+     }
+     if(e.type==='ERROR'&&e.error.startsWith('PLANET_')){
+       q('celestialBodyList').querySelectorAll('[data-native-player-status],[data-native-pose-status]')
+         .forEach(slot=>{slot.textContent='Native rejected request: '+e.error+
+           '. Request original status to reconcile; no movement assumed.';});
+     }
      if(e.type==='PLANET_SHUTTLE_STATUS'||e.type==='PLANET_SHUTTLE_COMMITTED'){
        const cards=q('celestialBodyList').querySelectorAll('[data-shuttle-body]');
        cards.forEach(panel=>{
