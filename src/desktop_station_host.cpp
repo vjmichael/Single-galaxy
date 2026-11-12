@@ -12,6 +12,7 @@
 #include "galaxy/StationLaunch.hpp"
 #include "galaxy/StationRefineryProtocol.hpp"
 #include "galaxy/ColonyIndustrialService.hpp"
+#include "galaxy/ColonyIndustrialManagement.hpp"
 #include <algorithm>
 #include <charconv>
 #include <chrono>
@@ -148,6 +149,10 @@ static int run_host(int argc,char** argv){
    const bool industrial_move=f.size()==5&&f[0]=="INDMOVE";
    const bool industrial_action=industrial_view||industrial_approve||
                                 industrial_step||industrial_move;
+   // DOCK-08: local owner-controlled original industrial facility and staff.
+   const bool management_view=f.size()==5&&f[0]=="IMVIEW";
+   const bool management_apply=f.size()==5&&f[0]=="IMAPPLY";
+   const bool management_action=management_view||management_apply;
    const bool population=f.size()==5&&f[0]=="POPVIEW";
    const bool dock_view=f.size()==5&&f[0]=="DOCKVIEW";
    const bool dock_pedestrians=f.size()==5&&f[0]=="DOCKPED";
@@ -166,7 +171,7 @@ static int run_host(int argc,char** argv){
                           dock_passenger||dock_freight||dock_work||
                           dock_destinations||dock_route||dock_cancel||
                           dock_region_view||dock_bind||dock_renew;
-   if(!walking&&!boarding&&!exiting&&!view&&!refine&&!unload&&!colony_console&&!population&&!industrial_action&&!dock_action){deny(0,"malformed");continue;}
+   if(!walking&&!boarding&&!exiting&&!view&&!refine&&!unload&&!colony_console&&!population&&!industrial_action&&!management_action&&!dock_action){deny(0,"malformed");continue;}
    std::uint64_t requested_session=0,req=0,expected=0,
                  ship=0,quantity=0,extra=0,more=0;
    std::int64_t dx=0,dz=0;
@@ -183,6 +188,42 @@ static int run_host(int argc,char** argv){
    const auto now=std::chrono::steady_clock::now();
    if(now-last<std::chrono::milliseconds(45)){deny(req,"rate");continue;}
    const auto& person=world.world().player_people().at(kOwner);
+   if(management_action){
+    const EntityId local_station=person.physical_station;
+    if(!colony_industry::local_resident(world.world(),kOwner,local_station) ||
+       (management_view && ship!=local_station)){
+       deny(req,"industry-management-is-local-to-current-colony");continue;
+    }
+    int result=0;
+    std::uint64_t chosen=0;
+    if(management_apply){
+       if(ship<colony_management::kFirstOperation ||
+          ship>colony_management::kLastOperation){
+           deny(req,"unknown-original-facility-or-workforce-operation");continue;
+       }
+       const auto cmd=colony_management::propose(
+           world.world(),kOwner,local_station,ship,receipt_prefix|req);
+       if(!cmd || !world.submit(*cmd)){
+           deny(req,"original-facility-material-or-worker-gate");continue;
+       }
+       // An applied source event is the only ground for accepted work;
+       // no new worker assignment, module or machine is created in the UI.
+       world.step();
+       galaxy::server_dx::committed_breadcrumb(
+           world.world().tick(),world.generation());
+       const auto& committed=world.world().events().back();
+       if(committed.command_id!=cmd->id)
+           throw std::runtime_error("original industrial management event mismatch");
+       result=committed.result==Outcome::Applied?1:2;
+       chosen=ship;
+    }
+    last=now;
+    std::cout<<colony_management::make_snapshot(
+        world,kOwner,session,req,result,chosen)<<std::flush;
+    if(!std::cout)
+        throw std::runtime_error("original colony workforce writer disconnected");
+    continue;
+   }
    if(industrial_action){
     // A client cannot nominate a foreign colony or an industry source ship.
     // The original constructed station ID is the ONLY industrial site key;
