@@ -2304,6 +2304,9 @@ target_link_libraries(galaxy_desktop_player_host PRIVATE galaxy_fp3d02c_interior
 # S6-G: native exact-save v127-v135 historical migration, failpoint
 # rollback, canonical mass invariants and 1024 durable Stage 6 source ticks.
 if(BUILD_TESTING)
+  add_executable(galaxy_stage06d7_freight_tests
+    tests/Stage06D7FreightTests.cpp)
+  target_link_libraries(galaxy_stage06d7_freight_tests PRIVATE galaxy_kernel)
   add_executable(galaxy_stage06g_consolidated_migration_tests
     tests/Stage06GConsolidatedMigrationTests.cpp)
   target_link_libraries(galaxy_stage06g_consolidated_migration_tests PRIVATE galaxy_kernel)
@@ -2317,6 +2320,20 @@ if(BUILD_TESTING AND Python3_Interpreter_FOUND)
   add_executable(galaxy_stage6f5e_planet_host_fixture
     tests/STAGE6F5E_PlanetHostFixture.cpp)
   target_link_libraries(galaxy_stage6f5e_planet_host_fixture PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_stage06d7_geological_freight
+    COMMAND ${Python3_EXECUTABLE}
+      ${CMAKE_CURRENT_SOURCE_DIR}/tests/Stage06D7FreightMatrix.py
+      $<TARGET_FILE:galaxy_stage6f5e_planet_host_fixture>
+      $<TARGET_FILE:galaxy_stage06d7_freight_tests>)
+  set_tests_properties(galaxy_stage06d7_geological_freight
+    PROPERTIES TIMEOUT 480 LABELS "stage6;geology;freight;original-sqlite;schema")
+  add_test(NAME galaxy_stage06g_original_named_npc_movement
+    COMMAND ${Python3_EXECUTABLE}
+      ${CMAKE_CURRENT_SOURCE_DIR}/tests/Stage06GNamedNPCMovement.py
+      $<TARGET_FILE:galaxy_stage6f5e_planet_host_fixture>
+      $<TARGET_FILE:galaxy_desktop_player_host>)
+  set_tests_properties(galaxy_stage06g_original_named_npc_movement
+    PROPERTIES TIMEOUT 480 LABELS "stage6;named-npc;native-host;sqlite;recovery")
   add_test(NAME galaxy_stage6f5e_planet_host_recovery
     COMMAND ${Python3_EXECUTABLE}
       ${CMAKE_CURRENT_SOURCE_DIR}/tests/STAGE6F5E_PlanetHostRecoveryTests.py
