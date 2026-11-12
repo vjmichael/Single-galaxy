@@ -516,7 +516,7 @@ func _accept_original_survey(parts: PackedStringArray) -> void:
 				dx*dx+dy*dy+dz*dz > MAX_RANGE_MM*MAX_RANGE_MM or
 				radius <= 0 or radius > 10000000 or taxonomy not in [0,1,2,3] or
 				detail not in [0,1] or ore < -1 or ore > 1000000000000 or
-				(detail == 0 and (ore != -1 or taxonomy != 3)))):
+				(detail == 0 and (ore != -1 or taxonomy != 3))):
 			stop("Forged or unbounded original source asteroid")
 			return
 		for row in rows:
