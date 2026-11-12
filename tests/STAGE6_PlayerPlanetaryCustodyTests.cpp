@@ -147,6 +147,20 @@ try {
         7,ship,key,PlanetaryPlayerAction::Disembark,81102));
     CHECK(world.world().player_people().at(7).state==
           PlayerPersonState::AtPlanetarySurface);
+    const galaxy::stage6::RenderTileAddress arrival_tile{
+        static_cast<std::uint8_t>(std::min<unsigned>(selected.lat/7,
+            galaxy::stage6::kLatitudeBands-1)),
+        static_cast<std::uint8_t>(selected.lon/6),1};
+    const auto on_surface=stage6::observe_native_landed_player(
+        world,7,ship,key);
+    CHECK(on_surface && on_surface->still_current(world) &&
+          on_surface->player_disembark_receipt==81102);
+    const auto native_packet=stage6::original_godot_mesh_packet(
+        world,7,ship,selected.body,{arrival_tile},key);
+    CHECK(native_packet &&
+          native_packet->find(R"("player_surface_verified":true)")!=std::string::npos &&
+          native_packet->find(R"("player_disembark_receipt":"81102")")!=std::string::npos);
+    CHECK(!stage6::observe_native_landed_player(world,8,ship,key));
     CHECK(!world.launch_planetary_shuttle(7,ship,key,81235,true));
     CHECK(!world.begin_celestial_transit(7,ship,selected.body,91235));
 
@@ -163,6 +177,7 @@ try {
     }
     CHECK(world.planetary_player_shuttle_action(
         7,ship,key,PlanetaryPlayerAction::Reboard,81103));
+    CHECK(!stage6::observe_native_landed_player(world,7,ship,key));
     CHECK(world.launch_planetary_shuttle(7,ship,key,81235,true));
     CHECK(world.world().player_people().at(7).state==
           PlayerPersonState::PlanetaryTransit);
