@@ -11,6 +11,7 @@
 #include "galaxy/Dock06Corridor.hpp"
 #include "galaxy/StationLaunch.hpp"
 #include "galaxy/StationRefineryProtocol.hpp"
+#include "galaxy/ColonyIndustrialService.hpp"
 #include <algorithm>
 #include <charconv>
 #include <chrono>
@@ -140,6 +141,11 @@ static int run_host(int argc,char** argv){
    const bool colony_view=colony_console&&f[0]=="COLVIEW";
    const bool colony_refine=colony_console&&f[0]=="COLREFINE";
    const bool colony_unload=colony_console&&f[0]=="COLUNLOAD";
+   // DOCK-07 stays within the same authenticated person/station writer.
+   const bool industrial_view=f.size()==5&&f[0]=="INDVIEW";
+   const bool industrial_approve=f.size()==5&&f[0]=="INDAPPROVE";
+   const bool industrial_step=f.size()==5&&f[0]=="INDSTEP";
+   const bool industrial_action=industrial_view||industrial_approve||industrial_step;
    const bool population=f.size()==5&&f[0]=="POPVIEW";
    const bool dock_view=f.size()==5&&f[0]=="DOCKVIEW";
    const bool dock_pedestrians=f.size()==5&&f[0]=="DOCKPED";
@@ -158,7 +164,7 @@ static int run_host(int argc,char** argv){
                           dock_passenger||dock_freight||dock_work||
                           dock_destinations||dock_route||dock_cancel||
                           dock_region_view||dock_bind||dock_renew;
-   if(!walking&&!boarding&&!exiting&&!view&&!refine&&!unload&&!colony_console&&!population&&!dock_action){deny(0,"malformed");continue;}
+   if(!walking&&!boarding&&!exiting&&!view&&!refine&&!unload&&!colony_console&&!population&&!industrial_action&&!dock_action){deny(0,"malformed");continue;}
    std::uint64_t requested_session=0,req=0,expected=0,
                  ship=0,quantity=0,extra=0,more=0;
    std::int64_t dx=0,dz=0;
@@ -175,6 +181,59 @@ static int run_host(int argc,char** argv){
    const auto now=std::chrono::steady_clock::now();
    if(now-last<std::chrono::milliseconds(45)){deny(req,"rate");continue;}
    const auto& person=world.world().player_people().at(kOwner);
+   if(industrial_action){
+    // A client cannot nominate a foreign colony or an industry source ship.
+    // The original constructed station ID is the ONLY industrial site key;
+    // approved recipes, workers, materials and outcomes remain kernel-owned.
+    const EntityId station=person.physical_station;
+    if(!colony_industry::local_resident(world.world(),kOwner,station) ||
+       ((industrial_view||industrial_step) && ship!=station)){
+      deny(req,"industry-is-local-to-current-colony");continue;
+    }
+    int result=0;
+    if(industrial_approve){
+      if(ship!=1 && ship!=2){
+        deny(req,"unsupported-original-workshop-trade");continue;
+      }
+      const auto original_ship=colony_industry::local_source_ship(
+          world.world(),station,kOwner);
+      if(!original_ship ||
+         !colony_industry::native_workshop_at(world.world(),station,kOwner)){
+        deny(req,"no-original-local-workshop");continue;
+      }
+      const auto candidate=workforce02::approved_workshop_job(
+          world.world(),kOwner,original_ship,station,
+          ship==1?WorkshopTrade::Cut:WorkshopTrade::Shape,
+          1,receipt_prefix|req,true);
+      if(!candidate || !world.submit(*candidate)){
+        deny(req,"original-workshop-supervisor-or-approval-unavailable");continue;
+      }
+      world.step();
+      galaxy::server_dx::committed_breadcrumb(
+          world.world().tick(),world.generation());
+      const auto& applied=world.world().events().back();
+      if(applied.command_id!=candidate->id)
+        throw std::runtime_error("original industrial job receipt mismatch");
+      result=applied.result==Outcome::Applied?1:2;
+    }else if(industrial_step){
+      const auto* shop=world.world().workshop(station);
+      if(!colony_industry::native_workshop_at(world.world(),station,kOwner) ||
+         !shop || (!shop->approved_jobs[0].command_id &&
+                   !shop->approved_jobs[1].command_id)){
+        deny(req,"no-original-active-manufacturing-program");continue;
+      }
+      // A finite explicit gameplay tick, NOT a synthetic production credit.
+      world.step();
+      galaxy::server_dx::committed_breadcrumb(
+          world.world().tick(),world.generation());
+      result=3;
+    }
+    last=now;
+    std::cout<<colony_industry::make_snapshot(
+        world,kOwner,session,req,result)<<std::flush;
+    if(!std::cout)throw std::runtime_error("industrial native pipe closed");
+    continue;
+   }
    if(population){
     if(person.state!=PlayerPersonState::AtStation ||
        person.owner!=kOwner || !person.physical_station ||
