@@ -878,6 +878,24 @@ class Handler(http.server.BaseHTTPRequestHandler):
                         'colonyPlanetRetrieve':'PLANET_RETRIEVE',
                         'colonyPlanetSupport':'PLANET_SUPPORT'}[action]
                     command=f'{operation}|{prefix}|{resource}|{kg}'
+            elif action in ('colonyPlanetGeoFreightLoad','colonyPlanetGeoFreightUnload'):
+                expected={'token','action','body','latitude','longitude',
+                          'resource','kg','requestId'}
+                if set(doc)!=expected:
+                    raise ValueError('Unexpected original shuttle geology fields')
+                body,lat,lon=doc['body'],doc['latitude'],doc['longitude']
+                resource,kg,request=doc['resource'],doc['kg'],doc['requestId']
+                if (type(body)!=int or not 1<=body<=9223372036854775807 or
+                    type(lat)!=int or not 0<=lat<36 or
+                    type(lon)!=int or not 0<=lon<72 or
+                    type(resource)!=str or
+                    resource not in ('SOIL','MINERAL','VOLATILE') or
+                    type(kg)!=int or not 1<=kg<=1000 or
+                    type(request)!=int or not 1<=request<(1<<50)):
+                    raise ValueError('Unapproved geological shuttle freight')
+                verb=('PLANET_GEO_FREIGHT_LOAD' if action=='colonyPlanetGeoFreightLoad'
+                      else 'PLANET_GEO_FREIGHT_UNLOAD')
+                command=f'{verb}|{body}|{lat}|{lon}|{resource}|{kg}|{request}'
             elif action=='colonyPlanetGeoExtract':
                 expected={'token','action','body','latitude','longitude',
                           'resource','phase','kg','worker','requestId'}
