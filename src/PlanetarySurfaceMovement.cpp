@@ -299,18 +299,6 @@ bool Simulation::planetary_surface_move(PlayerId owner,EntityId ship,
     return true;
 }
 
-namespace {
-// S6-F5-C trusted original-person/site admission. No client coordinates,
-// health assessment, gravity, oxygen or force is supplied by the caller.
-struct PlayerSurfaceSource {
-    PlayerPerson* person=nullptr;
-    PlanetarySiteFacility* site=nullptr;
-    std::int64_t gravity_mm_s2=0;
-    planetary::continuous_surface::Ground ground{};
-    planetary::PhysicalHazard hazard=planetary::PhysicalHazard::None;
-};
-}
-
 // v134: every generated celestial bulk-mass input must match the original
 // deterministic physical catalogue. This helper is called after original
 // site/ship/player custody checks. No changes on denied requests.

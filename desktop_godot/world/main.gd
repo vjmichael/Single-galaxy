@@ -1917,11 +1917,14 @@ func _on_original_planet_pose(pose: Dictionary) -> void:
 	if is_instance_valid(status_label):
 		status_label.text="F9 source surface | WASD native steps | Space native jump | F8 oxygen charge | F10 return"
 	if is_instance_valid(native_label):
-		native_label.text="ORIGINAL BODY g=%d mm/s² | %s | O2 %dkg | CO2 %dkg | injury %d/100 | heat %dms" % [
-			int(pose.get("gravity_mm_s2",0)),
+		var source_g := int(pose.get("gravity_mm_s2",0))
+		var g_display := ("%d mm/s²" % source_g) if source_g > 0 else "UNVERIFIED"
+		native_label.text="ORIGINAL BODY g=%s | %s | O2 %dkg | CO2 %dkg | injury %d/100 | heat %dms | air unverified %dms" % [
+			g_display,
 			"grounded" if bool(pose.get("grounded",true)) else "airborne",
 			int(pose.get("oxygen_kg",0)),int(pose.get("co2_kg",0)),
-			int(pose.get("injury_points",0)),int(pose.get("thermal_ms",0))]
+			int(pose.get("injury_points",0)),int(pose.get("thermal_ms",0)),
+			int(pose.get("air_uncertain_ms",0))]
 
 func _on_native_player_intent(heading: Vector3) -> void:
 	if native_station_session != null and native_station_session.is_active():
