@@ -239,6 +239,7 @@ static int run_planet_host(const std::string& save_utf8){
         const auto receipt_base=(new_epoch()&((std::uint64_t{1}<<60)-1))
               & ~((std::uint64_t{1}<<20)-1);
         std::uint64_t last_request=0,attempts=0;
+        auto last_step=std::chrono::steady_clock::now()-std::chrono::milliseconds(100);
         const auto emit=[&](std::uint64_t request){
             const auto* p=landed();
             if(!p)throw std::runtime_error("planetary player custody lost");
@@ -286,6 +287,14 @@ static int run_planet_host(const std::string& save_utf8){
             if(!surface::within_step(dx,dz,true)){
                 deny(req,"planet-step-limit");continue;
             }
+            // Native timing is separate from Godot frame rate. A fast or
+            // malicious client cannot accelerate original ecology/world STEP
+            // by flooding physically valid 300 mm movement requests.
+            const auto now=std::chrono::steady_clock::now();
+            if(now-last_step<std::chrono::milliseconds(50)){
+                deny(req,"planet-rate-limit");continue;
+            }
+            last_step=now;
             const auto* before=landed();
             if(!before){deny(req,"planet-custody-lost");return 3;}
             const PlanetarySiteKey key{before->planet_body,before->planet_latitude,
