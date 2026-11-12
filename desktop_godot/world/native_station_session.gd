@@ -631,7 +631,7 @@ func _submit_dock(kind: String, source: int, quantity: int = 0,
 			Time.get_ticks_msec()-_last_send < NATIVE_HANGAR_COMMAND_GAP_MS:
 		_status("Dock service busy; retry after current native acknowledgement")
 		return false
-	var op := {"VIEW":"DOCKVIEW","ASSIGN":"DOCKASSIGN",
+	var op: String = {"VIEW":"DOCKVIEW","ASSIGN":"DOCKASSIGN",
 		"RELEASE":"DOCKRELEASE","PASS":"DOCKPASS","FREIGHT":"DOCKFREIGHT",
 		"WORK":"DOCKWORK","DESTS":"DOCKDESTS","RENEW":"DOCKRENEW",
 		"PED":"DOCKPED",
@@ -1103,7 +1103,7 @@ func _send_colony_industry(kind: String, selector: int) -> bool:
 			Time.get_ticks_msec()-_last_send<NATIVE_HANGAR_COMMAND_GAP_MS:
 		_status("Local industry console busy or not inside original colony")
 		return false
-	var opcode := {"VIEW":"INDVIEW","APPROVE":"INDAPPROVE",
+	var opcode: String = {"VIEW":"INDVIEW","APPROVE":"INDAPPROVE",
 		"STEP":"INDSTEP","MOVE":"INDMOVE","RUN":"INDRUN"}.get(kind,"")
 	if opcode.is_empty():
 		return false
