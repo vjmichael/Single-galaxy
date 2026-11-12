@@ -14696,7 +14696,9 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
             const bool equipment_bad=result.snapshot_version_>=135 &&
                 ((sv.suit_embodied_kg!=0 && sv.suit_embodied_kg!=10) ||
                  sv.suit_integrity>100 || sv.suit_charge>10 ||
-                 sv.suit_power_ticks>=600 || u64(f[45])>1 ||
+                 u64(f[42])>100 || u64(f[43])>10 ||
+                 sv.suit_power_ticks>=600 || u64(f[44])>=600 ||
+                 u64(f[45])>1 ||
                  sv.suit_manufacture_receipt>=(std::uint64_t{1}<<60) ||
                  sv.hypoxia_exposure_ms>1000000000000ULL ||
                  sv.last_medical_tick>result.tick_ ||
