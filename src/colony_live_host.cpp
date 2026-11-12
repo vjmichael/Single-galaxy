@@ -1774,6 +1774,66 @@ void apply(PersistentWorld& world,EntityId ship,FleetSelection& fleet,const std:
         }
         return;
     }
+    // S6-D7: never label a virtual WO4 movement as physical delivery.
+    // Each owner-approved operation touches the ORIGINAL shuttle/ship/site
+    // and commits one SQLite generation after the current known survey.
+    // LOAD only while the original shuttle is landed; UNLOAD only after
+    // its documented ascent has returned it to the original colony ship.
+    if(!v.empty() &&
+       (v[0]=="PLANET_GEO_FREIGHT_LOAD" ||
+        v[0]=="PLANET_GEO_FREIGHT_UNLOAD")) {
+        try {
+            if(v.size()!=7 || !knowledge)
+                throw std::invalid_argument("invalid original freight request");
+            const auto body=integer(v[1]),lat=integer(v[2]),
+                       lon=integer(v[3]),kg=integer(v[5]),
+                       request=integer(v[6]);
+            if(body<=0 || lat<0 || lat>=planetary::kWatershedRows ||
+               lon<0 || lon>=planetary::kWatershedColumns ||
+               kg<=0 || kg>1000 || request<=0 ||
+               request>=(std::int64_t{1}<<50))
+                throw std::invalid_argument("geological freight bounds");
+            PlanetaryResource resource=PlanetaryResource::Soil;
+            if(v[4]=="SOIL")resource=PlanetaryResource::Soil;
+            else if(v[4]=="MINERAL")resource=PlanetaryResource::Mineral;
+            else if(v[4]=="VOLATILE")resource=PlanetaryResource::Volatile;
+            else throw std::invalid_argument("unknown original geological cargo");
+            const auto observation=world.world().scan_planetary_geography(
+                principal,ship,std::uint64_t(body),
+                std::uint16_t(lat),std::uint16_t(lon));
+            if(!observation)
+                throw std::invalid_argument("geological source not observed");
+            const auto known=knowledge->known_planetary_region(
+                principal,std::uint32_t(std::uint64_t(body)>>32),
+                std::uint64_t(body),std::uint16_t(lat),std::uint16_t(lon),
+                observation->key.revision);
+            if(!known || known->elevation!=observation->landscape.region.elevation ||
+               known->ocean!=std::uint8_t(observation->landscape.region.surface_water) ||
+               known->terrain!=std::uint8_t(observation->landscape.region.terrain) ||
+               known->watercourse!=std::uint8_t(observation->landscape.watercourse) ||
+               known->drainage!=observation->catchment_runoff)
+                throw std::invalid_argument("unverified original freight source");
+            const PlanetarySiteKey key{std::uint64_t(body),
+                std::uint16_t(lat),std::uint16_t(lon),
+                observation->key.revision};
+            const bool load=v[0]=="PLANET_GEO_FREIGHT_LOAD";
+            const bool ok=load?
+                world.load_planetary_geology_shuttle(
+                    principal,ship,key,resource,kg,std::uint64_t(request)):
+                world.unload_planetary_geology_shuttle(
+                    principal,ship,key,resource,kg,std::uint64_t(request));
+            if(!ok)throw std::invalid_argument("original shuttle cargo or flight refused");
+            announce(world.world(),"PLANET_GEO_FREIGHT_COMMITTED|"+
+                std::string(load?"LOAD|":"UNLOAD|")+
+                std::to_string(body)+"|"+std::to_string(lat)+"|"+
+                std::to_string(lon)+"|"+v[4]+"|"+
+                std::to_string(kg)+"|"+std::to_string(request)+"|"+
+                std::to_string(world.generation()));
+        }catch(const std::exception&) {
+            announce(world.world(),"ERROR|PLANET_GEO_FREIGHT_DENIED");
+        }
+        return;
+    }
     // PLAY-13D.3: region-scoped physical actions. Player must have
     // previously observed this exact region/revision in the private archive.
     if(!v.empty() && (v[0]=="PLANET_BUILD" || v[0]=="PLANET_EQUIP" ||
