@@ -1322,6 +1322,16 @@ if(BUILD_TESTING)
     COMMAND galaxy_play13d_planetary_geography_tests)
 endif()
 
+# STAGE6-ENV01 / PGF-01C canonical seasonal climate, world-source
+# identity and conservation (all observations remain read-only).
+if(BUILD_TESTING)
+  add_executable(galaxy_stage06_seasonal_environment_tests
+    tests/Stage06SeasonalEnvironmentTests.cpp)
+  target_link_libraries(galaxy_stage06_seasonal_environment_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_stage06_seasonal_environment
+    COMMAND galaxy_stage06_seasonal_environment_tests)
+endif()
+
 # PGF-01B.2: authenticated real host planetary survey and saved restart.
 if(BUILD_TESTING)
   add_executable(galaxy_play13d_live_planet_survey_tests
