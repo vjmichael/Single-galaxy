@@ -80,7 +80,7 @@ func _ready() -> void:
 		{"label":"Separate plagioclase → aluminum","selector":4,
 		 "hint":"Only if actual geological plagioclase stock exists; consumes that mineral into native aluminum and glass"}]:
 		var b := _action(build_actions,str(item["label"]),
-			func(): colony_ship_work_requested.emit(int(item["selector"])),
+			_on_colony_ship_work.bind(int(item["selector"])),
 			str(item["hint"]))
 		_build_buttons.append(b)
 	_survey = Label.new()
@@ -89,6 +89,10 @@ func _ready() -> void:
 	column.add_child(_survey)
 	for button in _buttons:
 		button.disabled = true
+
+func _on_colony_ship_work(operation: int) -> void:
+	if operation>=1 and operation<=4:
+		colony_ship_work_requested.emit(operation)
 
 func _action(parent: GridContainer, title: String, callback: Callable, hint: String) -> Button:
 	var button := Button.new()
