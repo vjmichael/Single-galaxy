@@ -6,6 +6,7 @@ signal unload_requested()
 signal industry_refresh_requested()
 signal industry_batch_requested(trade: int)
 signal industry_tick_requested()
+signal industry_run_requested()
 signal industry_transfer_requested(selector: int)
 signal industry_management_refresh_requested()
 signal industry_management_apply_requested(selector: int)
@@ -55,6 +56,7 @@ var _industry_jobs: Label
 var _industry_cut_button: Button
 var _industry_shape_button: Button
 var _industry_tick_button: Button
+var _industry_run_button: Button
 var _industry_transfers: Array[Button] = []
 var _management_status: Label
 var _management_workers: Label
@@ -256,6 +258,12 @@ func _ready() -> void:
 	_industry_tick_button.tooltip_text = "Runs one native simulation tick on this save; never grants material or instant completed goods"
 	_industry_tick_button.pressed.connect(func(): industry_tick_requested.emit())
 	column.add_child(_industry_tick_button)
+	_industry_run_button = Button.new()
+	_industry_run_button.text = "Run 16 original workshop ticks (bounded)"
+	_industry_run_button.disabled = true
+	_industry_run_button.tooltip_text = "Commits 16 real original-world steps; only verified physical batches can add inventory. No simulation of output in Godot."
+	_industry_run_button.pressed.connect(func(): industry_run_requested.emit())
+	column.add_child(_industry_run_button)
 	var manager_title := Label.new()
 	manager_title.text = "INDUSTRIAL FACILITIES | NAMED WORKERS | ORIGINAL SHIFTS"
 	column.add_child(manager_title)
@@ -470,6 +478,8 @@ func show_waiting() -> void:
 		_industry_shape_button.disabled=true
 	if is_instance_valid(_industry_tick_button):
 		_industry_tick_button.disabled=true
+	if is_instance_valid(_industry_run_button):
+		_industry_run_button.disabled=true
 	for transfer in _industry_transfers:
 		transfer.disabled=true
 	if is_instance_valid(_lots):
@@ -612,7 +622,9 @@ func set_industry(snapshot: Dictionary) -> void:
 		"\nOriginal workshop declined that approval." if result==2 else
 		"\nOne native production tick completed; see actual stock and batches." if result==3 else
 		"\nOriginal world committed a physical local stock transfer." if result==4 else
-		"\nOriginal world refused this stock transfer." if result==5 else ""]
+		"\nOriginal world refused this stock transfer." if result==5 else
+		"\nPhysical original workshop batch completed during 16 native steps." if result==6 else
+		"\nSixteen genuine native steps; no physical batch completed (inspect staff, shift, material and power)." if result==7 else ""]
 	_industry_stocks.clear()
 	var available := {}
 	for stock in snapshot.get("stocks",[]):
@@ -648,7 +660,7 @@ func set_industry(snapshot: Dictionary) -> void:
 			cut_ready=job_ready
 		elif trade==2:
 			shape_ready=job_ready
-		active = active or approved
+		active = active or (approved and int(job.get("completed",0)) < int(job.get("target",0)))
 		descriptions.append("%s: input %d kg, WIP %d kg, output %d kg; labor %s; power %s; program %s" % [
 			"Panels" if trade==1 else "Frames",
 			material,int(job.get("reserved",0)),int(job.get("output",0)),
@@ -661,6 +673,7 @@ func set_industry(snapshot: Dictionary) -> void:
 	_industry_cut_button.disabled=not cut_ready
 	_industry_shape_button.disabled=not shape_ready
 	_industry_tick_button.disabled=not active
+	_industry_run_button.disabled=not active
 	var transfer_requirements := [
 		"H/0/good/aluminum",
 		"S/0/good/aluminum",
