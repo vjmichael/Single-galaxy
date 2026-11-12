@@ -86,7 +86,7 @@ func present(frame: Dictionary, options: Array[Dictionary], pending: bool=false)
     _sites.disabled=pending or state!=0 or options.size()<2
     var person_location := "ORIGINAL SHIP" if state==0 else (
         "IN NATIVE SHUTTLE" if state==5 else "IN NATIVE TRANSIT")
-    var shuttle_phase := ["ORBIT","DESCENDING","LANDED","ASCENDING"][phase]
+    var shuttle_phase: String = ["ORBIT","DESCENDING","LANDED","ASCENDING"][phase]
     _status.text="%s | shuttle %s\nWorld tick %d | SQLite generation %d\nOriginal body %s, site %d\nEvery action requires an independent committed native receipt." % [
         person_location,shuttle_phase,int(frame["tick"]),int(frame["gen"]),
         str(frame["body"]),int(frame["site"])]
