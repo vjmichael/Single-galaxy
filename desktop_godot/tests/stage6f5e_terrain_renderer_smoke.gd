@@ -43,7 +43,7 @@ func _run() -> void:
             tiles.append(_tile(col*64000,row*64000))
     var atlas := {"schema":"SG-STAGE6-WALKTILES-01",
         "session":"55","tiles":tiles}
-    var pose := {"session":55,"body":10,"ship":20,"site":30,
+    var pose := {"session":55,"body":"10","ship":20,"site":30,
         "x_mm":0,"z_mm":0,"gen":11,"tick":22,"receipt":0}
     if not _write(path,atlas):
         push_error("Could not stage test-only bounded atlas")
