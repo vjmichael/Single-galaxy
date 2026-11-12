@@ -117,6 +117,18 @@ struct NativePlanetarySurfacePose {
     // clients; they are NEVER a world-wide Euclidean position/teleport.
     std::int64_t latitude_pdeg=0,longitude_pdeg=0;
 };
+// S6-F5-C: one durable original PlayerPerson's on-foot vertical/survival state.
+// Oxygen is sourced as *whole kilograms* from the existing ORIGINAL site;
+// no fabricated suit, atmosphere, health NPC or parallel inventory.
+struct NativePlanetarySurvivalState {
+    std::int64_t radial_height_mm=0,radial_speed_mm_s=0;
+    std::uint64_t last_vertical_tick=0;
+    std::int64_t oxygen_kg=0,exhaled_co2_kg=0;
+    std::uint32_t oxygen_consumption_ticks=0;
+    std::uint64_t thermal_exposure_ms=0,unverified_air_exposure_ms=0;
+    std::uint32_t injury_points=0;
+    bool initialized=false,grounded=true;
+};
 // PLAY-STATION-02: host-validated finite station traversal and ship transfer.
 enum class StationPlayerAction : std::uint8_t { Walk=1, Board=2, Disembark=3 };
 struct PlayerPerson {
@@ -140,6 +152,7 @@ struct PlayerPerson {
     std::uint64_t planet_flight_receipt=0;
     std::uint64_t planet_descent_receipt=0,planet_ascent_receipt=0;
     NativePlanetarySurfacePose surface_pose{}; // v132, owner-person movement
+    NativePlanetarySurvivalState surface_survival{}; // v134 canonical body physics
 };
 enum class CelestialKind {Star=0,Planet=1,Moon=2,DebrisRegion=3};
 struct PhysicalCelestialBody {
@@ -149,6 +162,9 @@ struct PhysicalCelestialBody {
     std::uint64_t orbital_radius_milli_au=0;
     CosmicPosition position{};
     std::uint64_t physical_radius_mm=0;
+    // v134 sealed original source: generated bulk mass in 1e18 kilograms.
+    // Older snapshots require a one-time source-validated migration.
+    std::uint64_t physical_mass_1e18_kg=0;
 };
 
 enum class EntityType { Ship, Asteroid, Station, Stargate, Wreck };
@@ -1551,6 +1567,12 @@ public:
     bool planetary_surface_move(PlayerId owner,EntityId ship,
         const PlanetarySiteKey& key,std::uint64_t npc_id,
         std::int64_t dx_mm,std::int64_t dz_mm,std::uint64_t receipt);
+    // Physics command includes ONLY consent/jump, not height, gravity or health.
+    bool planetary_surface_vertical_action(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,bool jump,std::uint64_t receipt);
+    // Atomic original life-support stock transfer near the verified hatch.
+    bool planetary_surface_oxygen_action(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,bool return_to_site,std::uint64_t receipt);
     // DOCK-03A: trusted host-only, same-owner temporary ship-to-berth
     // shore duty. Moves one ORIGINAL named NPC physical location; neither
     // creates a new resident nor alters its legal home/crew contract.
@@ -1941,6 +1963,9 @@ public:
 
 
 private:
+    // S6-F5-C: original deterministic generated mass is sealed into v134.
+    bool establish_original_surface_gravity();
+    void process_original_surface_survival();
     // S6-F5-B: body radius comes ONLY from the existing immutable celestial
     // registry. A person/NPC can never manufacture a planet or hatch location.
     std::optional<std::uint64_t> original_walkable_body_radius(
