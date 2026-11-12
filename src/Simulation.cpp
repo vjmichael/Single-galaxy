@@ -13587,6 +13587,7 @@ std::string Simulation::canonical_state() const {
             if(snapshot_version_>=132)
                 out<<'|'<<p.surface_pose.x_mm<<'|'<<p.surface_pose.y_mm
                    <<'|'<<p.surface_pose.z_mm<<'|'
+                   <<p.surface_pose.surface_location<<'|'
                    <<p.surface_pose.last_move_tick<<'|'
                    <<p.surface_pose.last_move_receipt;
             out<<'\n';
@@ -13865,6 +13866,7 @@ std::string Simulation::canonical_state() const {
             if(snapshot_version_>=132)
                 out<<'|'<<n.surface_pose.x_mm<<'|'<<n.surface_pose.y_mm
                    <<'|'<<n.surface_pose.z_mm<<'|'
+                   <<n.surface_pose.surface_location<<'|'
                    <<n.surface_pose.last_move_tick<<'|'
                    <<n.surface_pose.last_move_receipt;
             out<<'\n';
@@ -14466,7 +14468,7 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                     static_cast<LocalDeliveryStage>(stage),created}).second)
                 throw std::runtime_error("snapshot: invalid local delivery order");
         } else if(f[0]=="playerperson" && result.snapshot_version_>=98) {
-            require_fields(f,result.snapshot_version_>=132?27:
+            require_fields(f,result.snapshot_version_>=132?28:
                 result.snapshot_version_>=131?22:
                 result.snapshot_version_>=122?15:result.snapshot_version_>=99?12:9);
             const auto owner=u64(f[1]),home=u64(f[2]),physical=u64(f[3]),
@@ -14488,8 +14490,9 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
             const auto sx=result.snapshot_version_>=132?i64(f[22]):0;
             const auto sy=result.snapshot_version_>=132?i64(f[23]):0;
             const auto sz=result.snapshot_version_>=132?i64(f[24]):0;
-            const auto motion_tick=result.snapshot_version_>=132?u64(f[25]):0;
-            const auto motion_receipt=result.snapshot_version_>=132?u64(f[26]):0;
+            const auto motion_site=result.snapshot_version_>=132?u64(f[25]):0;
+            const auto motion_tick=result.snapshot_version_>=132?u64(f[26]):0;
+            const auto motion_receipt=result.snapshot_version_>=132?u64(f[27]):0;
             const bool planetary_state=state>=unsigned(PlayerPersonState::InPlanetaryShuttle);
             if(!owner || owner==kServerAuthority ||
                (state==unsigned(PlayerPersonState::AtStation) ?
@@ -14513,7 +14516,7 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                       (!descent || ascent))) :
                     (body || lat || lon || rev || voyage || descent || ascent)) ||
                (motion_receipt ?
-                  (!planetary_state || !motion_tick ||
+                  (!planetary_state || !motion_site || !motion_tick ||
                    motion_tick>result.tick_ ||
                    motion_receipt>=(std::uint64_t{1}<<60) ||
                    sx< -planetary::surface_motion::kPadExtentMm ||
@@ -14521,7 +14524,7 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                    sz< -planetary::surface_motion::kPadExtentMm ||
                    sz>planetary::surface_motion::kPadExtentMm ||
                    sy< -32768000 || sy>32767000) :
-                  (sx || sy || sz || motion_tick)) ||
+                  (sx || sy || sz || motion_site || motion_tick)) ||
                (result.snapshot_version_<99 && state!=0) ||
                registered>result.tick_ || updated<registered ||
                updated>result.tick_ ||
@@ -14541,8 +14544,8 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                    static_cast<std::uint16_t>(lon),
                    static_cast<std::uint32_t>(rev),
                    voyage,descent,ascent,
-                   NativePlanetarySurfacePose{sx,sy,sz,motion_tick,
-                                             motion_receipt}}).second)
+                   NativePlanetarySurfacePose{sx,sy,sz,motion_site,
+                                             motion_tick,motion_receipt}}).second)
                 throw std::runtime_error("snapshot: invalid player persona");
         } else if(f[0]=="npcflight" && result.snapshot_version_>=95) {
             require_fields(f,result.snapshot_version_>=96?16:12);
@@ -16109,7 +16112,7 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                     (result.snapshot_version_<63 && !result.colony_ships_.empty()))))
                 throw std::runtime_error("snapshot: invalid NPC counter");
         } else if(f[0]=="npc" && result.snapshot_version_>=20){
-            require_fields(f,result.snapshot_version_>=132 ? 16 :
+            require_fields(f,result.snapshot_version_>=132 ? 17 :
                 result.snapshot_version_>=86 ? 11 :
                 result.snapshot_version_>=32 ? 9 : result.snapshot_version_>=31 ? 8 : 7);
             NpcRecord n{};n.id=u64(f[1]);n.home_ship=u64(f[2]);n.location=u64(f[3]);
@@ -16127,10 +16130,11 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
             n.role=static_cast<NpcRole>(role);
             if(result.snapshot_version_>=132) {
                 n.surface_pose={
-                    i64(f[11]),i64(f[12]),i64(f[13]),u64(f[14]),u64(f[15])};
+                    i64(f[11]),i64(f[12]),i64(f[13]),u64(f[14]),u64(f[15]),u64(f[16])};
                 const auto& pos=n.surface_pose;
                 if(pos.last_move_receipt ?
-                   (!pos.last_move_tick || pos.last_move_tick>result.tick_ ||
+                   (!pos.surface_location || !pos.last_move_tick ||
+                    pos.last_move_tick>result.tick_ ||
                     pos.last_move_receipt>=(std::uint64_t{1}<<60) ||
                     pos.x_mm< -planetary::surface_motion::kPadExtentMm ||
                     pos.x_mm>planetary::surface_motion::kPadExtentMm ||
@@ -16138,7 +16142,7 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                     pos.z_mm>planetary::surface_motion::kPadExtentMm ||
                     pos.y_mm< -32768000 || pos.y_mm>32767000) :
                    (pos.x_mm || pos.y_mm || pos.z_mm ||
-                    pos.last_move_tick))
+                    pos.surface_location || pos.last_move_tick))
                     throw std::runtime_error("snapshot: forged original named NPC ground pose");
             }
             if(!n.id || role>(result.snapshot_version_>=78?3ULL:2ULL) || n.farm_xp>1000000 || n.mentor_id==n.id ||
@@ -18308,15 +18312,33 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
             const auto& pose=person.surface_pose;
             if(pose.last_move_receipt &&
                (person.state!=PlayerPersonState::AtPlanetarySurface ||
-                !result.surface_move_receipts_.count(pose.last_move_receipt)))
+                !result.surface_move_receipts_.count(pose.last_move_receipt) ||
+                !result.planetary_sites_.count(PlanetarySiteKey{
+                   person.planet_body,person.planet_latitude,
+                   person.planet_longitude,person.planet_revision}) ||
+                result.planetary_sites_.at(PlanetarySiteKey{
+                   person.planet_body,person.planet_latitude,
+                   person.planet_longitude,person.planet_revision}).surface_location
+                    !=pose.surface_location))
                 throw std::runtime_error("snapshot: player cannot have fabricated surface pose");
         }
         for(const auto& [id,person]:result.npcs_){
             (void)id;
-            if(person.surface_pose.last_move_receipt &&
-               !result.surface_move_receipts_.count(
-                    person.surface_pose.last_move_receipt))
-                throw std::runtime_error("snapshot: NPC pose missing original motion receipt");
+            if(person.surface_pose.last_move_receipt){
+                bool site_authorized=false;
+                for(const auto& [key,site]:result.planetary_sites_){
+                    (void)key;
+                    if(site.surface_location==person.surface_pose.surface_location &&
+                       site.surface_location==person.location &&
+                       site.source_ship==person.home_ship &&
+                       site.spaceport_phase==3)site_authorized=true;
+                }
+                if(!site_authorized ||
+                   !result.surface_move_receipts_.count(
+                        person.surface_pose.last_move_receipt))
+                    throw std::runtime_error(
+                        "snapshot: NPC pose lacks original source-site custody");
+            }
         }
     }
     if(result.snapshot_version_>=131){
