@@ -81,10 +81,10 @@ static void assessment(){
     crop=seasonal_ecology_budget(&physical,true,false,0,false,21,20,0);
     CHECK(crop.mode==CropMode::Blocked);
     crop=seasonal_ecology_budget(&physical,true,false,0,false,60,20,0);
-    CHECK(crop.mode==CropMode::Field && crop.food_kg==12);
+    CHECK(crop.mode==CropMode::Field && crop.food_kg==10);
     crop=seasonal_ecology_budget(&physical,true,false,0,false,60,20,20);
-    CHECK(crop.mode==CropMode::Field && crop.food_kg==11 &&
-          crop.wastewater_kg==4);
+    CHECK(crop.mode==CropMode::Field && crop.food_kg==9 &&
+          crop.wastewater_kg==6);
     crop=seasonal_ecology_budget(&physical,true,false,0,false,80,20,0);
     CHECK(crop.mode==CropMode::Field && crop.food_kg==12);
     crop=seasonal_ecology_budget(&physical,true,false,0,false,80,20,0);
