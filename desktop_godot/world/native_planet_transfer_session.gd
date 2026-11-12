@@ -3,6 +3,7 @@ extends RefCounted
 ## PlayerPerson and planetary shuttle. No local flight, state mutations, or
 ## alternate save. This role excludes planet and cockpit writers.
 const SGDX_LAUNCH := preload("res://world/sgdx_process_launch.gd")
+const SOURCE_ID := preload("res://world/native_source_id.gd")
 signal state_received(state: Dictionary)
 signal status_changed(message: String)
 signal landed()
@@ -154,18 +155,23 @@ func _accept(line: String) -> void:
         return
     if parts.size()==9 and parts[0]=="TSITE" and parts[1]=="1":
         for i in range(2,9):
+            if i==4:
+                if not SOURCE_ID.valid(parts[i]):
+                    stop("Invalid original uint64 shuttle body")
+                    return
+                continue
             if not _valid(parts[i]):
                 stop("Invalid original shuttle source-site record")
                 return
         var ses := int(parts[2])
         var idx := int(parts[3])
-        var body := int(parts[4])
+        var body: String=parts[4]
         var lat := int(parts[5])
         var lon := int(parts[6])
         var surface := int(parts[7])
         var phase := int(parts[8])
         if ses<=0 or (_session>0 and ses!=_session) or _sites.size()>=16 or \
-                idx!=_sites.size() or body<=0 or lat<0 or lat>=36 or \
+                idx!=_sites.size() or lat<0 or lat>=36 or \
                 lon<0 or lon>=72 or surface<=0 or phase not in [0,1,2,3]:
             stop("Mismatched original shuttle site list")
             return
@@ -173,6 +179,11 @@ func _accept(line: String) -> void:
         return
     if parts.size()==19 and parts[0]=="TFRAME" and parts[1]=="1":
         for i in range(2,19):
+            if i==6:
+                if not SOURCE_ID.valid(parts[i]):
+                    stop("Invalid original uint64 shuttle body")
+                    return
+                continue
             if not _valid(parts[i]):
                 stop("Invalid original shuttle state number")
                 return
@@ -180,7 +191,7 @@ func _accept(line: String) -> void:
         var request := int(parts[3])
         var ship := int(parts[4])
         var person_state := int(parts[5])
-        var body := int(parts[6])
+        var body: String=parts[6]
         var lat := int(parts[7])
         var lon := int(parts[8])
         var phase := int(parts[9])
@@ -194,7 +205,7 @@ func _accept(line: String) -> void:
         var selected := int(parts[17])
         var count := int(parts[18])
         if ses<=0 or ship<=0 or person_state not in [0,5,6] or \
-                body<=0 or lat<0 or lat>=36 or lon<0 or lon>=72 or \
+                lat<0 or lat>=36 or lon<0 or lon>=72 or \
                 phase not in [0,1,2,3] or tick<0 or gen<=0 or site<=0 or \
                 flight<0 or descent<0 or ascent<0 or receipt<0 or \
                 count<=0 or count>16 or count!=_sites.size() or \
@@ -202,7 +213,7 @@ func _accept(line: String) -> void:
             stop("Impossible original shuttle state")
             return
         var o: Dictionary=_sites[selected]
-        if body!=int(o["body"]) or lat!=int(o["lat"]) or lon!=int(o["lon"]) or \
+        if body!=str(o["body"]) or lat!=int(o["lat"]) or lon!=int(o["lon"]) or \
                 site!=int(o["site"]):
             stop("Original shuttle source changed or site packet was forged")
             return
@@ -252,6 +263,11 @@ func _accept(line: String) -> void:
             stop("Invalid original shuttle handoff length")
             return
         for i in range(2,parts.size()):
+            if is_landing and i==5:
+                if not SOURCE_ID.valid(parts[i]):
+                    stop("Invalid original uint64 landing body")
+                    return
+                continue
             if not _valid(parts[i]):
                 stop("Invalid native shuttle handoff receipt")
                 return
@@ -260,7 +276,7 @@ func _accept(line: String) -> void:
                 _pending_action!=("DISEMBARK" if is_landing else "EXIT"):
             stop("Unrequested shuttle-to-player handoff")
             return
-        if is_landing and int(parts[5])!=int(_state.get("body",0)):
+        if is_landing and not SOURCE_ID.same(parts[5],_state.get("body","0")):
             stop("Handoff planet differs from original selected site")
             return
         var tick_idx := 6 if is_landing else 5
