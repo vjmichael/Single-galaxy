@@ -945,6 +945,11 @@ public:
     bool station_player_action(PlayerId owner,EntityId station,EntityId ship,
         StationPlayerAction action,std::int64_t dx,std::int64_t dz,
         std::uint64_t receipt,FailPoint fail=FailPoint::None);
+    // S6-F4: one original SQLite transaction per explicit player transport
+    // transition. No native walking, visual teleport or model-created passenger.
+    bool planetary_player_shuttle_action(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,PlanetaryPlayerAction action,
+        std::uint64_t receipt,FailPoint fail=FailPoint::None);
     // One original SQLite world step, immutable dock movement receipt and
     // original NPC custody mutation in one atomic transaction. Host only.
     bool station_dock_worker_transfer(PlayerId owner,EntityId ship,
