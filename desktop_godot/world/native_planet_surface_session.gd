@@ -9,6 +9,8 @@ signal pose_received(pose: Dictionary)
 signal status_changed(message: String)
 signal connection_changed(connected: bool)
 signal reboard_completed()
+signal npc_pose_received(npc_id: int, pose: Dictionary)
+signal npc_roster_received(ids: Array)
 const MAX_LINE := 1024
 var _active := false
 var _pid := -1
@@ -28,12 +30,19 @@ var _generation := -1
 var _identity := ""
 var _last_pose: Dictionary = {}
 var _last_action_receipt := 0
+# S6-F5-D: no Godot NPC state is authoritative. Only native roster/NACK.
+var _npc_roster: Array[int] = []
+var _npc_poses: Dictionary = {}
+var _last_npc_receipt := 0
 
 func is_active() -> bool:
     return _active
 
 func has_verified_pose() -> bool:
     return _active and _session > 0 and not _identity.is_empty()
+
+func verified_npcs() -> Array:
+    return _npc_roster.duplicate() if has_verified_pose() else []
 
 func process_id() -> int:
     if _active:
@@ -72,6 +81,9 @@ func start(save: String) -> void:
     _identity = ""
     _last_pose.clear()
     _last_action_receipt = 0
+    _last_npc_receipt = 0
+    _npc_roster.clear()
+    _npc_poses.clear()
     _last_frame_ms = Time.get_ticks_msec()
     _buffer.clear()
     connection_changed.emit(true)
@@ -95,6 +107,8 @@ func stop(reason: String="Planetary client closed", graceful: bool=false) -> voi
     _pending_kind = ""
     _identity = ""
     _last_pose.clear()
+    _npc_roster.clear()
+    _npc_poses.clear()
     _buffer.clear()
     connection_changed.emit(false)
     status_changed.emit(reason)
@@ -146,6 +160,41 @@ func _accept(line: String) -> void:
             _pending = 0
             _pending_kind = ""
         status_changed.emit("Original C++ refused planetary step #%d: %s" % [id, p[3]])
+        return
+    if p.size() >= 5 and p[0] == "NROSTER" and p[1] == "1":
+        if not has_verified_pose() or not _integer(p[2]) or                 not _integer(p[3]) or not _integer(p[4]):
+            stop("Native NPC roster lacks original site custody")
+            return
+        var n := int(p[4])
+        if int(p[2]) != _session or n < 0 or n > 16 or                 p.size() != 5+n or int(p[3]) < _generation:
+            stop("Original NPC roster generation mismatch")
+            return
+        var ids: Array[int] = []
+        for i in range(5,p.size()):
+            if not _integer(p[i]) or int(p[i]) <= 0 or                     (not ids.is_empty() and int(p[i]) <= ids.back()):
+                stop("Original native NPC roster malformed")
+                return
+            ids.append(int(p[i]))
+        _npc_roster = ids
+        _npc_poses.clear()
+        npc_roster_received.emit(ids.duplicate())
+        return
+    if p.size() == 10 and p[0] == "NACK" and p[1] == "1":
+        for i in range(2,10):
+            if not _integer(p[i]):
+                stop("Malformed original NPC motion receipt")
+                return
+        var npc := int(p[4])
+        if not has_verified_pose() or _pending_kind != "NMOVE" or                 int(p[2]) != _session or int(p[3]) != _pending or                 not _npc_roster.has(npc) or int(p[7]) < _tick or                 int(p[8]) <= _generation or int(p[9]) <= _last_npc_receipt or                 abs(int(p[5])) > 1000000000000 or                 abs(int(p[6])) > 1000000000000:
+            stop("Original NPC motion identity/receipt mismatch")
+            return
+        _npc_poses[npc] = {"npc": npc, "x_mm": int(p[5]),
+            "z_mm": int(p[6]), "tick": int(p[7]),
+            "generation": int(p[8]), "receipt": int(p[9])}
+        _last_npc_receipt = int(p[9])
+        _pending = 0
+        _pending_kind = ""
+        npc_pose_received.emit(npc, _npc_poses[npc].duplicate(true))
         return
     # This is a DIFFERENT receipt from a planetary PFRAME: the original
     # player is no longer ashore. Never fabricate a final surface pose.
@@ -303,6 +352,24 @@ func submit_walk(heading: Vector3, running: bool=false) -> void:
     _last_send_ms=now
     _stdout.store_line("PMOVE|%d|%d|%d|%d" % [_session,req,dx,dz])
     _stdout.flush()
+
+func submit_npc_move(npc_id: int, dx: int, dz: int) -> bool:
+    if not has_verified_pose() or _pending != 0 or             not _npc_roster.has(npc_id):
+        return false
+    if abs(dx) > 300 or abs(dz) > 300 or abs(dx)+abs(dz) > 300:
+        return false
+    var now := Time.get_ticks_msec()
+    if now-_last_send_ms < 100:
+        return false
+    var req := _request
+    _request += 1
+    _pending = req
+    _pending_kind = "NMOVE"
+    _last_send_ms = now
+    _stdout.store_line("NMOVE|%d|%d|%d|%d|%d" %
+        [_session, req, npc_id, dx, dz])
+    _stdout.flush()
+    return true
 
 func submit_vertical(jump: bool) -> void:
     _send_player_action("PSTEP", "JUMP" if jump else "WAIT")
