@@ -93,6 +93,12 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.sha }}
+      - name: Archive exact original source for reproducible offline compiler diagnosis
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          git archive --format=zip -o stage06g-source.zip HEAD
       - name: Verify exact source and acquire pinned upstream Godot
         shell: bash
         run: |
@@ -121,6 +127,22 @@ jobs:
             echo "Actual Godot source parse failed; do NOT claim installed acceptance" >&2
             exit 1
           fi
+      - name: Preserve exact Git tree for independent repair/rebuild
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage06g-source-${{ github.sha }}
+          path: stage06g-source.zip
+          if-no-files-found: warn
+          retention-days: 3
+      - name: Preserve pinned Godot tool for reproducing parse failures
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage06g-godot-tool-${{ github.sha }}
+          path: ${{ runner.temp }}/s6g-godot/godot.zip
+          if-no-files-found: warn
+          retention-days: 3
       - name: Preserve Godot script parser evidence
         if: always()
         uses: actions/upload-artifact@v4
