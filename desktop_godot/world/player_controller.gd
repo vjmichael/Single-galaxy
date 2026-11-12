@@ -4,11 +4,13 @@ extends CharacterBody3D
 
 signal inspected(display_name: String)
 signal native_motion_intent(heading: Vector3)
+signal native_planet_surface_intent(heading: Vector3)
 signal native_seat_intent()
 signal native_ship_intents(actions: PackedStringArray)
 var native_seated := false
 var native_dock_state := -1
 var native_in_ship := false
+var native_on_planet := false
 var authoritative_mode := false
 # On-foot Shift is a latch, not a hold-to-sprint requirement. Native C++
 # remains the only movement authority; this controls legal step cadence.
@@ -19,11 +21,20 @@ func toggle_run() -> void:
 		return
 	run_toggled = not run_toggled
 
+func use_native_planet_surface(verified: bool) -> void:
+	# Only a verified PFRAME from the original local host enables this mode.
+	native_on_planet = verified
+	if verified:
+		native_in_ship = false
+		native_seated = false
+		velocity = Vector3.ZERO
+
 func use_native_ship_custody(aboard: bool) -> void:
 	# This is a verified original PERSON/POSE presentation flag only.
 	# Do not enable cabin walking between BOARD and native seat receipt.
 	native_in_ship = aboard
 	if aboard:
+		native_on_planet = false
 		velocity = Vector3.ZERO
 # Physical mouse motion suggests yaw intent only; the actual 15-degree turn
 # remains a per-command, journaled original C++ decision. There is NO client
@@ -218,6 +229,11 @@ func _physics_process(delta: float) -> void:
 				var pilot_actions := _collect_native_pilot_actions()
 				if not pilot_actions.is_empty():
 					native_ship_intents.emit(pilot_actions)
+			elif native_on_planet and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
+				# Actual Godot input, no client motion: original planet host must ACK.
+				var axis := Input.get_vector("fps_left", "fps_right", "fps_forward", "fps_backward")
+				var direction := (global_transform.basis * Vector3(axis.x, 0.0, axis.y)).normalized()
+				native_planet_surface_intent.emit(direction)
 			elif not native_in_ship and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
 				# Walking still requires captured mouse and original PERSON custody.
 				var axis := Input.get_vector("fps_left", "fps_right", "fps_forward", "fps_backward")

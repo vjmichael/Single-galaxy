@@ -5,6 +5,7 @@ extends Node3D
 const PLAYER_SCRIPT := preload("res://world/player_controller.gd")
 const NATIVE_SESSION := preload("res://world/native_session.gd")
 const NATIVE_PLAYER_SESSION := preload("res://world/native_player_session.gd")
+const NATIVE_PLANET_SURFACE_SESSION := preload("res://world/native_planet_surface_session.gd")
 const NATIVE_STATION_SESSION := preload("res://world/native_station_session.gd")
 const REFINERY_TERMINAL_UI := preload("res://world/refinery_terminal_ui.gd")
 const FLIGHT_INSTRUMENTS := preload("res://world/native_flight_instruments.gd")
@@ -71,6 +72,7 @@ var _external_requested := false
 var _last_native_dock := -1
 var _geometry_parent: Node3D
 var native_session
+var native_planet_surface_session
 var native_player_session
 var native_station_session
 var refinery_terminal
@@ -163,6 +165,10 @@ func _ready() -> void:
 	native_session = NATIVE_SESSION.new()
 	native_session.native_snapshot.connect(_on_native_snapshot)
 	native_session.status_changed.connect(_on_native_status)
+	native_planet_surface_session = NATIVE_PLANET_SURFACE_SESSION.new()
+	native_planet_surface_session.pose_received.connect(_on_original_planet_pose)
+	native_planet_surface_session.status_changed.connect(_on_native_player_status)
+	native_planet_surface_session.connection_changed.connect(_on_original_planet_connection)
 	native_player_session = NATIVE_PLAYER_SESSION.new()
 	native_player_session.pose_received.connect(_on_native_player_pose)
 	native_player_session.ship_state_received.connect(_on_native_ship_state)
@@ -176,6 +182,7 @@ func _ready() -> void:
 	native_player_session.colony_onboarding_received.connect(_on_colony_onboarding_source)
 	native_player_session.asteroid_survey_received.connect(_on_group3_asteroid_survey)
 	player.native_motion_intent.connect(_on_native_player_intent)
+	player.native_planet_surface_intent.connect(_on_native_planet_intent)
 	player.native_seat_intent.connect(_on_native_player_seat_intent)
 	player.native_ship_intents.connect(_on_native_ship_intents)
 	native_station_session = NATIVE_STATION_SESSION.new()
@@ -1089,7 +1096,11 @@ func _advance_native_handoff() -> void:
 	var destination := _handoff_target
 	_handoff_target = ""
 	_handoff_pid = -1
-	if destination == "station":
+	if destination == "planet":
+		# Original live-colony save, not the station graybox fixture.
+		var save := OS.get_user_data_dir().path_join("single_galaxy_authoritative.sqlite")
+		native_planet_surface_session.start(save)
+	elif destination == "station":
 		station_test_save_selected = true
 		last_station_player_state = -1 # only fresh native PERSON can unlock P
 		native_station_session.start()
@@ -1097,13 +1108,29 @@ func _advance_native_handoff() -> void:
 		var save_override := OS.get_user_data_dir().path_join("single_galaxy_station_test.sqlite") if station_test_save_selected else ""
 		native_player_session.start(save_override)
 	# If launching the replacement failed, do not keep an inert authority lock.
-	if is_instance_valid(player) and not native_station_session.is_active() and not native_player_session.is_active():
+	if is_instance_valid(player) and not native_station_session.is_active() and not native_player_session.is_active() and not native_planet_surface_session.is_active():
 		# Standalone never falls back to a fake freely walking local avatar
 		# after failed native startup. In isolated script-only tests, the
 		# original local-preview behavior remains explicit.
 		player.use_native_authority(_player_session_autoconnect)
 
 func _unhandled_input(event: InputEvent) -> void:
+	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_F9:
+		# Explicit original-world surface inspection/movement. Every other
+		# SGDX writer must exit before this same-SQLite original host starts.
+		if native_planet_surface_session.is_active():
+			_on_native_player_status("Original planetary movement already active")
+		else:
+			var old_pid := -1
+			if native_station_session != null and native_station_session.is_active():
+				old_pid = native_station_session.process_id()
+				native_station_session.stop("Handing original writer to planetary mode", true)
+			elif native_player_session != null and native_player_session.is_active():
+				old_pid = native_player_session.process_id()
+				native_player_session.stop("Handing original writer to planetary mode", true)
+			_schedule_native_handoff("planet", old_pid)
+		get_viewport().set_input_as_handled()
+		return
 	if event is InputEventKey and event.pressed and not event.echo and event.keycode in [KEY_J,KEY_M]:
 		if native_player_session != null and native_player_session.is_active():
 			if event.keycode == KEY_J:
@@ -1841,6 +1868,36 @@ func _on_native_player_seat_intent() -> void:
 		else:
 			_on_native_player_status("Pilot-only ship: U to depart; after returning and docking, E to disembark")
 
+func _on_native_planet_intent(heading: Vector3) -> void:
+	if native_planet_surface_session != null and native_planet_surface_session.has_verified_pose():
+		native_planet_surface_session.submit_walk(heading, is_instance_valid(player) and player.run_toggled)
+
+func _on_original_planet_connection(connected: bool) -> void:
+	if not connected and is_instance_valid(player):
+		player.use_native_planet_surface(false)
+		player.use_native_authority(true) # never permit local physics fallback
+
+func _on_original_planet_pose(pose: Dictionary) -> void:
+	_record_native_projection("PLANET", pose)
+	if is_instance_valid(player):
+		player.use_native_authority(true)
+		player.use_native_planet_surface(true)
+		# Only original committed XYZ. Godot capsule is presentation, not collision.
+		player.apply_native_station_pose(Vector3(float(pose["x_mm"])/1000.0,
+			AVATAR_CENTER_HEIGHT_M + float(pose["y_mm"])/1000.0,
+			float(pose["z_mm"])/1000.0), true)
+	# Explicitly no fake planet mesh: the Stage 6 tile renderer remains a
+	# separate source-backed renderer until the installed source is integrated.
+	if is_instance_valid(station_space): station_space.visible=false
+	if is_instance_valid(ship_space): ship_space.visible=false
+	if is_instance_valid(space_preview): space_preview.visible=false
+	if is_instance_valid(exterior_camera): exterior_camera.current=false
+	if is_instance_valid(player) and is_instance_valid(player.camera): player.camera.current=true
+	if is_instance_valid(scope_label): scope_label.text="ORIGINAL PLANETARY SURFACE — NATIVE SQLITE RECEIPT"
+	if is_instance_valid(ship_label): ship_label.text="Body %d / source %d / ground %.2fm / generation %d" % [
+		int(pose["body"]),int(pose["site"]),float(pose["y_mm"])/1000.0,int(pose["gen"])]
+	if is_instance_valid(status_label): status_label.text="F9 original surface | WASD requests approved steps | terrain mesh and survival not yet integrated"
+
 func _on_native_player_intent(heading: Vector3) -> void:
 	if native_station_session != null and native_station_session.is_active():
 		native_station_session.submit_walk(heading, is_instance_valid(player) and player.run_toggled)
@@ -1920,6 +1977,8 @@ func _exit_tree() -> void:
 		native_session.stop("Native client closed")
 	if native_player_session != null:
 		native_player_session.stop("Native FPS client closed")
+	if native_planet_surface_session != null:
+		native_planet_surface_session.stop("Native planet client closed")
 	if native_station_session != null:
 		native_station_session.stop("Native station client closed")
 	if _physical_trace != null:
@@ -1953,6 +2012,8 @@ func _process(delta: float) -> void:
 		native_session.poll()
 	if native_player_session != null:
 		native_player_session.poll()
+	if native_planet_surface_session != null:
+		native_planet_surface_session.poll()
 	if native_station_session != null:
 		native_station_session.poll()
 		# One requested census per visited colony, never one NPC allocation
