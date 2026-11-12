@@ -29,6 +29,10 @@ constexpr std::array<std::uint32_t,36> kCosCellCenterPpm{{
 }};
 struct GeoPoint {
     std::int64_t latitude_pdeg=0,longitude_pdeg=0;
+    constexpr bool operator==(const GeoPoint& x) const noexcept {
+        return latitude_pdeg==x.latitude_pdeg &&
+               longitude_pdeg==x.longitude_pdeg;
+    }
 };
 struct SourceCell {
     std::uint16_t latitude=0,longitude=0;
