@@ -1428,7 +1428,7 @@ func _unhandled_input(event: InputEvent) -> void:
 			if native_player_session._pending!=0 or native_player_session._sequence<0:
 				_on_native_player_status("Await the actual native pilot ACK before switching original-world roles")
 			else:
-				var save := native_player_session.current_original_save()
+				var save: String = native_player_session.current_original_save()
 				if not save.is_absolute_path() or not FileAccess.file_exists(save):
 					_on_native_player_status("Original cockpit save missing; planetary transfer refused")
 				else:
