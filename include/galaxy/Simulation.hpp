@@ -1454,6 +1454,8 @@ public:
     void enable_planetary_ecology();
     bool planetary_ecology_enabled() const {return snapshot_version_>=130;}
     bool physical_planetary_environment_enabled() const {return snapshot_version_>=128;}
+    // v133 original persisted geodetic foot coordinates, not Godot pixels.
+    bool continuous_native_planet_surface() const {return snapshot_version_>=133;}
     const std::map<PlanetarySiteKey,planetary::PhysicalEnvironment>& planetary_physical_environment() const {
         return planetary_physical_environment_;
     }
