@@ -58,6 +58,17 @@ func _run() -> void:
         viewer.get_child_count()==1
     viewer.set_visual_origin(64000,0)
     admitted=admitted and absf(mesh.position.x+128.0)<0.001
+    # The actual source body is a full C++ uint64, not a signed Godot int.
+    # A legitimate maximum-range original ID must not become negative or
+    # lose precision when recovering a streamed 3x3 window.
+    var full_body := "18446744073709551615"
+    for tile in tiles:
+        tile["body"]=full_body
+    pose["body"]=full_body
+    var unsigned_staged := _write(path,atlas)
+    viewer.set_source(path)
+    viewer.accept_pose(pose)
+    var unsigned_admitted := unsigned_staged and viewer.tile_count()==9 and mesh.visible
     var wrong_epoch: Dictionary=pose.duplicate(true)
     wrong_epoch["session"]=56
     viewer.accept_pose(wrong_epoch)
@@ -71,7 +82,7 @@ func _run() -> void:
     viewer.clear()
     DirAccess.remove_absolute(path)
     viewer.queue_free()
-    if not (admitted and rejects_epoch and rejects_body and staged):
+    if not (admitted and unsigned_admitted and rejects_epoch and rejects_body and staged):
         push_error("Stage6F5E native tile viewer source-contract failure")
         quit(1)
         return
