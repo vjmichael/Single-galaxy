@@ -117,6 +117,7 @@ try {
         7,ship,selected.body,selected.lat,selected.lon);
     CHECK(source);
     const auto& onfoot=world.world().player_people().at(7);
+    const auto expected_surface_y_mm=onfoot.surface_pose.y_mm;
     CHECK(onfoot.state==PlayerPersonState::AtPlanetarySurface);
     CHECK(onfoot.surface_pose.x_mm==300 && onfoot.surface_pose.z_mm==0);
     CHECK(onfoot.surface_pose.y_mm==
@@ -144,7 +145,7 @@ try {
     // Original source geometry/hazard guard, not a Godot hit-test result.
     const auto ground=planetary::surface_motion::original_ground_contact(
         *source,nullptr,0,0);
-    CHECK(ground && ground->ground_y_mm==onfoot.surface_pose.y_mm);
+    CHECK(ground && ground->ground_y_mm==expected_surface_y_mm);
     auto dangerous=planetary::PhysicalEnvironment{};
     dangerous.hazard=planetary::PhysicalHazard::Flood;
     CHECK(!planetary::surface_motion::original_ground_contact(
