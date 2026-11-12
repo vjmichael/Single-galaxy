@@ -561,12 +561,27 @@ func set_industry_management(snapshot: Dictionary) -> void:
 		msg += "\nOriginal C++ rejected action #%d; no success credited." % int(snapshot.get("chosen",0))
 	_management_status.text=msg
 	var worker_rows := PackedStringArray()
+	var labor_gates := [
+		"available", "owner mismatch", "no physical workshop",
+		"foreign site", "no real habitation", "finisher not installed",
+		"already staffed", "no free qualified resident"]
+	var work_states := [
+		"physical batch in progress", "ready for native production",
+		"staff unavailable", "power unavailable", "maintenance required",
+		"physical input short", "output warehouse full",
+		"machine not installed", "approved batch quota complete",
+		"awaiting certified supervisor"]
 	for row in snapshot.get("workers",[]):
-		worker_rows.append("%s | worker #%d, suggested #%d | training %d/3 | shift end tick %d | native gate %d, status %d" % [
+		var gate := int(row.get("gate",0))
+		var state := int(row.get("state",0))
+		var end_tick := int(row.get("shift_end",0))
+		worker_rows.append("%s | worker #%d, candidate #%d | trained %d/3 | %s | %s | %s" % [
 			"Panel machine" if int(row.get("trade",0))==1 else "Frame machine",
 			int(row.get("worker",0)),int(row.get("suggested",0)),
-			int(row.get("training_units",0)),int(row.get("shift_end",0)),
-			int(row.get("gate",0)),int(row.get("state",0))])
+			int(row.get("training_units",0)),
+			"shift ends tick %d" % end_tick if end_tick>0 else "no timed shift",
+			labor_gates[gate] if gate>=0 and gate<labor_gates.size() else "invalid gate",
+			work_states[state] if state>=0 and state<work_states.size() else "invalid state"])
 	_management_workers.text = "\n".join(worker_rows) if worker_rows.size()>0 else \
 		"No constructed original workshop; no phantom employees or work shifts"
 	var options: Dictionary = snapshot.get("options",{})
