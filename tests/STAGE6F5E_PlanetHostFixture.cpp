@@ -116,8 +116,12 @@ static void inspect(const std::string& file){
     std::cout<<"CHECK|"<<original.tick()<<'|'<<world.generation()<<'|'
              <<p.surface_survival.last_vertical_tick<<'|'
              <<p.surface_pose.last_move_receipt<<'|'
-             <<p.surface_pose.x_mm<<'|'<<p.surface_pose.y_mm<<'|'
-             <<p.surface_pose.z_mm<<'|'<<original.state_hash()<<"\n";
+             <<p.surface_pose.x_mm<<'|'
+             <<((!p.surface_pose.last_move_receipt &&
+                   p.surface_survival.initialized)?
+                    p.surface_survival.radial_height_mm:p.surface_pose.y_mm)
+             <<'|'<<p.surface_pose.z_mm<<'|'
+             <<original.state_hash()<<"\n";
 }
 static void inspect_transfer(const std::string& file) {
     REQUIRE(fs::exists(fs::u8path(file)));

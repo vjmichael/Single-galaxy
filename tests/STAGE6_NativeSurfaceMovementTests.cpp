@@ -63,6 +63,8 @@ try {
     const auto rock=seed.add_asteroid({2000,0},60);
     seed.ensure_physical_celestial_systems();
     seed.ensure_ship_frame_registry();
+    seed.enable_native_galactic_physics({
+        {selected.system,galactic::Point{{0,100000},{0,100000},{0,100000}}}});
     const auto origin=seed.total_ore();
     PersistentWorld world(db,std::move(seed));
     CHECK(world.register_player_person(7,ship));

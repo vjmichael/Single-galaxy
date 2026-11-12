@@ -605,6 +605,11 @@ static int run_host(int argc,char** argv){
         // propulsion. Existing SQLite worlds load their own original format;
         // they are never silently upgraded or reset by the desktop host.
         seed.enable_native_3d_physics();
+        // This branch creates a NEW original cockpit only. Establish its
+        // native absolute frame at genesis before S6-G v127+ migrations;
+        // existing SQLite saves are loaded independently without reset.
+        seed.enable_native_galactic_physics({
+            {1,galactic::Point{{0,100000},{0,100000},{0,100000}}}});
         // Preserve source-lot authority; future mining tool manufacturing
         // is explicitly deferred and never installed at game genesis.
         seed.enable_station_ore_provenance();

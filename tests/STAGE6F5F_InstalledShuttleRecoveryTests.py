@@ -53,7 +53,12 @@ def receive(q, predicate, deadline_seconds=45):
         assert line is not None, "original native host disconnected before expected receipt"
         f = line.split("|")
         assert f[0] in ("TSITE", "TFRAME", "TLAND", "TRETURN",
-                        "PFRAME", "PLEAVE", "DENY"), line
+                        "PFRAME", "PLEAVE", "DENY", "NROSTER"), line
+        if f[0] == "NROSTER":
+            assert len(f) >= 5 and f[1] == "1", line
+            assert all(value.isdigit() for value in f[2:]), line
+            count = int(f[4])
+            assert 0 <= count <= 16 and len(f) == 5 + count, line
         if f[0] == "TFRAME":
             assert len(f) == 19 and f[1] == "1", line
         if f[0] == "TSITE":

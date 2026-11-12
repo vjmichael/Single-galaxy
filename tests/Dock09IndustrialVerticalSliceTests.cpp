@@ -83,9 +83,9 @@ int main(int argc,char** argv){
             home=seed.add_station({0,0});
             ship=seed.add_colony_ship(7,{10000,0},12,8);
             raw=seed.add_geological_asteroid(
-                {8000,0},AsteroidClass::Metallic,2,3000);
+                {8000,0},AsteroidClass::Metallic,10,3000);
             silicate=seed.add_geological_asteroid(
-                {8000,1400},AsteroidClass::Silicate,2,1000);
+                {8000,1400},AsteroidClass::Silicate,10,1000);
             seed.provision_colony_genesis(ship,3000,3000,3000,3000,3000);
             seed.enable_individual_workforce();
             seed.enable_native_galactic_physics({

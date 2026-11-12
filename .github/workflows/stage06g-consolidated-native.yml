@@ -68,6 +68,37 @@ jobs:
         run: |
           cmake -S . -B build/stage06g -G "Visual Studio 17 2022" -A x64 "-DCMAKE_TOOLCHAIN_FILE=$env:SG_TOOLCHAIN" -DBUILD_TESTING=ON -DBUILD_BENCHMARKS=OFF
           if($LASTEXITCODE -ne 0){throw 'Windows original C++ configuration failed'}
+      - name: Reproduce and attest original historical v85 SQLite from pinned native producer
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Independent original Git snapshot, never substitute a modern
+          # synthetic v85 header or bypass the historical import gate.
+          HIST_SHA=23bad9be38936d61b8c29b5be5f3900bec87fa6d
+          git fetch --no-tags --depth 1 origin "$HIST_SHA"
+          HIST_SOURCE="$(cd .. && pwd)/stage06g-v85-source"
+          git worktree add --detach "$HIST_SOURCE" "$HIST_SHA"
+          test "$(git -C "$HIST_SOURCE" rev-parse HEAD)" = "$HIST_SHA"
+          python tests/WO3HistoricalNativeProducer.py prepare "$HIST_SOURCE"
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            cmake -S "$HIST_SOURCE" -B build/stage06g-history -G 'Visual Studio 17 2022' -A x64 \
+              "-DCMAKE_TOOLCHAIN_FILE=$SG_TOOLCHAIN" -DBUILD_TESTING=ON -DBUILD_BENCHMARKS=OFF
+            HIST_EXE=build/stage06g-history/Release/galaxy_play13d_regional_facilities_tests.exe
+          else
+            cmake -S "$HIST_SOURCE" -B build/stage06g-history -G Ninja \
+              -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON -DBUILD_BENCHMARKS=OFF
+            HIST_EXE=build/stage06g-history/galaxy_play13d_regional_facilities_tests
+          fi
+          cmake --build build/stage06g-history --target galaxy_play13d_regional_facilities_tests \
+            --config Release --parallel 4
+          mkdir -p stage06g-history
+          export SG_WO3_HISTORICAL_CAPTURE_OUTPUT=stage06g-history/source-v85.sqlite
+          "$HIST_EXE"
+          test -s "$SG_WO3_HISTORICAL_CAPTURE_OUTPUT"
+          python tests/WO3HistoricalNativeProducer.py attest "$HIST_SOURCE" \
+            --binary "$HIST_EXE" --sqlite "$SG_WO3_HISTORICAL_CAPTURE_OUTPUT" \
+            --manifest stage06g-history/wo3-v85-attestation.json \
+            --github-env "$GITHUB_ENV"
       - name: One consolidated native compile, CTest discovery and Stage 6/industry matrix
         shell: bash
         run: |
@@ -80,6 +111,7 @@ jobs:
           name: stage06g-native-${{ matrix.os }}-${{ github.sha }}
           path: |
             stage06g-native-acceptance.json
+            stage06g-history/wo3-v85-attestation.json
             build/stage06g/Testing/Temporary/LastTest.log
             build/stage06g/Testing/Temporary/LastTestsFailed.log
           if-no-files-found: warn

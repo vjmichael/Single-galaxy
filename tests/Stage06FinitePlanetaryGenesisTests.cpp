@@ -99,9 +99,22 @@ static void seeded(const std::string& db) {
               observed->stock_kg[2]==5000 &&
               observed->stock_kg[3]==1000);
         CHECK(!seed.scan_planetary_region_source(7,ship,body,36,0));
-        CHECK(!seed.scan_planetary_region_source(
-            7,ship,body,first.first,second.second==first.second?
-            second.second+1:second.second));
+        // Choose a genuine unallocated land cell, not a column that
+        // could accidentally coincide with the second funded region.
+        const auto map=planetary::generate_watersheds(gen.key,gen.envelope);
+        bool checked_unallocated=false;
+        for(int i=0;i<planetary::kWatershedCells;++i){
+            if(map.cells[i].ocean)continue;
+            const auto candidate=std::pair<std::uint16_t,std::uint16_t>{
+                std::uint16_t(i/planetary::kWatershedColumns),
+                std::uint16_t(i%planetary::kWatershedColumns)};
+            if(candidate==first || candidate==second)continue;
+            CHECK(!seed.scan_planetary_region_source(
+                7,ship,body,candidate.first,candidate.second));
+            checked_unallocated=true;
+            break;
+        }
+        CHECK(checked_unallocated);
         initial_world=seed.canonical_state();
         const auto direct=Simulation::from_snapshot(initial_world);
         CHECK(direct.canonical_state()==initial_world);

@@ -42,6 +42,8 @@ int main(int argc,char** argv){
             const auto silicate=s.add_geological_asteroid(
                 {1000,0},AsteroidClass::Silicate,30,2500);
             s.enable_individual_workforce();
+            s.enable_native_galactic_physics({
+                {1,galactic::Point{{0,100000},{0,100000},{0,100000}}}});
             PersistentWorld w(file,std::move(s));
             applied(w,seq,ship,Action::Mine,raw,80);
             applied(w,seq,ship,Action::RefineOre,0,80);

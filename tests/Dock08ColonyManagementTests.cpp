@@ -50,6 +50,8 @@ int main(int argc,char** argv){
             const auto geology=genesis.add_geological_asteroid(
                 {1000,0},AsteroidClass::Silicate,30,2500);
             genesis.enable_individual_workforce();
+            genesis.enable_native_galactic_physics({
+                {1,galactic::Point{{0,100000},{0,100000},{0,100000}}}});
             preserved_mass=genesis.total_material_kg();
             PersistentWorld w(db,std::move(genesis));
             applied(w,seq,ship,Action::Mine,rock,90);
