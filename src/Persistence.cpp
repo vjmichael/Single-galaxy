@@ -9991,6 +9991,35 @@ bool PersistentWorld::book_planetary_shuttle_passenger(PlayerId owner,EntityId s
     ++generation_;
     return true;
 }
+// S6-F5: only the original SQLite generation/writer can authorize a real
+// player or named NPC footstep. Failed writes leave receipts and poses intact.
+bool PersistentWorld::planetary_surface_move(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,std::uint64_t npc_id,
+        std::int64_t dx_mm,std::int64_t dz_mm,std::uint64_t receipt,
+        FailPoint fail) {
+    if(!receipt || receipt>=(std::uint64_t{1}<<60) ||
+       store_->station_receipt_used(receipt))return false;
+    for(const auto& [request,transit]:world_.pending_celestial_transits_) {
+        (void)request;
+        if(transit.ship==ship)return false;
+    }
+    auto next=world_;
+    if(!next.planetary_surface_move(owner,ship,key,npc_id,
+                                   dx_mm,dz_mm,receipt))
+        return false;
+    if(next.total_ore()!=resource_origin_ ||
+       next.total_credits()!=credit_origin_ ||
+       next.total_material_kg()!=world_.total_material_kg())
+        throw std::logic_error("surface movement altered original conserved resources");
+    if(Simulation::from_snapshot(next.canonical_state()).state_hash()!=
+       next.state_hash())
+        throw std::logic_error("original surface pose cannot recover");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);++generation_;
+    return true;
+}
+
 // S6-F4: one original SQLite writer transaction for an explicitly approved
 // player shuttle boarding, surface release, reboard or original ship return.
 // This is not the visual inspector, NPC transport manifest or a new world.
