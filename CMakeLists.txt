@@ -2271,7 +2271,8 @@ endif()
 
 # FP3D-02F: true native-world atomic movement from local Godot child stdio.
 # No Python/browser/HTTP relay; client inputs are bounded and identity is not client-selected.
-add_executable(galaxy_desktop_player_host src/desktop_player_host.cpp)
+add_executable(galaxy_desktop_player_host
+  src/desktop_player_host.cpp src/desktop_planet_transfer.cpp)
 target_link_libraries(galaxy_desktop_player_host PRIVATE galaxy_fp3d02c_interior)
 # S6-F5-E: genuine landed ORIGINAL native host, autonomous SQLite ticks,
 # forced process death, no offline replay, fresh epoch, and journal readback.
