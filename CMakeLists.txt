@@ -2301,6 +2301,18 @@ target_link_libraries(galaxy_desktop_player_host PRIVATE galaxy_fp3d02c_interior
 # S6-F5-E: genuine landed ORIGINAL native host, autonomous SQLite ticks,
 # forced process death, no offline replay, fresh epoch, and journal readback.
 # This does not replace installed Godot/SGDX/physical Windows acceptance.
+# S6-G: native exact-save v127-v135 historical migration, failpoint
+# rollback, canonical mass invariants and 1024 durable Stage 6 source ticks.
+if(BUILD_TESTING)
+  add_executable(galaxy_stage06g_consolidated_migration_tests
+    tests/Stage06GConsolidatedMigrationTests.cpp)
+  target_link_libraries(galaxy_stage06g_consolidated_migration_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_stage06g_consolidated_migration
+    COMMAND galaxy_stage06g_consolidated_migration_tests
+      ${CMAKE_CURRENT_BINARY_DIR}/stage06g-consolidated.sqlite)
+  set_tests_properties(galaxy_stage06g_consolidated_migration
+    PROPERTIES TIMEOUT 600 LABELS "stage6;integration;sqlite;migration;1024-ticks")
+endif()
 if(BUILD_TESTING AND Python3_Interpreter_FOUND)
   add_executable(galaxy_stage6f5e_planet_host_fixture
     tests/STAGE6F5E_PlanetHostFixture.cpp)
