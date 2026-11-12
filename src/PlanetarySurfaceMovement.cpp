@@ -463,18 +463,22 @@ bool Simulation::planetary_surface_oxygen_action(PlayerId owner,EntityId ship,
         return false;
     auto& p=it->second;
     auto& sv=p.surface_survival;
+    const bool partially_used=sv.oxygen_consumption_ticks>0;
+    const auto oxygen_return=sv.oxygen_kg-(partially_used?1:0);
+    const auto co2_return=sv.exhaled_co2_kg+(partially_used?1:0);
     if(return_to_site){
         if(!sv.oxygen_kg && !sv.exhaled_co2_kg)return false;
-        // A fractional consumption cycle follows the remaining oxygen
-        // back to this EXACT original site; no unaccounted release.
-        if(site->second.oxygen_kg>100000000-sv.oxygen_kg ||
-           site->second.co2_kg>100000000-sv.exhaled_co2_kg)return false;
+        if(partially_used && sv.oxygen_kg<1)return false;
+        // A partially used whole-kg allocation is conservatively expended
+        // when returned, so cycling CHARGE/RETURN cannot yield free oxygen.
+        if(site->second.oxygen_kg>100000000-oxygen_return ||
+           site->second.co2_kg>100000000-co2_return)return false;
     }else if(site->second.oxygen_kg<1 ||
              sv.oxygen_kg+sv.exhaled_co2_kg>=4)return false;
     if(!establish_original_surface_gravity())return false;
     if(return_to_site){
-        site->second.oxygen_kg+=sv.oxygen_kg;
-        site->second.co2_kg+=sv.exhaled_co2_kg;
+        site->second.oxygen_kg+=oxygen_return;
+        site->second.co2_kg+=co2_return;
         sv.oxygen_kg=0;
         sv.exhaled_co2_kg=0;
         sv.oxygen_consumption_ticks=0;
