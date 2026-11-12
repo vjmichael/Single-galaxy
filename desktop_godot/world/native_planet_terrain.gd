@@ -10,6 +10,8 @@ var _source_path := ""
 var _digest := ""
 var _last_check_msec := 0
 var _pose: Dictionary = {}
+var _visual_origin_x_mm := 0
+var _visual_origin_z_mm := 0
 var _mesh_instance: MeshInstance3D
 
 func _ready() -> void:
@@ -23,6 +25,15 @@ func _ready() -> void:
     material.cull_mode = BaseMaterial3D.CULL_DISABLED
     _mesh_instance.material_override = material
     add_child(_mesh_instance)
+
+func set_visual_origin(x_mm: int,z_mm: int) -> void:
+    _visual_origin_x_mm=x_mm
+    _visual_origin_z_mm=z_mm
+    if _mesh_instance!=null and _mesh_instance.has_meta("source_center_x_mm"):
+        _mesh_instance.position=Vector3(
+            float(int(_mesh_instance.get_meta("source_center_x_mm",0))-x_mm)/1000.0,
+            float(_mesh_instance.get_meta("source_center_y_mm",0))/1000.0,
+            float(int(_mesh_instance.get_meta("source_center_z_mm",0))-z_mm)/1000.0)
 
 func set_source(path: String) -> void:
     clear()
@@ -140,10 +151,11 @@ func _load_if_changed() -> void:
     mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES,source_arrays)
     _mesh_instance.mesh=mesh
     _mesh_instance.position=Vector3(
-        float(int(data["center_x_mm"]))/1000.0,
+        float(int(data["center_x_mm"])-_visual_origin_x_mm)/1000.0,
         float(int(data["center_y_mm"]))/1000.0,
-        float(int(data["center_z_mm"]))/1000.0)
+        float(int(data["center_z_mm"])-_visual_origin_z_mm)/1000.0)
     _mesh_instance.set_meta("source_center_x_mm",int(data["center_x_mm"]))
+    _mesh_instance.set_meta("source_center_y_mm",int(data["center_y_mm"]))
     _mesh_instance.set_meta("source_center_z_mm",int(data["center_z_mm"]))
     _mesh_instance.set_meta("source_generation",int(data["native_generation"]))
     _digest=digest

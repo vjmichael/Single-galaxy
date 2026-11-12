@@ -77,6 +77,10 @@ var native_planet_surface_session
 var native_planet_terrain: Node3D
 var _planet_save_picker: FileDialog
 var _planet_requested_save := ""
+# Visual floating origin is detached from the original signed-mm odometer.
+var _planet_visual_origin_ready := false
+var _planet_visual_origin_x_mm := 0
+var _planet_visual_origin_z_mm := 0
 var native_player_session
 var native_station_session
 var refinery_terminal
@@ -1938,6 +1942,8 @@ func _on_native_planet_intent(heading: Vector3) -> void:
 		native_planet_surface_session.submit_walk(heading, is_instance_valid(player) and player.run_toggled)
 
 func _on_original_planet_connection(connected: bool) -> void:
+	if not connected:
+		_planet_visual_origin_ready=false
 	if not connected and is_instance_valid(native_planet_terrain):
 		native_planet_terrain.clear()
 	if not connected and is_instance_valid(player):
@@ -1946,15 +1952,28 @@ func _on_original_planet_connection(connected: bool) -> void:
 
 func _on_original_planet_pose(pose: Dictionary) -> void:
 	_record_native_projection("PLANET", pose)
+	# Rebase ONLY visual metres from the original fixed-point odometer. The
+	# physical C++ location/receipt and collision rules never change.
+	var x_mm := int(pose["x_mm"])
+	var z_mm := int(pose["z_mm"])
+	if not _planet_visual_origin_ready or \
+			abs(x_mm-_planet_visual_origin_x_mm)>32000 or \
+			abs(z_mm-_planet_visual_origin_z_mm)>32000:
+		_planet_visual_origin_x_mm=x_mm
+		_planet_visual_origin_z_mm=z_mm
+		_planet_visual_origin_ready=true
 	if is_instance_valid(native_planet_terrain):
+		native_planet_terrain.set_visual_origin(
+			_planet_visual_origin_x_mm,_planet_visual_origin_z_mm)
 		native_planet_terrain.accept_pose(pose)
 	if is_instance_valid(player):
 		player.use_native_authority(true)
 		player.use_native_planet_surface(true)
 		# Only original committed XYZ. Godot capsule is presentation, not collision.
-		player.apply_native_station_pose(Vector3(float(pose["x_mm"])/1000.0,
+		player.apply_native_station_pose(Vector3(
+			float(x_mm-_planet_visual_origin_x_mm)/1000.0,
 			AVATAR_CENTER_HEIGHT_M + float(pose["y_mm"])/1000.0,
-			float(pose["z_mm"])/1000.0), true)
+			float(z_mm-_planet_visual_origin_z_mm)/1000.0), true)
 	# The adjacent original-host world-sourced 17x17 terrain patch is
 	# rendered as a VISUAL, NON-COLLIDING mesh. The original native C++
 	# elevation and swept collision still govern actual gameplay.
@@ -1964,8 +1983,10 @@ func _on_original_planet_pose(pose: Dictionary) -> void:
 	if is_instance_valid(exterior_camera): exterior_camera.current=false
 	if is_instance_valid(player) and is_instance_valid(player.camera): player.camera.current=true
 	if is_instance_valid(scope_label): scope_label.text="ORIGINAL PLANETARY SURFACE — NATIVE SQLITE RECEIPT"
-	if is_instance_valid(ship_label): ship_label.text="Body %d / source %d / ground %.2fm / generation %d" % [
-		int(pose["body"]),int(pose["site"]),float(pose["y_mm"])/1000.0,int(pose["gen"])]
+	if is_instance_valid(ship_label):
+		ship_label.text="Original body %d / source %d | odometer (%.2f, %.2f)m | radial Y %.2fm | gen %d" % [
+			int(pose["body"]),int(pose["site"]),float(x_mm)/1000.0,
+			float(z_mm)/1000.0,float(pose["y_mm"])/1000.0,int(pose["gen"])]
 	if is_instance_valid(status_label):
 		status_label.text="WASD original movement | Space jump | F7 suit / Shift-F7 power | F8 O2 | F10 return | F2 medical"
 	if is_instance_valid(native_label):
