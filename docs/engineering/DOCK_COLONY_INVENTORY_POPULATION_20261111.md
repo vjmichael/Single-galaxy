@@ -134,7 +134,7 @@ DOCK-05 original flight/voyage, receiving-ship disembarkation, visitor station c
 - Full worker/visitor escort, medical gurney transport, autonomous NPC accident handling, dynamic construction obstacles, multi-gangway throughput benchmarking, visual art sign-off, and physical Radeon AI Pro R9700 installed gameplay acceptance remain outstanding.
 - DOCK-05 native ferry navigation and source-world lifecycle require later consolidated compiler/restart/installed evidence. They were not reopened as a CI gate during DOCK-06. No PR creation, routine GH Ops review, CI submission, merge or release was performed.
 
-**Next independent implementation candidate: DOCK-07 — Unified Colony-Local Industrial Inventory and Manufacturing Service.** Link original source-owned station refinery, storage, factories, finite job inputs/outputs and owner permissions to the one colony interface without creating a global account inventory. Reserve physical gameplay/regression acceptance for the eventual consolidated batch.
+**DOCK-07 source staged; acceptance OPEN.** The same I colony interface now projects native station refinery, physical founding-ship goods and construction modules, warehouse bins, workshop buffer stocks, original workforce production jobs and guarded local physical stock moves. No galaxy-wide stock ledger is introduced. See docs/engineering/DOCK07_COLONY_LOCAL_INDUSTRY_20261111.md for exact original commands, source isolation, limitations, staged native tests and deferred acceptance.
 
 ## Open work — do not falsely mark complete
 
