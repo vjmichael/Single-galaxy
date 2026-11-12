@@ -20,6 +20,37 @@ test('reject malformed and tampered planetary survey frames',()=>{
     'COLONY|1|5|PLANET_REGION|4294967300|17|36|-120|0|7|2|1800|18|36|0'
   ])assert.throws(()=>decode(raw),Error,raw);
 });
+test('Stage 6 climate frames decode only bounded native quarter assessments',()=>{
+  const winter=decode('COLONY|1|5|PLANET_SEASON|4294967300|17|36|1|1|0|-18|2|0|2|0|0|0|1|1');
+  assert.equal(winter.type,'PLANET_SEASON');
+  assert.equal(winter.temperature,-18);
+  assert.equal(winter.quarter,0);
+  assert.equal(winter.seaIce,true);
+  assert.equal(winter.liquid,false);
+  const summer=decode('COLONY|1|5|PLANET_SEASON|4294967300|17|36|1|1|2|24|6|2|0|4|22|1|0|0');
+  assert.equal(summer.liquid,true);
+  assert.equal(summer.discharge,22);
+  assert.equal(summer.modelRevision,1);
+  for(const raw of [
+    'COLONY|1|5|PLANET_SEASON|4294967300|17|36|1|1|0|-18|2|0|2|0|0|0|1',
+    'COLONY|1|5|PLANET_SEASON|4294967300|17|36|1|1|4|-18|2|0|2|0|0|0|1|1',
+    'COLONY|1|5|PLANET_SEASON|4294967300|17|36|0|1|0|-18|2|0|2|0|0|0|1|1',
+    'COLONY|1|5|PLANET_SEASON|4294967300|17|36|1|0|0|-18|2|0|2|0|0|0|1|1',
+    'COLONY|1|5|PLANET_SEASON|4294967300|17|36|1|1|0|101|2|0|2|0|0|0|1|1',
+    'COLONY|1|5|PLANET_SEASON|4294967300|17|36|1|1|0|--18|2|0|2|0|0|0|1|1',
+    'COLONY|1|5|PLANET_SEASON|4294967300|17|36|1|1|0|-18|2|3|2|0|0|0|1|1',
+    'COLONY|1|5|PLANET_SEASON|4294967300|17|36|1|1|2|24|6|2|0|8|7|1|0|0',
+    'COLONY|1|5|PLANET_SEASON|4294967300|17|36|1|1|0|-18|2|0|2|0|0|1|1|1',
+    'COLONY|1|5|PLANET_SEASON|4294967300|17|36|1|1|2|24|6|2|0|4|22|1|1|0',
+    'COLONY|1|5|PLANET_SEASON|4294967300|17|36|1|1|2|24|6|2|0|4|22|1|0|4',
+  ])assert.throws(()=>decode(raw),Error,raw);
+  const ui=fs.readFileSync(path.join(root,'viewer/colony.js'),'utf8');
+  const host=fs.readFileSync(path.join(root,'src/colony_live_host.cpp'),'utf8');
+  assert.match(ui,/These are derived prospect scores only/);
+  assert.match(host,/scan_planetary_seasons/);
+  assert.match(host,/PLANET_SEASON/);
+});
+
 test('relay and viewer route through canonical geographic survey action',()=>{
   const relay=fs.readFileSync(path.join(root,'live/interactive_relay.py'),'utf8');
   const ui=fs.readFileSync(path.join(root,'viewer/colony.js'),'utf8');
