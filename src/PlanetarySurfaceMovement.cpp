@@ -120,6 +120,8 @@ bool Simulation::planetary_surface_move(PlayerId owner,EntityId ship,
         position->surface_location!=facility->second.surface_location))
         return false;
     constexpr std::int64_t kOdometerLimit=1000000000000LL;
+    // Native pad +X is east, +Z is south, matching the original
+    // on-foot viewer's North=-Z and South=+Z controls.
     const auto x=position->x_mm+dx_mm,z=position->z_mm+dz_mm;
     if(x< -kOdometerLimit || x>kOdometerLimit ||
        z< -kOdometerLimit || z>kOdometerLimit)
@@ -142,7 +144,7 @@ bool Simulation::planetary_surface_move(PlayerId owner,EntityId ship,
         const auto original_radius=original_walkable_body_radius(
             std::get<0>(origin));
         return center&&original_radius?
-            grid::native_offset(*center,pose.x_mm,pose.z_mm,*original_radius):
+            grid::native_offset(*center,pose.x_mm,-pose.z_mm,*original_radius):
             std::nullopt;
     };
     if(snapshot_version_<133){
@@ -173,9 +175,9 @@ bool Simulation::planetary_surface_move(PlayerId owner,EntityId ship,
     }
     const auto start=point_from(*position,key);
     if(!start || !grid::canonical(*start))return false;
-    const auto end=grid::native_step(*start,dx_mm,dz_mm,*radius);
+    const auto end=grid::native_step(*start,dx_mm,-dz_mm,*radius);
     const auto halfway=grid::native_offset(
-        *start,dx_mm/2,dz_mm/2,*radius);
+        *start,dx_mm/2,-dz_mm/2,*radius);
     if(!end||!halfway || !grid::canonical(*end))return false;
 
     // This callback only reads the ORIGINAL authenticated PGF watershed
