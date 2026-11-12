@@ -681,7 +681,7 @@ void Simulation::process_original_surface_survival() {
     namespace grid=planetary::continuous_surface;
     for(auto& [owner,p]:player_people_){
         if(p.state!=PlayerPersonState::AtPlanetarySurface ||
-           !p.surface_survival.initialized)continue;
+           (!p.surface_survival.initialized && snapshot_version_<135))continue;
         auto& sv=p.surface_survival;
         if(sv.last_vertical_tick>=tick_)continue;
         const PlanetarySiteKey key{p.planet_body,p.planet_latitude,
@@ -691,7 +691,8 @@ void Simulation::process_original_surface_survival() {
         if(site==planetary_sites_.end() || !vessel ||
            vessel->owner_id!=owner || site->second.owner!=owner ||
            site->second.source_ship!=p.home_ship ||
-           p.surface_pose.surface_location!=site->second.surface_location)
+           (p.surface_pose.last_move_receipt &&
+            p.surface_pose.surface_location!=site->second.surface_location))
             continue; // uncertain source -> no invented physics/health
         const auto system=physical_celestial_systems_.find(vessel->system_id);
         if(system==physical_celestial_systems_.end())continue;
@@ -702,8 +703,12 @@ void Simulation::process_original_surface_survival() {
             source_body->physical_radius_mm,
             source_body->physical_mass_1e18_kg);
         if(!g)continue;
-        const grid::GeoPoint point{
-            p.surface_pose.latitude_pdeg,p.surface_pose.longitude_pdeg};
+        const auto center=grid::cell_center({
+            p.planet_latitude,p.planet_longitude});
+        if(!center)continue;
+        const grid::GeoPoint point=p.surface_pose.last_move_receipt?
+            grid::GeoPoint{p.surface_pose.latitude_pdeg,
+                           p.surface_pose.longitude_pdeg}:*center;
         const auto source=[&](grid::SourceCell cell)->std::optional<grid::Sample>{
             const auto ground=scan_planetary_geography(owner,p.home_ship,
                 p.planet_body,cell.latitude,cell.longitude);
@@ -714,6 +719,14 @@ void Simulation::process_original_surface_survival() {
         };
         const auto ground=grid::source_ground(point,source);
         if(!ground || ground->ocean)continue;
+        if(!sv.initialized){
+            // Trusted host STEP initializes vertical physics at the exact
+            // ORIGINAL hatch source. No movement authorization, transport,
+            // geodetic receipt or invented surface asset is produced.
+            sv.radial_height_mm=ground->height_mm;
+            sv.radial_speed_mm_s=0;
+            sv.grounded=true;sv.initialized=true;
+        }
         const PlanetarySiteKey region{p.planet_body,ground->cell.latitude,
             ground->cell.longitude,p.planet_revision};
         const auto physical=planetary_physical_environment_.find(region);
@@ -733,7 +746,8 @@ void Simulation::process_original_surface_survival() {
         sv.radial_height_mm=physics->next.height_mm;
         sv.radial_speed_mm_s=physics->next.radial_speed_mm_s;
         sv.grounded=physics->next.grounded;
-        p.surface_pose.y_mm=sv.radial_height_mm;
+        if(p.surface_pose.last_move_receipt)
+            p.surface_pose.y_mm=sv.radial_height_mm;
         sv.last_vertical_tick=tick_;
         if(physics->impact &&
            physics->impact_speed_mm_s>=planetary::vertical::kHardImpactMmS)
