@@ -85,6 +85,7 @@ static void world_processes(const std::string& db){
     Simulation sim(777,1);
     const auto ship=sim.add_colony_ship(7,{0,0},50,5);
     sim.provision_starter_exploration_scanner(ship);
+    sim.enable_native_galactic_physics({{1,galactic::Point{{0,100000},{0,100000},{0,100000}}}});
     sim.ensure_planetary_genesis_manifest();
     std::uint64_t body=0;
     std::uint16_t latitude=0,longitude=0;
@@ -159,6 +160,7 @@ static void world_processes(const std::string& db){
     cleanup(db);
     Simulation historical(900,1);
     historical.add_colony_ship(7,{0,0},30,3);
+    historical.enable_native_galactic_physics({{1,galactic::Point{{0,100000},{0,100000},{0,100000}}}});
     historical.ensure_planetary_genesis_manifest(); // historical zero geology
     const auto oldMass=historical.total_ore();
     {
