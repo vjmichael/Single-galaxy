@@ -1385,6 +1385,84 @@ void apply(PersistentWorld& world,EntityId ship,FleetSelection& fleet,const std:
         }
         return;
     }
+    // S6-F5: authenticated ORIGINAL world motion; only local signed
+    // displacement, never requested absolute XYZ, body position or Godot pose.
+    // PLAYER: PLANET_SURFACE_MOVE|body|lat|lon|PLAYER|dx|dz|receipt
+    // NPC:    PLANET_SURFACE_MOVE|body|lat|lon|NPC|npc|dx|dz|receipt
+    // READ:   PLANET_SURFACE_STATUS|body|lat|lon|PLAYER|[NPC ID]
+    if(!v.empty() &&
+       (v[0]=="PLANET_SURFACE_MOVE" || v[0]=="PLANET_SURFACE_STATUS")){
+        try{
+            const bool motion=v[0]=="PLANET_SURFACE_MOVE";
+            if(v.size()<(motion?8U:5U) || v.size()>(motion?9U:6U))
+                throw std::invalid_argument("invalid ground command arity");
+            const auto body=integer(v[1]),lat=integer(v[2]),lon=integer(v[3]);
+            if(body<=0 || lat<0 || lat>=36 || lon<0 || lon>=72)
+                throw std::invalid_argument("invalid original surface site");
+            const PlanetarySiteKey key{std::uint64_t(body),
+                std::uint16_t(lat),std::uint16_t(lon),1};
+            const auto facility=world.world().planetary_sites().find(key);
+            if(facility==world.world().planetary_sites().end() ||
+               facility->second.owner!=principal ||
+               facility->second.source_ship!=ship ||
+               !facility->second.surface_location)
+                throw std::invalid_argument("non-owned landing facility");
+            std::uint64_t npc=0;
+            if(v[4]=="NPC"){
+                if(v.size()!=(motion?9U:6U))
+                    throw std::invalid_argument("missing original NPC");
+                const auto named=integer(v[5]);
+                if(named<=0)throw std::invalid_argument("invalid NPC");
+                npc=std::uint64_t(named);
+            }else if(v[4]!="PLAYER" ||
+                     v.size()!=(motion?8U:5U))
+                throw std::invalid_argument("invalid original person type");
+            if(motion){
+                const auto index=npc?6:5;
+                const auto dx=integer(v[index]),dz=integer(v[index+1]),
+                           receipt=integer(v[index+2]);
+                if(receipt<=0 || receipt>=(std::int64_t{1}<<60) ||
+                   !world.planetary_surface_move(principal,ship,key,npc,
+                       dx,dz,std::uint64_t(receipt)))
+                    throw std::invalid_argument("native ground movement refused");
+                announce(world.world(),"PLANET_SURFACE_COMMITTED|"+
+                    std::to_string(npc)+"|"+std::to_string(receipt)+"|"+
+                    std::to_string(world.generation()));
+            }
+            NativePlanetarySurfacePose pose{};
+            if(npc){
+                const auto it=world.world().npc_records().find(npc);
+                if(it==world.world().npc_records().end() ||
+                   it->second.home_ship!=ship ||
+                   it->second.location!=facility->second.surface_location)
+                    throw std::invalid_argument("original NPC not ashore");
+                pose=it->second.surface_pose;
+            }else{
+                const auto it=world.world().player_people().find(principal);
+                if(it==world.world().player_people().end() ||
+                   it->second.state!=PlayerPersonState::AtPlanetarySurface ||
+                   it->second.home_ship!=ship ||
+                   it->second.planet_body!=std::uint64_t(body) ||
+                   it->second.planet_latitude!=std::uint16_t(lat) ||
+                   it->second.planet_longitude!=std::uint16_t(lon) ||
+                   it->second.planet_revision!=1)
+                    throw std::invalid_argument("original player not ashore");
+                pose=it->second.surface_pose;
+            }
+            announce(world.world(),"PLANET_SURFACE_POSE|"+
+                std::to_string(principal)+"|"+std::to_string(npc)+"|"+
+                std::to_string(body)+"|"+std::to_string(lat)+"|"+
+                std::to_string(lon)+"|"+std::to_string(pose.x_mm)+"|"+
+                std::to_string(pose.y_mm)+"|"+std::to_string(pose.z_mm)+"|"+
+                std::to_string(pose.last_move_tick)+"|"+
+                std::to_string(pose.last_move_receipt)+"|"+
+                std::to_string(world.world().tick())+"|"+
+                std::to_string(world.generation()));
+        }catch(const std::exception&){
+            announce(world.world(),"ERROR|PLANET_SURFACE_DENIED");
+        }
+        return;
+    }
     if(!v.empty() && v[0]=="PLANET_PLAYER"){
         try{
             if(v.size()!=5 && v.size()!=6)
