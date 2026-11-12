@@ -129,7 +129,8 @@ bool Simulation::station_visitor_transfer(
 bool Simulation::original_completed_ferry_guest(
     std::uint64_t npc_id,EntityId receiving_ship,std::uint64_t voyage) const {
     if(!npc_id || !receiving_ship || !voyage)return false;
-    const auto n=npcs_.find(npc_id),v=voyages_.find(voyage);
+    const auto n=npcs_.find(npc_id);
+    const auto v=voyages_.find(voyage);
     if(n==npcs_.end() || v==voyages_.end() ||
        v->second.status!=2 || !v->second.origin ||
        v->second.ferry==receiving_ship ||
