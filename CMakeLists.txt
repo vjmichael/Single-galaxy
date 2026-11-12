@@ -1376,6 +1376,13 @@ if(BUILD_TESTING)
   target_link_libraries(galaxy_stage6_authorized_landing_tests PRIVATE galaxy_kernel)
   add_test(NAME galaxy_stage6_authorized_landing
     COMMAND galaxy_stage6_authorized_landing_tests)
+  # S6-F4: canonical v131 original player-person custody in the existing
+  # SQLite writer and the existing completed physical shuttle flight.
+  add_executable(galaxy_stage6_player_planetary_custody_tests
+    tests/STAGE6_PlayerPlanetaryCustodyTests.cpp)
+  target_link_libraries(galaxy_stage6_player_planetary_custody_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_stage6_player_planetary_custody
+    COMMAND galaxy_stage6_player_planetary_custody_tests)
 endif()
 
 # PGF-01B.2: authenticated real host planetary survey and saved restart.
