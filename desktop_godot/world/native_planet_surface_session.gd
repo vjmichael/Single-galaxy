@@ -7,7 +7,7 @@ const SGDX_LAUNCH := preload("res://world/sgdx_process_launch.gd")
 signal pose_received(pose: Dictionary)
 signal status_changed(message: String)
 signal connection_changed(connected: bool)
-const MAX_LINE := 512
+const MAX_LINE := 1024
 var _active := false
 var _pid := -1
 var _last_shutdown_pid := -1
