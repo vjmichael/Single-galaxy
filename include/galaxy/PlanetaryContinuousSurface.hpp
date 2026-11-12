@@ -177,7 +177,7 @@ inline bool within_radius(GeoPoint a,GeoPoint b,
                           std::uint64_t limit_mm) noexcept {
     if(!canonical(a)||!canonical(b)||
        radius_mm<kMinWalkableBodyRadiusMm||
-       radius_mm>kMaxWalkableBodyRadiusMm||limit_mm>5000)return false;
+       radius_mm>kMaxWalkableBodyRadiusMm||limit_mm>32000)return false;
     const auto allowed=(limit_mm*kPdegPerRadian+radius_mm-1)/radius_mm;
     const auto lat_diff=static_cast<std::uint64_t>(
         a.latitude_pdeg>b.latitude_pdeg?
@@ -189,7 +189,15 @@ inline bool within_radius(GeoPoint a,GeoPoint b,
     if(lon_diff>(allowed*1000000ULL)/cos+1)return false;
     const auto lon_projected=(lon_diff/1000000ULL)*cos+
                              ((lon_diff%1000000ULL)*cos)/1000000ULL;
-    return lat_diff*lat_diff+lon_projected*lon_projected<=allowed*allowed;
+    // A 32-metre facility-footprint query on the smallest walkable moon
+    // can have ~18 billion picodegrees of angular allowance. Scale before
+    // squaring to avoid 64-bit overflow while preserving sub-millimetre
+    // boundary precision in that extreme case.
+    const auto scale=std::max<std::uint64_t>(
+        1,(allowed+999999999ULL)/1000000000ULL);
+    const auto lat=lat_diff/scale,lon=lon_projected/scale,
+               limit=allowed/scale;
+    return lat*lat+lon*lon<=limit*limit;
 }
 template<class Fetch>
 std::optional<Ground> source_ground(GeoPoint p,Fetch&& source) {
