@@ -2157,8 +2157,8 @@ func _on_planet_transfer_state(frame: Dictionary) -> void:
 	if is_instance_valid(player) and is_instance_valid(player.camera): player.camera.current=true
 	if is_instance_valid(scope_label): scope_label.text="ORIGINAL SHUTTLE — SQLITE TRANSFER AUTHORITY"
 	if is_instance_valid(ship_label):
-		ship_label.text="Native ship %d / planet %d / real site %d / shuttle phase %d / gen %d" % [
-			int(frame["ship"]),int(frame["body"]),int(frame["site"]),
+		ship_label.text="Native ship %d / planet %s / real site %d / shuttle phase %d / gen %d" % [
+			int(frame["ship"]),str(frame["body"]),int(frame["site"]),
 			int(frame["phase"]),int(frame["gen"])]
 	if is_instance_valid(status_label):
 		status_label.text="Human approval required for each original shuttle action | no Godot-owned flight"
@@ -2276,8 +2276,8 @@ func _on_original_planet_pose(pose: Dictionary) -> void:
 	if is_instance_valid(player) and is_instance_valid(player.camera): player.camera.current=true
 	if is_instance_valid(scope_label): scope_label.text="ORIGINAL PLANETARY SURFACE — NATIVE SQLITE RECEIPT"
 	if is_instance_valid(ship_label):
-		ship_label.text="Original body %d / source %d | odometer (%.2f, %.2f)m | radial Y %.2fm | gen %d" % [
-			int(pose["body"]),int(pose["site"]),float(x_mm)/1000.0,
+		ship_label.text="Original body %s / source %d | odometer (%.2f, %.2f)m | radial Y %.2fm | gen %d" % [
+			str(pose["body"]),int(pose["site"]),float(x_mm)/1000.0,
 			float(z_mm)/1000.0,float(pose["y_mm"])/1000.0,int(pose["gen"])]
 	if is_instance_valid(status_label):
 		status_label.text="WASD original move | Space jump | E reboard at hatch | F1 camera | F7 suit | F8 O2 | F10 return | F2 care"
