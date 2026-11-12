@@ -122,7 +122,7 @@ func poll() -> void:
                 _error="Original recovery probe exceeded native timeout; writer remains locked until OS exit"
                 _kill_issued=true
                 recovery_blocked.emit(_error)
-            OS.kill(_pid) # kill SGDX guardian; no replacement writer yet
+                OS.kill(_pid) # one guardian termination; no replacement writer yet
         return
     var valid := not _frame.is_empty() and _error.is_empty() and _buffer.is_empty()
     var decision := _frame.duplicate(true)
