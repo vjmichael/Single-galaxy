@@ -3,6 +3,9 @@ extends PanelContainer
 ## The ONLY emitted operation is the selected physical lot identifier.
 signal refine_requested(lot_id: int)
 signal unload_requested()
+signal industry_refresh_requested()
+signal industry_batch_requested(trade: int)
+signal industry_tick_requested()
 signal terminal_closed()
 signal dock_status_requested()
 signal dock_worker_requested()
@@ -42,14 +45,25 @@ var _minerals: Label
 var _refine_button: Button
 var _unload_button: Button
 var _current := {}
+var _industry_state := {}
+var _industry_status: Label
+var _industry_stocks: ItemList
+var _industry_jobs: Label
+var _industry_cut_button: Button
+var _industry_shape_button: Button
+var _industry_tick_button: Button
 
 func _ready() -> void:
 	name = "ColonyInventoryAndOperations"
 	position = Vector2(800, 110)
 	custom_minimum_size = Vector2(450, 380)
 	visible = false
+	var scroll := ScrollContainer.new()
+	scroll.custom_minimum_size = Vector2(535, 620)
+	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	add_child(scroll)
 	var column := VBoxContainer.new()
-	add_child(column)
+	scroll.add_child(column)
 	var heading := Label.new()
 	heading.text = "COLONY INVENTORY & DOCK OPERATIONS"
 	heading.add_theme_font_size_override("font_size", 18)
@@ -181,8 +195,47 @@ func _ready() -> void:
 	_refine_button.disabled = true
 	_refine_button.pressed.connect(_on_refine_pressed)
 	column.add_child(_refine_button)
+	var industry_heading := Label.new()
+	industry_heading.text = "LOCAL FACTORY / WAREHOUSE / CONSTRUCTION GOODS"
+	column.add_child(industry_heading)
+	_industry_status = Label.new()
+	_industry_status.text = "Factory and storage inventory awaiting original C++ source"
+	_industry_status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	column.add_child(_industry_status)
+	var refresh_factory := Button.new()
+	refresh_factory.text = "Refresh this colony's industrial stores"
+	refresh_factory.pressed.connect(func(): industry_refresh_requested.emit())
+	column.add_child(refresh_factory)
+	_industry_stocks = ItemList.new()
+	_industry_stocks.custom_minimum_size = Vector2(470, 150)
+	_industry_stocks.select_mode = ItemList.SELECT_DISABLED
+	column.add_child(_industry_stocks)
+	_industry_jobs = Label.new()
+	_industry_jobs.text = "Native production jobs: no verified local workshop"
+	_industry_jobs.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	column.add_child(_industry_jobs)
+	var job_buttons := HBoxContainer.new()
+	column.add_child(job_buttons)
+	_industry_cut_button = Button.new()
+	_industry_cut_button.text = "Approve 1 panel batch"
+	_industry_cut_button.disabled = true
+	_industry_cut_button.tooltip_text = "Original approved workshop recipe only: 20 kg physical aluminum to 19 kg panels and 1 kg scrap"
+	_industry_cut_button.pressed.connect(func(): industry_batch_requested.emit(1))
+	job_buttons.add_child(_industry_cut_button)
+	_industry_shape_button = Button.new()
+	_industry_shape_button.text = "Approve 1 frame batch"
+	_industry_shape_button.disabled = true
+	_industry_shape_button.tooltip_text = "Original approved workshop recipe only: 20 kg physical panels to 19 kg frames and 1 kg scrap"
+	_industry_shape_button.pressed.connect(func(): industry_batch_requested.emit(2))
+	job_buttons.add_child(_industry_shape_button)
+	_industry_tick_button = Button.new()
+	_industry_tick_button.text = "Advance original production tick"
+	_industry_tick_button.disabled = true
+	_industry_tick_button.tooltip_text = "Runs one native simulation tick on this save; never grants material or instant completed goods"
+	_industry_tick_button.pressed.connect(func(): industry_tick_requested.emit())
+	column.add_child(_industry_tick_button)
 	var future := Label.new()
-	future.text = "Manufacturing: not yet available. Build and staff real plants first.\nNo shared galactic inventory; goods remain at THIS colony."
+	future.text = "Only existing native workshop panel/frame recipes are executable. Candidate recipes, station-mineral feed conversion, unattended factories and intercolony stock transfer are not authorized."
 	future.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	column.add_child(future)
 	var close := Button.new()
@@ -332,6 +385,67 @@ func report_error(message: String) -> void:
 		_refine_button.disabled = true
 	if is_instance_valid(_unload_button):
 		_unload_button.disabled = true
+
+func set_industry(snapshot: Dictionary) -> void:
+	# Never merge warehouse, workshop, refinery or escrow stock into a second
+	# account balance. Every amount is a native source-tagged observation.
+	if not is_instance_valid(_industry_status):
+		return
+	_industry_state = snapshot.duplicate(true)
+	var constructed := bool(snapshot.get("constructed",false))
+	var plant := bool(snapshot.get("refinery",false))
+	var workshop := bool(snapshot.get("workshop",false))
+	var store := bool(snapshot.get("storage",false))
+	var station := int(snapshot.get("station",0))
+	var escrow := int(snapshot.get("escrow_kg",0))
+	var result := int(snapshot.get("result",0))
+	_industry_status.text = "Colony #%d | constructed site %s | refinery %s | workshop %s | storage %s\nOwner hangar ore: %d t | reserved original factory-network escrow: %d kg%s" % [
+		station,"yes" if constructed else "no","yes" if plant else "no",
+		"yes" if workshop else "no","yes" if store else "no",
+		int(snapshot.get("hangar_ore_t",0)),escrow,
+		"\nOnly the original workshop job approval was committed." if result==1 else
+		"\nOriginal workshop declined that approval." if result==2 else
+		"\nOne native production tick completed; see actual stock and batches." if result==3 else ""]
+	_industry_stocks.clear()
+	for stock in snapshot.get("stocks",[]):
+		var source := "Refinery concentrate" if stock.get("kind","")=="R" else \
+			"Workshop buffer" if stock.get("kind","")=="W" else \
+			"Warehouse bin #%d" % int(stock.get("bin",0))
+		_industry_stocks.add_item("%s | %s | %d kg" % [
+			source,str(stock.get("code","")),int(stock.get("kg",0))])
+	if _industry_stocks.item_count==0:
+		_industry_stocks.add_item("No original industrial stock at this colony")
+	if bool(snapshot.get("truncated",false)):
+		_industry_stocks.add_item("Source view truncated at 64 stock rows — refresh after inspecting the native site")
+	var descriptions := PackedStringArray()
+	var cut_ready := false
+	var shape_ready := false
+	var active := false
+	for job in snapshot.get("jobs",[]):
+		var trade := int(job.get("trade",0))
+		var approved := bool(job.get("approved",false))
+		var has_staff := int(job.get("worker",0))>0 and int(job.get("supervisor",0))>0
+		var powered := bool(job.get("powered",false))
+		var on_shift := bool(job.get("on_shift",false))
+		var material := int(job.get("input",0))
+		var job_ready := workshop and not approved and has_staff and powered and on_shift and material>=20
+		if trade==1:
+			cut_ready=job_ready
+		elif trade==2:
+			shape_ready=job_ready
+		active = active or approved
+		descriptions.append("%s: input %d kg, WIP %d kg, output %d kg; labor %s; power %s; program %s" % [
+			"Panels" if trade==1 else "Frames",
+			material,int(job.get("reserved",0)),int(job.get("output",0)),
+			"ready" if has_staff and on_shift else "unavailable",
+			"on" if powered else "off",
+			"%d / %d batches" % [int(job.get("completed",0)),
+				int(job.get("target",0))] if approved else "not approved"])
+	_industry_jobs.text = "\n".join(descriptions) if descriptions.size()>0 else \
+		"No constructed, staffed original workshop at this colony"
+	_industry_cut_button.disabled=not cut_ready
+	_industry_shape_button.disabled=not shape_ready
+	_industry_tick_button.disabled=not active
 
 func present(snapshot: Dictionary) -> void:
 	# NEVER render optimistic ore or assign a local amount to inventory.
