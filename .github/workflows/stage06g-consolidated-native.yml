@@ -12,7 +12,7 @@ permissions:
 
 concurrency:
   group: s6g-exact-head-${{ github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   native:
