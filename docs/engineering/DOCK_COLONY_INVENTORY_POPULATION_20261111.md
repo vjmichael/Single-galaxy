@@ -136,6 +136,8 @@ DOCK-05 original flight/voyage, receiving-ship disembarkation, visitor station c
 
 **DOCK-07 source staged; acceptance OPEN.** The same I colony interface now projects native station refinery, physical founding-ship goods and construction modules, warehouse bins, workshop buffer stocks, original workforce production jobs and guarded local physical stock moves. No galaxy-wide stock ledger is introduced. See docs/engineering/DOCK07_COLONY_LOCAL_INDUSTRY_20261111.md for exact original commands, source isolation, limitations, staged native tests and deferred acceptance.
 
+**DOCK-08 industrial workforce and facility management source staged; acceptance OPEN.** Facility construction, finite material/utility/habitat provisioning, existing-worker certification, native supervised workshop appointments, 16-tick shifts, original job/shift cancellation and source-bound UI status now join the same local I panel. A physical original constructed outpost and docking founding ship are required; the generic starter station does not receive a fabricated factory. See docs/engineering/DOCK08_COLONY_WORKFORCE_FACILITY_MANAGEMENT_20261111.md. DOCK-07 remains parked provisionally for consolidated native/installed acceptance.
+
 ## Open work — do not falsely mark complete
 
 1. **Dock-worker integration closeout:** DOCK-03 now adds source-level original NPC ship-to-station transfer, explicit appointments, source-backed cargo experience and foreground native automatic dispatch. Still requires real compiler/restart acceptance, station welfare, interior path animation and full cross-profession scheduling integration.
