@@ -18,6 +18,8 @@ The ONLY canonical people are `Simulation::player_people_` and `Simulation::npcs
 
 **F5-A5 — Original owner native host/packet, not visual control.** `colony_live_host.cpp` accepts authenticated `PLANET_SURFACE_MOVE` and `PLANET_SURFACE_STATUS` for PLAYER or an existing NPC. The client supplies only bounded signed delta and once-used request ID, never a position, height or collision outcome. The host reports exact original ground x/y/z, last move tick, receipt, source region and world generation after commit. `Stage6GodotPacket.hpp` carries read-only 64-bit string native pose/receipt if genuinely landed, and `godot/stage6` displays that evidence without moving or resetting its **separate local inspector camera**. No installed-game input controls have been wired.
 
+**F5-A6 — Existing browser relay / owner UI source.** `live/interactive_relay.py` now strictly validates `colonyPlanetPlayerRegister`, `colonyPlanetPlayer` (STATUS/BOARD/DISEMBARK/REBOARD/EXIT), and `colonyPlanetSurface` (STATUS/MOVE) with exact field sets, physically valid original body/cell numeric bounds, actor type, valid existing NPC ID, bounded signed mm deltas, and fresh sub-`2^50` request IDs. `viewer/colony.js` has non-CLI owner controls in the existing per-planet shuttle panel and strictly decodes original player/ground receipts, signed original XYZ, world generation and denial. It has **no client-authoritative pose or collision predictor**. `tests/STAGE6F5_SurfacePacketContractTests.cjs` is registered as an optional Node CTest; source is staged and the test is **not executed**.
+
 ### Native host commands
 
 ```text
@@ -40,14 +42,14 @@ Owner and ship come ONLY from the existing authenticated native host principal. 
 5. Original named pilot moves beyond the 1.5m hatch, denies native ascent, retains the posture through independent SQLite recovery, walks back and then ascends.
 6. Source-level cold/flood contact, original-water and conservative equipment-pad collision primitives; original material/source conservation and canonical v132 deserialize.
 
-**These are authored assertions, NOT test results.** There is no compiled exact-head proof, full host/relay handshake test, genuine physical Radeon gameplay observation or signed installed app acceptance.
+**The C++ fixture and the optional Node strict-decoder fixture are authored assertions, NOT test results.** There is no compiled exact-head proof, full host/relay handshake test, genuine physical Radeon gameplay observation or signed installed app acceptance.
 
 ## Remaining F5 work / blocker to calling whole-planet walking complete
 
 - **F5-B continuous geographic navigation:** the existing coarse 36×72 watershed survey cannot prove micro-terrain slopes, detailed collider footprints, traversal between cells, or the true contact surface of the 3D visual mesh. Design a physically consistent finer original-surface representation and immutable geometry identity; include polar/cell seams and return-to-base route.
 - **F5-C vertical physical simulation:** true gravity vector and accelerations, jumps/falls, climbing, elevation interpolation, surface tools, environmental protection, oxygen/heat injuries and native collision against actual generated buildings/vehicles are not implemented by this initial height-snapped pad.
 - **F5-D actual autonomous NPC pathing:** the existing named NPCs can execute authenticated finite steps, but independent real NPC scheduling, navigation tasks, station-to-surface crew transfer and high-population performance are open.
-- **F5-E native installed control:** connect accessible player controls, original collision acknowledgements, persistence/replay on disconnect, host-to-Godot frame conversion and local visual interpolation into the existing `desktop_godot`, not a second standalone game; prove UI refusal/cancellation.
+- **F5-E native installed control:** the **existing browser colony viewer** now has strict relay/owner controls, but connect them to the actual installed `desktop_godot` playable person and native collision acknowledgements, persistence/replay on disconnect, native-to-Godot frame conversion and original visual interpolation; prove human UI denial/refusal/cancellation.
 - **F5-F source repair/consolidated acceptance:** exact-head C++17 Linux/Windows compilation, all affected CTest/old SQLite corpus, negative tamper and speed/race fixtures, multi-cell long-run simulation, physical Radeon installed input and rendering; no CI/PR acceptance gate is claimed closed.
 - **S6-F6** planetary approach, continuous bounded LOD paging, cap/seam, native renderer-worker and large-population scalability; **S6-G** consolidated source/runtime/installed release gates.
 - **S6-D5** cross-region geology/water/sediment transfer, onward soil/mineral/volatile freight; **S6-E** extended ecology and actual native industry acceptance stay OPEN.
