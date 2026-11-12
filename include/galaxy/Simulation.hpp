@@ -95,7 +95,14 @@ struct NpcFlightOrder {
 // NPC-RESP-02/v98: one real player persona independent of fleet cockpit state.
 // Identity is not a clone of an NPC; physical custody transitions require
 // their own later independently authorized gameplay receipts.
-enum class PlayerPersonState : std::uint8_t {AboardOwnShip=0,Rescued=1,Detained=2,Stranded=3,AtStation=4};
+enum class PlayerPersonState : std::uint8_t {
+    AboardOwnShip=0, Rescued=1, Detained=2, Stranded=3, AtStation=4,
+    InPlanetaryShuttle=5, PlanetaryTransit=6, AtPlanetarySurface=7
+};
+// S6-F4: host-only explicit person boarding/release, not a camera command.
+enum class PlanetaryPlayerAction : std::uint8_t {
+    Board=1, Disembark=2, Reboard=3, Exit=4
+};
 // PLAY-STATION-02: host-validated finite station traversal and ship transfer.
 enum class StationPlayerAction : std::uint8_t { Walk=1, Board=2, Disembark=3 };
 struct PlayerPerson {
@@ -110,6 +117,14 @@ struct PlayerPerson {
     // v122: ONLY AtStation may have a physical station and on-foot XYZ.
     EntityId physical_station=0;
     std::int64_t station_x_mm=0,station_z_mm=0;
+    // v131: original physical player custody at ONE already-built planetary
+    // shuttle/site. These are IDs and proven flight receipts, not a visual
+    // position, tile coordinate, cargo manifest or a second person ledger.
+    std::uint64_t planet_body=0;
+    std::uint16_t planet_latitude=0,planet_longitude=0;
+    std::uint32_t planet_revision=0;
+    std::uint64_t planet_flight_receipt=0;
+    std::uint64_t planet_descent_receipt=0,planet_ascent_receipt=0;
 };
 enum class CelestialKind {Star=0,Planet=1,Moon=2,DebrisRegion=3};
 struct PhysicalCelestialBody {
@@ -1507,6 +1522,11 @@ public:
     bool station_player_action(PlayerId owner,EntityId station,EntityId ship,
         StationPlayerAction action,std::int64_t dx,std::int64_t dz,
         std::uint64_t receipt);
+    // Original player-person is one named owner, never an NPC manifest slot.
+    // Shuttle flight itself remains governed by launch_planetary_shuttle.
+    bool planetary_player_shuttle_action(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,PlanetaryPlayerAction action,
+        std::uint64_t receipt);
     // DOCK-03A: trusted host-only, same-owner temporary ship-to-berth
     // shore duty. Moves one ORIGINAL named NPC physical location; neither
     // creates a new resident nor alters its legal home/crew contract.
@@ -1987,6 +2007,7 @@ private:
     std::map<std::uint64_t,ShipyardCustomerOrder> shipyard_customer_orders_; // v93
     std::map<std::uint64_t,WorkDirective> work_directives_; // v94
     std::set<std::uint64_t> shuttle_flight_request_ids_; // v81 replay rejection
+    std::set<std::uint64_t> player_planet_receipts_; // v131 original action replay rejection
     std::set<std::uint64_t> planetary_family_booking_ids_; // v116 immutable roster approvals
     std::map<std::uint64_t,PendingCelestialTransit> pending_celestial_transits_;
     std::map<std::uint64_t,CompletedCelestialTransit> completed_celestial_transits_;
