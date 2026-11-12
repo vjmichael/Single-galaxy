@@ -349,16 +349,9 @@ bool Simulation::planetary_surface_vertical_action(PlayerId owner,EntityId ship,
     if(original==system->second.end() ||
        (original->kind!=CelestialKind::Planet &&
         original->kind!=CelestialKind::Moon))return false;
-    // A legacy v133 can only receive mass from the canonical generator,
-    // not from the visual tile or arbitrary newly entered numbers.
-    const auto expected_mass=original->physical_mass_1e18_kg;
-    if(snapshot_version_>=134 && !expected_mass)return false;
-    // If this legacy world has not yet been upgraded, perform only the
-    // exact original-astronomy source comparison at the final admission gate.
-    if(!establish_original_surface_gravity())return false;
-    const auto g=planetary::gravity::surface_gravity_mm_s2(
-        original->physical_radius_mm,original->physical_mass_1e18_kg);
-    if(!g)return false;
+    // The original body may be legacy v133 (zero stored mass) or v134
+    // (verified mass). Never migrate until ORIGINAL ground is admissible.
+    if(snapshot_version_>=134 && !original->physical_mass_1e18_kg)return false;
     auto& person=p->second;
     auto& sv=person.surface_survival;
     if(sv.injury_points>=100)return false;
@@ -377,6 +370,10 @@ bool Simulation::planetary_surface_vertical_action(PlayerId owner,EntityId ship,
     };
     const auto ground=grid::source_ground(pos,source);
     if(!ground || ground->ocean || !grid::canonical(pos))return false;
+    if(!establish_original_surface_gravity())return false;
+    const auto g=planetary::gravity::surface_gravity_mm_s2(
+        original->physical_radius_mm,original->physical_mass_1e18_kg);
+    if(!g)return false;
     if(!sv.initialized){
         sv.radial_height_mm=ground->height_mm;
         sv.radial_speed_mm_s=0;
@@ -532,9 +529,12 @@ bool Simulation::planetary_surface_suit_action(PlayerId owner,EntityId ship,
         p.planet_descent_receipt &&
         shuttle->second.flight_phase==2 &&
         shuttle->second.descent_receipt==p.planet_descent_receipt;
-    const auto enough=[&](const char* good,std::int64_t needed){
+    const auto stock=[&](const char* good)->std::int64_t{
         const auto found=colony->second.goods_kg.find(good);
-        return found!=colony->second.goods_kg.end() && found->second>=needed;
+        return found==colony->second.goods_kg.end()?0:found->second;
+    };
+    const auto enough=[&](const char* good,std::int64_t needed){
+        return stock(good)>=needed;
     };
     constexpr std::int64_t kSuitMassKg=10;
     if(action==OriginalSuitAction::Manufacture){
@@ -545,15 +545,15 @@ bool Simulation::planetary_surface_suit_action(PlayerId owner,EntityId ship,
            !enough("carbon_feed",1))return false;
     }else if(action==OriginalSuitAction::Retire){
         if(!aboard || sv.suit_embodied_kg!=kSuitMassKg ||
-           sv.suit_equipped || sv.suit_charge>10 ||
-           colony->second.goods_kg["aluminum_scrap"]>1000000000-kSuitMassKg)
+           sv.suit_equipped ||
+           stock("aluminum_scrap")>1000000000-kSuitMassKg)
             return false;
     }else if(action==OriginalSuitAction::Repair){
         if(!aboard || sv.suit_embodied_kg!=kSuitMassKg ||
            sv.suit_equipped || sv.suit_integrity==100 ||
            !enough("ceramic",1) || !enough("glass",1) ||
            !enough("carbon_feed",1) ||
-           colony->second.goods_kg["aluminum_scrap"]>1000000000-3)
+           stock("aluminum_scrap")>1000000000-3)
             return false;
     }else if(action==OriginalSuitAction::Equip){
         if(!ashore || sv.suit_embodied_kg!=kSuitMassKg ||
