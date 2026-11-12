@@ -435,15 +435,26 @@ func _open_saved_station_automatically() -> void:
 		return
 	_station_connect_attempted=true
 	_station_connection_failure=""
-	var save := OS.get_user_data_dir().path_join("single_galaxy_station_test.sqlite")
+	var folder := OS.get_user_data_dir()
+	var save := folder.path_join("single_galaxy_station_test.sqlite")
+	var legacy := folder.path_join("single_galaxy_authoritative.sqlite")
+	# Never choose one of two existing originals by filename order.
+	if FileAccess.file_exists(save) and FileAccess.file_exists(legacy):
+		_on_planet_recovery_blocked("Multiple existing original saves; select your intended SQLite world with F9")
+		return
 	if FileAccess.file_exists(save):
-		# Existing world MUST choose its role from original PlayerPerson,
-		# physical shuttle/site and a generation-fenced native SQLite reopen.
-		# Never invoke station genesis as a fallback after a failed preflight.
 		_begin_native_planet_recovery(save)
+	elif FileAccess.file_exists(legacy):
+		_begin_native_planet_recovery(legacy)
 	else:
-		# First-run original station genesis remains a separate native mode.
-		_on_native_player_status("No previous native station save; creating the original first station")
+		# An orphan SQLite WAL/shm/journal can represent an interrupted writer
+		# with missing main DB. Genesis must not overwrite that uncertainty.
+		for possible in [save,legacy]:
+			for suffix in ["-wal","-shm","-journal"]:
+				if FileAccess.file_exists(possible+suffix):
+					_on_planet_recovery_blocked("Incomplete SQLite save sidecars remain; repair the original before new genesis")
+					return
+		_on_native_player_status("No existing original save; starting native first-station genesis")
 		_schedule_native_handoff("station",-1)
 
 func _begin_native_planet_recovery(save: String) -> void:
@@ -464,6 +475,8 @@ func _on_planet_recovery_decision(frame: Dictionary) -> void:
 	var save: String=frame["save"]
 	var role: int=int(frame["role"])
 	_planet_current_save=save
+	_station_connection_failure=""
+	_planet_recovery_blocked=false
 	station_test_save_selected = save == OS.get_user_data_dir().path_join("single_galaxy_station_test.sqlite")
 	if role==1:
 		_schedule_native_handoff("station",-1)
