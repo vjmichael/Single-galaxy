@@ -11188,6 +11188,9 @@ bool Simulation::load_planetary_geology_shuttle(
        request_id>=(std::uint64_t{1}<<50) ||
        submitted_ids_.count(request_id) ||
        shuttle_flight_request_ids_.count(request_id) ||
+       planetary_family_booking_ids_.count(request_id) ||
+       voyages_.count(request_id) ||
+       intercolony_freight_.count(request_id) ||
        planetary_source_transfers_.count(request_id) ||
        player_planet_receipts_.count(request_id) ||
        surface_move_receipts_.count(request_id) ||
@@ -11244,6 +11247,9 @@ bool Simulation::unload_planetary_geology_shuttle(
        request_id>=(std::uint64_t{1}<<50) ||
        submitted_ids_.count(request_id) ||
        shuttle_flight_request_ids_.count(request_id) ||
+       planetary_family_booking_ids_.count(request_id) ||
+       voyages_.count(request_id) ||
+       intercolony_freight_.count(request_id) ||
        planetary_source_transfers_.count(request_id) ||
        player_planet_receipts_.count(request_id) ||
        surface_move_receipts_.count(request_id) ||
