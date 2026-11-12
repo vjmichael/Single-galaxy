@@ -721,6 +721,29 @@ test('S6-D5 original source receipts are bounded and not oasis operations',()=>{
  assert.match(relay,/colonyPlanetGeoExtract/);
  assert.match(ui,/PLANET_SOURCE_TRANSFER/);
 });
+test('S6-D7 original geological shuttle freight is owner routed and strictly parsed',()=>{
+ const receipt=decode('COLONY|1|5|PLANET_GEO_FREIGHT_COMMITTED|LOAD|4294967300|17|36|SOIL|500|40512|19');
+ assert.equal(receipt.direction,'LOAD');
+ assert.equal(receipt.resource,'SOIL');
+ assert.equal(receipt.kg,500);
+ assert.equal(receipt.requestId,40512);
+ assert.equal(decode('COLONY|1|5|PLANET_GEO_FREIGHT_COMMITTED|UNLOAD|4294967300|17|36|MINERAL|500|40513|20').direction,'UNLOAD');
+ for(const row of [
+  'COLONY|1|5|PLANET_GEO_FREIGHT_COMMITTED|LOAD|4294967300|17|36|SOIL|500|40512',
+  'COLONY|1|5|PLANET_GEO_FREIGHT_COMMITTED|FLY|4294967300|17|36|SOIL|500|40512|19',
+  'COLONY|1|5|PLANET_GEO_FREIGHT_COMMITTED|LOAD|4294967300|17|36|FOOD|500|40512|19',
+  'COLONY|1|5|PLANET_GEO_FREIGHT_COMMITTED|LOAD|4294967300|17|36|SOIL|1001|40512|19',
+  'COLONY|1|5|PLANET_GEO_FREIGHT_COMMITTED|LOAD|4294967300|17|36|SOIL|500|0|19'
+ ])assert.throws(()=>decode(row),Error,row);
+ const host=fs.readFileSync(path.join(root,'src/colony_live_host.cpp'),'utf8');
+ const relay=fs.readFileSync(path.join(root,'live/interactive_relay.py'),'utf8');
+ const ui=fs.readFileSync(path.join(root,'viewer/colony.js'),'utf8');
+ assert.match(host,/load_planetary_geology_shuttle/);
+ assert.match(host,/unload_planetary_geology_shuttle/);
+ assert.match(relay,/colonyPlanetGeoFreightLoad/);
+ assert.match(relay,/colonyPlanetGeoFreightUnload/);
+ assert.match(ui,/PLANET_GEO_FREIGHT_COMMITTED/);
+});
 test('depleted original regional source is a real empty stock, not free ore',()=>{
  const source=decode('COLONY|1|5|PLANET_SOURCE|4294967300|17|36|1|0|0|0|0');
  assert.equal(source.waterKg,0);
