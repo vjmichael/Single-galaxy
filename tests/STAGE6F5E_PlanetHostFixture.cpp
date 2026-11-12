@@ -45,7 +45,7 @@ static void act(PersistentWorld& w,EntityId ship,std::uint64_t id,
     REQUIRE(w.world().events().back().command_id==id &&
             w.world().events().back().result==Outcome::Applied);
 }
-static void create_landed_world(const std::string& file,bool land=true){
+static void create_landed_world(const std::string& file,unsigned stage=4){
     REQUIRE(!fs::exists(fs::u8path(file)));
     const auto selected=choose();
     const PlanetarySiteKey key{selected.body,selected.lat,selected.lon,1};
@@ -83,15 +83,18 @@ static void create_landed_world(const std::string& file,bool land=true){
     REQUIRE(world.build_planetary_shuttle(7,ship,key));
     REQUIRE(world.assign_planetary_shuttle_pilot(7,ship,key,crew[2]));
     REQUIRE(world.load_planetary_shuttle(7,ship,key,ShuttleCargo::Water,10));
-    if(!land){
+    if(stage==0){
         REQUIRE(world.world().player_people().at(7).state==
                 PlayerPersonState::AboardOwnShip);
-        return; // original real constructed site and orbit shuttle, NO landing
+        return; // original constructed site and real docked orbital shuttle
     }
     REQUIRE(world.planetary_player_shuttle_action(
         7,ship,key,PlanetaryPlayerAction::Board,81101));
+    if(stage==1)return; // committed BOARD, no launched flight
     REQUIRE(world.launch_planetary_shuttle(7,ship,key,81234,false));
+    if(stage==2)return; // actual in-flight PlayerPerson and shuttle
     world.steps(3);
+    if(stage==3)return; // actual completed landing, NOT yet disembarked
     REQUIRE(world.planetary_player_shuttle_action(
         7,ship,key,PlanetaryPlayerAction::Disembark,81102));
     const auto& player=world.world().player_people().at(7);
@@ -135,7 +138,7 @@ static void inspect_transfer(const std::string& file) {
 }
 int main(int argc,char** argv){
     try{
-        if(argc!=3)throw std::invalid_argument("usage: fixture --seed|--seed-orbit|--inspect|--inspect-transfer PATH");
+        if(argc!=3)throw std::invalid_argument("usage: fixture --seed|--seed-orbit|--seed-boarded|--seed-transit|--seed-shuttle|--inspect|--inspect-transfer PATH");
         const std::string mode=argv[1],file=argv[2];
         if(file.empty()||file.size()>1024)
             throw std::invalid_argument("invalid fixture SQLite path");
@@ -143,7 +146,16 @@ int main(int argc,char** argv){
             create_landed_world(file);
             inspect(file);
         }else if(mode=="--seed-orbit"){
-            create_landed_world(file,false);
+            create_landed_world(file,0);
+            inspect_transfer(file);
+        }else if(mode=="--seed-boarded"){
+            create_landed_world(file,1);
+            inspect_transfer(file);
+        }else if(mode=="--seed-transit"){
+            create_landed_world(file,2);
+            inspect_transfer(file);
+        }else if(mode=="--seed-shuttle"){
+            create_landed_world(file,3);
             inspect_transfer(file);
         }else if(mode=="--inspect")inspect(file);
         else if(mode=="--inspect-transfer")inspect_transfer(file);
