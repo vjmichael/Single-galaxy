@@ -591,6 +591,22 @@
       return {...e,id,latitude,longitude,revision,
         waterKg,soilKg,mineralKg,volatileKg};
     }
+    if(t==='PLANET_GEO_FREIGHT_COMMITTED'){
+      // The source owner's ORIGINAL shuttle flight, not an instant WO4
+      // fulfillment or the creation of material from an ecological score.
+      if(v.length!==12)throw Error('Malformed original geology freight receipt');
+      const direction=v[4],
+        id=numeric(v[5],Number.MAX_SAFE_INTEGER),
+        latitude=numeric(v[6],35),longitude=numeric(v[7],71),
+        resource=v[8],kg=numeric(v[9],1000),
+        requestId=numeric(v[10],(2**50)-1),
+        generation=numeric(v[11],Number.MAX_SAFE_INTEGER);
+      if(!id||!requestId||!generation||kg<1||
+         !['LOAD','UNLOAD'].includes(direction)||
+         !['SOIL','MINERAL','VOLATILE'].includes(resource))
+        throw Error('Unfunded or malformed geological freight receipt');
+      return {...e,direction,id,latitude,longitude,resource,kg,requestId,generation};
+    }
     if(t==='PLANET_SOURCE_TRANSFER'){
       if(v.length!==14)throw Error('Malformed geological transfer receipt');
       const id=numeric(v[4],Number.MAX_SAFE_INTEGER),
@@ -1971,8 +1987,47 @@
                'Requested. Native equipment, actual worker, power and original '+
                'geological stock checks determine whether this can execute.';
            });
+           // S6-D7: two explicit human-approved ORIGINAL physical legs.
+           // Loading requires the shuttle already landed at the surveyed
+           // source site; unloading requires its real ascent and orbit berth.
+           const freightChoice=document.createElement('select');
+           freightChoice.setAttribute('aria-label','Extracted geological freight class');
+           for(const item of ['SOIL','MINERAL','VOLATILE'])
+             freightChoice.add(new Option(item,item));
+           const freightKg=document.createElement('input');
+           freightKg.type='number';freightKg.min='1';freightKg.max='1000';
+           freightKg.step='1';freightKg.value='1';
+           freightKg.setAttribute('aria-label','Original shuttle freight kilograms');
+           const geologicalFreight=(action,label)=>{
+             const button=document.createElement('button');
+             button.type='button';button.textContent=label;
+             button.addEventListener('click',()=>{
+               const lat=Number(latitude.value),lon=Number(longitude.value),
+                 kg=Number(freightKg.value);
+               if(!Number.isSafeInteger(lat)||lat<0||lat>=36||
+                  !Number.isSafeInteger(lon)||lon<0||lon>=72||
+                  !Number.isSafeInteger(kg)||kg<1||kg>1000){
+                 q('signatureFeedback').textContent=
+                   'Only 1–1000 kg of already extracted site inventory may be booked.';
+                 return;
+               }
+               const requestId=Date.now()*128+(++sourceCounter%128);
+               window.GalaxyColonyCommand?.(action,
+                 {body:body.id,latitude:lat,longitude:lon,
+                  resource:freightChoice.value,kg,requestId});
+               q('signatureFeedback').textContent=
+                 'Physical geological freight requested. Only the original '+
+                 'ship/site/shuttle custody and SQLite material ledger may approve.';
+             });
+             return button;
+           };
+           const loadGeology=geologicalFreight(
+             'colonyPlanetGeoFreightLoad','Load extracted material at landed shuttle');
+           const unloadGeology=geologicalFreight(
+             'colonyPlanetGeoFreightUnload','Unload returned shuttle to original ship');
            actions.append(caption,choice,firstNpc,secondNpc,crewButton,statusButton,policySelect,policyButton,perform,
-             sourceChoice,sourceKg,sourceWorker,sourceButton);
+             sourceChoice,sourceKg,sourceWorker,sourceButton,
+             freightChoice,freightKg,loadGeology,unloadGeology);
            const shuttlePanel=document.createElement('details');
            const shuttleTitle=document.createElement('summary');
            shuttleTitle.textContent='Orbital shuttle / surface logistics';
@@ -2617,6 +2672,13 @@
           'Body #'+e.id+' region ('+e.latitude+','+e.longitude+
           '), world generation '+e.generation+
           '. Use Check spaceport progress for the current state.';
+     }
+     if(e.type==='PLANET_GEO_FREIGHT_COMMITTED'){
+       q('signatureFeedback').textContent=
+         'Original geological shuttle '+e.direction+': '+e.kg+' kg '+e.resource+
+         ' on body #'+e.id+' ('+e.latitude+','+e.longitude+
+         '), receipt '+e.requestId+', generation '+e.generation+
+         '. The freight has not moved beyond the current physical berth.';
      }
      if(e.type==='PLANET_SOURCE_TRANSFER'){
        q('signatureFeedback').textContent=
