@@ -1116,6 +1116,19 @@ func _advance_native_handoff() -> void:
 		player.use_native_authority(_player_session_autoconnect)
 
 func _unhandled_input(event: InputEvent) -> void:
+	if event is InputEventKey and event.pressed and not event.echo and event.keycode in [KEY_F2,KEY_F7]:
+		if native_planet_surface_session != null and native_planet_surface_session.has_verified_pose():
+			if event.keycode == KEY_F2:
+				native_planet_surface_session.submit_medical()
+			elif event.shift_pressed:
+				native_planet_surface_session.submit_suit("CHARGE")
+			else:
+				native_planet_surface_session.submit_suit(
+					"UNEQUIP" if native_planet_surface_session.suit_equipped() else "EQUIP")
+		else:
+			_on_native_player_status("Verified native original person is required for suit and medical actions")
+		get_viewport().set_input_as_handled()
+		return
 	if event is InputEventKey and event.pressed and not event.echo and event.keycode in [KEY_F8,KEY_F10]:
 		if native_planet_surface_session != null and native_planet_surface_session.has_verified_pose():
 			# F8: allocate ONE original site oxygen kg; F10: return that
@@ -1915,16 +1928,25 @@ func _on_original_planet_pose(pose: Dictionary) -> void:
 	if is_instance_valid(ship_label): ship_label.text="Body %d / source %d / ground %.2fm / generation %d" % [
 		int(pose["body"]),int(pose["site"]),float(pose["y_mm"])/1000.0,int(pose["gen"])]
 	if is_instance_valid(status_label):
-		status_label.text="F9 source surface | WASD native steps | Space native jump | F8 oxygen charge | F10 return"
+		status_label.text="WASD original movement | Space jump | F7 suit / Shift-F7 power | F8 O2 | F10 return | F2 medical"
 	if is_instance_valid(native_label):
 		var source_g := int(pose.get("gravity_mm_s2",0))
 		var g_display := ("%d mm/s²" % source_g) if source_g > 0 else "UNVERIFIED"
-		native_label.text="ORIGINAL BODY g=%s | %s | O2 %dkg | CO2 %dkg | injury %d/100 | heat %dms | air unverified %dms" % [
+		var air_status := "Atmosphere UNVERIFIED"
+		if bool(pose.get("atmosphere_known",false)):
+			var pressure := float(pose.get("pressure_pa",0))/1000.0
+			var oxygen_percent := float(pose.get("oxygen_permille",0))/10.0
+			var breathable := bool(pose.get("ambient_breathable",false))
+			air_status = "Air %.1fkPa / O2 %.1f%% / %s" % [
+				pressure,oxygen_percent,"BREATHABLE" if breathable else "NOT BREATHABLE"]
+		native_label.text="g=%s | %s | %s | suit %s %d%% charge %d | O2 %dkg | injury %d/100 | hypoxia %dms | treatments %d" % [
 			g_display,
 			"grounded" if bool(pose.get("grounded",true)) else "airborne",
-			int(pose.get("oxygen_kg",0)),int(pose.get("co2_kg",0)),
-			int(pose.get("injury_points",0)),int(pose.get("thermal_ms",0)),
-			int(pose.get("air_uncertain_ms",0))]
+			air_status,
+			"worn" if bool(pose.get("suit_equipped",false)) else "off",
+			int(pose.get("suit_integrity",0)),int(pose.get("suit_charge",0)),
+			int(pose.get("oxygen_kg",0)),int(pose.get("injury_points",0)),
+			int(pose.get("hypoxia_ms",0)),int(pose.get("medical_treatments",0))]
 
 func _on_native_player_intent(heading: Vector3) -> void:
 	if native_station_session != null and native_station_session.is_active():

@@ -277,6 +277,9 @@ func _send_player_action(verb: String, mode: String) -> void:
     _stdout.store_line("%s|%d|%d|%s" % [verb,_session,req,mode])
     _stdout.flush()
 
+func suit_equipped() -> bool:
+    return has_verified_pose() and bool(_last_pose.get("suit_equipped",false))
+
 func submit_suit(action: String) -> void:
     if action not in ["EQUIP", "UNEQUIP", "CHARGE"]:
         return
