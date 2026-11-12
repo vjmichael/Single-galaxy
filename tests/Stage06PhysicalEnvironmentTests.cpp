@@ -47,6 +47,32 @@ static void local_processes(){
         auto altered=physical;altered.water_kg[1]+=100;
         verify_physical_environment(altered,6000,12000);
     }));
+    // D6: runoff, groundwater and physically retained sediment must
+    // debit the same exact v127 funded source, including negative fixtures.
+    auto upstream=initial_physical_environment(6000,12000,20,0);
+    auto downstream=initial_physical_environment(100,500,20,0);
+    upstream.water_kg={{4000,0,2000,0}};
+    upstream.soil_kg={{9000,3000}};
+    upstream.hazard=PhysicalHazard::Flood;
+    std::array<std::int64_t,4> source{{6000,12000,0,0}};
+    std::array<std::int64_t,4> destination{{100,500,0,0}};
+    const auto flow=propose_neighbor_flux(upstream,downstream,source,
+        destination,true,true);
+    CHECK(flow.liquid_kg>0 && flow.aquifer_kg>0 &&
+          flow.sediment_kg>0);
+    CHECK(propose_neighbor_flux(upstream,downstream,source,
+        destination,false,true).empty());
+    const auto prior_water=source[0]+destination[0];
+    const auto prior_soil=source[1]+destination[1];
+    apply_neighbor_flux(upstream,downstream,source,destination,flow);
+    CHECK(source[0]+destination[0]==prior_water);
+    CHECK(source[1]+destination[1]==prior_soil);
+    verify_physical_environment(upstream,source[0],source[1]);
+    verify_physical_environment(downstream,destination[0],destination[1]);
+    CHECK(denies([&]{
+        apply_neighbor_flux(upstream,downstream,source,destination,
+            NeighborPhysicalFlux{1000000,0,0});
+    }));
     auto dry=initial_physical_environment(0,0,40,0);
     weather={};weather.temperature_c=40;
     advance_physical_environment(dry,weather,false,20,0,0);
