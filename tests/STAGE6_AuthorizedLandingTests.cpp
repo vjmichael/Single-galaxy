@@ -1,4 +1,5 @@
 #include "galaxy/Stage6GodotPacket.hpp"
+#include <algorithm>
 #include <chrono>
 #include <filesystem>
 #include <iostream>
@@ -107,7 +108,7 @@ try {
     // S6-F: the actual landed NPC shuttle may be OBSERVED in a bounded
     // Godot tile packet; owner/body/region are never a new player travel grant.
     const galaxy::stage6::RenderTileAddress landing_tile{
-        static_cast<std::uint8_t>(selected.lat/7),
+        static_cast<std::uint8_t>(std::min<unsigned>(selected.lat/7,stage6::kLatitudeBands-1)),
         static_cast<std::uint8_t>(selected.lon/6),1};
     const auto packet=stage6::original_godot_mesh_packet(
         world,7,ship,selected.body,{landing_tile},key);
