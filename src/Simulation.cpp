@@ -8326,7 +8326,9 @@ bool Simulation::start_planetary_production_build(PlayerId owner,EntityId ship,
        (farm ? (site->second.farm ||
            !geography->landscape.region.farming_possible) :
            (site->second.extractor ||
-            !oasis_reserves_.count(std::get<0>(key)))) ||
+            (!oasis_reserves_.count(std::get<0>(key)) &&
+             !(snapshot_version_>=128 &&
+               planetary_region_sources_.count(key))))) ||
        submitted_ids_.count(order_id) ||
        shuttle_flight_request_ids_.count(order_id) ||
        pending_celestial_transits_.count(order_id) ||
@@ -8336,8 +8338,15 @@ bool Simulation::start_planetary_production_build(PlayerId owner,EntityId ship,
     if(!farm) {
         const auto source=planetary_oasis_source_region(
             owner,ship,std::get<0>(key));
-        if(!source || source->latitude!=std::get<1>(key) ||
-           source->longitude!=std::get<2>(key))return false;
+        const bool oasis=source &&
+            source->latitude==std::get<1>(key) &&
+            source->longitude==std::get<2>(key);
+        const auto geo=planetary_region_sources_.find(key);
+        const bool physical=snapshot_version_>=128 &&
+            geo!=planetary_region_sources_.end() &&
+            std::any_of(geo->second.stock_kg.begin(),geo->second.stock_kg.end(),
+                        [](std::int64_t kg){return kg>0;});
+        if(!oasis && !physical)return false;
     }
     const auto worker=npcs_.find(supervisor);
     if(worker==npcs_.end() || worker->second.home_ship!=ship ||
@@ -17499,7 +17508,9 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                 std::int64_t(site.service_projects[1].phase!=0));
             if(site.embodied_ore!=expected_installed)
                 throw std::runtime_error("snapshot: invalid regional module custody");
-            if(site.extractor && !result.oasis_reserves_.count(site.region.body))
+            if(site.extractor && !result.oasis_reserves_.count(site.region.body) &&
+               !(result.snapshot_version_>=129 &&
+                 result.planetary_region_sources_.count(key)))
                 throw std::runtime_error("snapshot: extractor has no physical source");
             if(result.snapshot_version_>=78) {
                 if(site.surface_location!=surface_custody_id(key) ||
