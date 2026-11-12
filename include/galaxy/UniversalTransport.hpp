@@ -15,7 +15,10 @@ inline bool valid_transport_endpoint(Endpoint e) noexcept {
     return e.id && kind>=1 && kind<=4;
 }
 enum class GoodKind : std::uint8_t { Npc=1, Resource=2, Equipment=3 };
-enum class ResourceGood : std::uint8_t { Water=1, Food=2, Nutrients=3, Oxygen=4 };
+enum class ResourceGood : std::uint8_t {
+    Water=1, Food=2, Nutrients=3, Oxygen=4,
+    PlanetarySoil=5, PlanetaryMineral=6, PlanetaryVolatile=7
+};
 // WO3-B: one actually fabricated 2-tonne construction module on the
 // existing planetary shuttle's external rack, not generic cargo kilograms.
 inline constexpr std::uint64_t kPlanetaryHousingModuleEquipmentId=1;
@@ -31,7 +34,7 @@ inline bool valid_good(const Good& g) noexcept {
     case GoodKind::Npc: return g.amount==1 && g.mass_kg==0;
     case GoodKind::Resource:
         return g.id>=static_cast<std::uint8_t>(ResourceGood::Water) &&
-               g.id<=static_cast<std::uint8_t>(ResourceGood::Oxygen) &&
+               g.id<=static_cast<std::uint8_t>(ResourceGood::PlanetaryVolatile) &&
                g.mass_kg==g.amount;
     case GoodKind::Equipment:
         // Generic future equipment support requires the host to supply an
