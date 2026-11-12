@@ -2,6 +2,7 @@
 // ORIGINAL PlayerPerson, then reopen/inspect (never rewrite) its SQLite world.
 // Test helper only. Not exposed by installed gameplay or a planet genesis path.
 #include "galaxy/Persistence.hpp"
+#include "galaxy/Stage6ConsolidatedAdmission.hpp"
 #include "galaxy/Simulation.hpp"
 #include <algorithm>
 #include <cstdint>
@@ -84,6 +85,8 @@ static void create_landed_world(const std::string& file,unsigned stage=4){
     REQUIRE(world.build_planetary_shuttle(7,ship,key));
     REQUIRE(world.assign_planetary_shuttle_pilot(7,ship,key,crew[2]));
     REQUIRE(world.load_planetary_shuttle(7,ship,key,ShuttleCargo::Water,10));
+    // S6-G: migrate the original source before the v131 boarding action.
+    (void)stage6::consolidated::admit(world);
     if(stage==0){
         REQUIRE(world.world().player_people().at(7).state==
                 PlayerPersonState::AboardOwnShip);
