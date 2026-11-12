@@ -52,6 +52,7 @@ var _refinery_header := {}
 var _refinery_lots: Array[Dictionary] = []
 var _refinery_minerals := {}
 var _pending_industry_kind := ""
+var _industry_auto_refresh_pending := false
 var _industry_receiving := false
 var _industry_head := {}
 var _industry_stocks: Array[Dictionary] = []
@@ -205,6 +206,7 @@ func poll() -> void:
 		stop(failure)
 		return
 	_dispatch_queued_hangar_if_ready()
+	_refresh_industry_if_idle()
 	_automatic_dock_service()
 	_read_real_dock_pedestrians()
 
@@ -896,6 +898,14 @@ func _accept_industry_line(f: PackedStringArray) -> void:
 		return
 	stop("Unknown original industrial frame")
 
+func _refresh_industry_if_idle() -> void:
+	if not _industry_auto_refresh_pending or not _active or _pending!=0 or \
+			int(_person.get("state",-1))!=4 or \
+			Time.get_ticks_msec()-_last_send<NATIVE_HANGAR_COMMAND_GAP_MS:
+		return
+	if request_colony_industry():
+		_industry_auto_refresh_pending=false
+
 func _send_colony_industry(kind: String, selector: int) -> bool:
 	if not _active or _session<=0 or _pending!=0 or \
 			int(_person.get("state",-1))!=4 or \
@@ -937,6 +947,7 @@ func request_colony_inventory() -> void:
 	_next_request += 1
 	_pending = request
 	_pending_refinery_kind = "VIEW"
+	_industry_auto_refresh_pending = true
 	_last_send = Time.get_ticks_msec()
 	_send("COLVIEW|%d|%d|%d|%d" % [
 		_session,request,_generation,int(_person["station"])])
@@ -963,6 +974,7 @@ func submit_colony_refining(lot_id: int) -> void:
 	_next_request += 1
 	_pending = request
 	_pending_refinery_kind = "REFINE"
+	_industry_auto_refresh_pending = true
 	_last_send = Time.get_ticks_msec()
 	_send("COLREFINE|%d|%d|%d|%d" % [_session,request,_generation,lot_id])
 
@@ -992,6 +1004,7 @@ func unload_colony_docked_ship_tonne() -> void:
 	_next_request += 1
 	_pending = request
 	_pending_refinery_kind = "UNLOAD"
+	_industry_auto_refresh_pending = true
 	_last_send = Time.get_ticks_msec()
 	_send("COLUNLOAD|%d|%d|%d|%d" % [_session,request,_generation,ship_id])
 
@@ -1128,6 +1141,7 @@ func stop(message: String = "Station session closed", graceful: bool = false) ->
 	_queued_hangar_ready_msec = 0
 	_pending_refinery_kind = ""
 	_pending_industry_kind = ""
+	_industry_auto_refresh_pending = false
 	_industry_receiving = false
 	_industry_head.clear()
 	_industry_stocks.clear()
