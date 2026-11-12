@@ -2263,6 +2263,13 @@ if(BUILD_TESTING)
   add_test(NAME galaxy_dock08_colony_facility_workforce
     COMMAND galaxy_dock08_management_tests
     "${CMAKE_CURRENT_BINARY_DIR}/dock08_world.sqlite")
+  # DOCK-09 native original hull -> ore -> outpost -> workforce -> goods.
+  add_executable(galaxy_dock09_vertical_slice_tests
+    tests/Dock09IndustrialVerticalSliceTests.cpp)
+  target_link_libraries(galaxy_dock09_vertical_slice_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_dock09_original_colony_industry_vertical
+    COMMAND galaxy_dock09_vertical_slice_tests
+    "${CMAKE_CURRENT_BINARY_DIR}/dock09_world.sqlite")
 endif()
 add_executable(galaxy_desktop_station_host src/desktop_station_host.cpp)
 target_link_libraries(galaxy_desktop_station_host PRIVATE galaxy_kernel)
