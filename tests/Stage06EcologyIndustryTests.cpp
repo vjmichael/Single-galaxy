@@ -70,6 +70,38 @@ static void assessment(){
     CHECK(cultivation_budget(nullptr,true,false,120).mode==CropMode::Blocked);
     CHECK(cultivation_budget(nullptr,true,true,1).mode==CropMode::Blocked);
     CHECK(cultivation_budget(nullptr,true,true,2).mode==CropMode::Controlled);
+    // S6-E6 original material conservation over real committed seasons:
+    // spring harvest, fallow, winter yield reduction and erosion.
+    physical.hazard=PhysicalHazard::None;
+    physical.soil_kg={{15000,1000}};
+    verify_physical_environment(physical,4000,16000);
+    crop=seasonal_ecology_budget(&physical,true,false,0,false,20,0,0);
+    CHECK(crop.mode==CropMode::Field && crop.food_kg==12 &&
+          crop.wastewater_kg==3);
+    crop=seasonal_ecology_budget(&physical,true,false,0,false,21,20,0);
+    CHECK(crop.mode==CropMode::Blocked);
+    crop=seasonal_ecology_budget(&physical,true,false,0,false,60,20,0);
+    CHECK(crop.mode==CropMode::Field && crop.food_kg==12);
+    crop=seasonal_ecology_budget(&physical,true,false,0,false,60,20,20);
+    CHECK(crop.mode==CropMode::Field && crop.food_kg==11 &&
+          crop.wastewater_kg==4);
+    crop=seasonal_ecology_budget(&physical,true,false,0,false,80,20,0);
+    CHECK(crop.mode==CropMode::Field && crop.food_kg==12);
+    crop=seasonal_ecology_budget(&physical,true,false,0,false,80,20,0);
+    CHECK(crop.water_kg+crop.nutrients_kg==
+          crop.food_kg+crop.wastewater_kg);
+    CHECK(ecological_condition(&physical,false)==
+          EcologicalCondition::NoNativeBiosphere);
+    CHECK(ecological_condition(&physical,true)==
+          EcologicalCondition::Viable);
+    physical.soil_kg={{1000,15000}};
+    CHECK(ecological_condition(&physical,true)==
+          EcologicalCondition::Stressed);
+    crop=seasonal_ecology_budget(&physical,true,false,0,false,40,0,0);
+    CHECK(crop.mode==CropMode::Field && crop.food_kg==10 &&
+          crop.wastewater_kg==5);
+    CHECK(crop.water_kg+crop.nutrients_kg==
+          crop.food_kg+crop.wastewater_kg);
 }
 static void recovery(const std::string& db){
     cleanup(db);
