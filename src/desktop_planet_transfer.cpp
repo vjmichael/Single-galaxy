@@ -6,6 +6,7 @@
 #include "galaxy/NativeWriterLease.hpp"
 #include "galaxy/Persistence.hpp"
 #include "galaxy/Simulation.hpp"
+#include "galaxy/Stage6RecoveryDecision.hpp"
 #include <algorithm>
 #include <atomic>
 #include <charconv>
@@ -92,6 +93,37 @@ void denial(std::uint64_t request,const char* reason) {
     std::cout<<"DENY|1|"<<request<<'|'<<reason<<'\n'<<std::flush;
 }
 } // namespace
+
+// S6-F6: short-lived native recovery preflight. This acquires the SAME
+// non-blocking OS writer lease before reading an existing SQLite world.
+// The lock is released on process exit BEFORE Godot launches a writer.
+// It never advances time, mutates stock, creates a world or guesses a role.
+int probe(const std::string& save_utf8) {
+    try {
+        const auto save=fs::u8path(save_utf8);
+        if(save_utf8.empty() || save_utf8.size()>1024 ||
+           !fs::is_regular_file(save))
+            throw std::invalid_argument("recovery probe requires existing SQLite world");
+        NativeWriterLease custody(save);
+        PersistentWorld world(save_utf8,Simulation(0xC021));
+        const auto role=stage6::recovery::inspect(world.world(),owner);
+        if(!role || role->role==stage6::recovery::Role::Invalid)
+            throw std::runtime_error("saved player transport custody inconsistent");
+        // The resulting role is a *read-only decision*, NOT a handoff grant.
+        // The next writer reopens/revalidates every original source record.
+        std::cout<<"RFRAME|1|"<<unsigned(role->role)<<'|'
+            <<unsigned(role->person_state)<<'|'<<role->ship<<'|'
+            <<role->body<<'|'<<role->latitude<<'|'<<role->longitude<<'|'
+            <<role->surface<<'|'<<unsigned(role->shuttle_phase)<<'|'
+            <<world.world().tick()<<'|'<<world.generation()<<'\n'
+            <<std::flush;
+        if(!std::cout)throw std::runtime_error("recovery protocol pipe broken");
+        return 0;
+    } catch(const std::exception& e) {
+        std::cerr<<"Original-world recovery preflight refused: "<<e.what()<<'\n';
+        return 3;
+    }
+}
 
 int run(const std::string& save_utf8) {
     try {
