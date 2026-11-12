@@ -2299,6 +2299,11 @@
          if(rows.some(x=>!x||x.modelRevision!==e.modelRevision))return;
          const ice=rows.filter(x=>x.seaIce).length;
          const liquid=rows.filter(x=>x.liquid).length;
+         const hazardNames=['none','extreme cold','extreme heat','high runoff'];
+         const engineeringNote=rows.some(x=>x.risk===3)?
+           'Floodplain engineering review indicated. ':
+           rows.some(x=>x.risk===1||x.risk===2)?
+           'Shelter and thermal-control review indicated. ': '';
          q('signatureFeedback').textContent=
            'Planet #'+e.id+' region ('+e.latitude+','+e.longitude+
            ') · four modeled quarters '+rows.map(x=>x.temperature+'°C').join(' / ')+
@@ -2306,8 +2311,9 @@
            ' · sea ice '+ice+'/4'+
            ' · model rainfall '+rows.reduce((a,x)=>a+x.precipitation,0)+
            ' · watershed seasonal peak '+Math.max(...rows.map(x=>x.discharge))+
-           ' · hazards '+rows.map(x=>x.risk).join('/')+
-           '. These are derived prospect scores only: no extractable water, vegetation, '+
+           ' · modeled hazards '+rows.map(x=>hazardNames[x.risk]).join(' / ')+
+           '. '+engineeringNote+
+           'These are derived prospect scores only: no extractable water, vegetation, '+
            'weather events, or construction permit is granted.';
        }
      }
