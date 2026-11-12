@@ -11,6 +11,7 @@
 #include "galaxy/Dock05RegionalDemand.hpp"
 #include "galaxy/Dock06Corridor.hpp"
 #include "galaxy/StationLaunch.hpp"
+#include "galaxy/Stage6ConsolidatedAdmission.hpp"
 #include "galaxy/StationRefineryProtocol.hpp"
 #include "galaxy/ColonyIndustrialService.hpp"
 #include "galaxy/ColonyIndustrialManagement.hpp"
@@ -99,11 +100,10 @@ static int run_host(int argc,char** argv){
   // SQLite worlds ignore this genesis candidate; they are NEVER seeded.
   (void)stage6::provision_first_planet_seed(seed);
   PersistentWorld world(save_utf8,std::move(seed));
-  // Idempotent v127 zero-material migration of pre-Stage6 saves.
-  world.ensure_planetary_genesis_manifest();
-  world.ensure_physical_planetary_environment();
-  world.ensure_planetary_source_custody();
-    world.ensure_planetary_ecology();
+  // S6-G: one canonically audited original migration for ALL installed
+  // roles, through the sealed v135 atmosphere and player physics. No
+  // second world, cloned stock or hidden station-specific v130 endpoint.
+  (void)stage6::consolidated::admit(world);
   if(fresh){
    // One genuine original ship docking command and transition in the
    // persisted simulation, not a Godot-side dock state or second hull.
