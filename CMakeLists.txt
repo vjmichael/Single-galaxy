@@ -1325,6 +1325,12 @@ endif()
 # STAGE6-C v127 immutable physical planetary material sources and
 # zero-material historical migration in the original SQLite world writer.
 if(BUILD_TESTING)
+  add_executable(galaxy_stage06_ecology_industry_tests
+    tests/Stage06EcologyIndustryTests.cpp)
+  target_link_libraries(galaxy_stage06_ecology_industry_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_stage06_ecology_industry
+    COMMAND galaxy_stage06_ecology_industry_tests
+      "${CMAKE_CURRENT_BINARY_DIR}/stage06e_original.sqlite")
   add_executable(galaxy_stage06_authorized_source_tests
     tests/Stage06AuthorizedSourceTests.cpp)
   target_link_libraries(galaxy_stage06_authorized_source_tests PRIVATE galaxy_kernel)
