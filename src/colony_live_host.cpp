@@ -1386,6 +1386,48 @@ void apply(PersistentWorld& world,EntityId ship,FleetSelection& fleet,const std:
         }
         return;
     }
+    // S6-F5-C v135: explicit authenticated ORIGINAL physical equipment and
+    // patient-care requests. Only these existing host identities can access
+    // the pre-board manufacturer. No Godot visual suit grants protection.
+    // PLANET_SUIT|body|lat|lon|MAKE/RETIRE/REPAIR/EQUIP/UNEQUIP/CHARGE|receipt
+    // PLANET_MEDICAL|body|lat|lon|TREAT|receipt
+    if(!v.empty() && (v[0]=="PLANET_SUIT" || v[0]=="PLANET_MEDICAL")){
+        try{
+            if(v.size()!=6)throw std::invalid_argument("invalid medical/equipment arity");
+            const auto body=integer(v[1]),lat=integer(v[2]),lon=integer(v[3]),
+                       id=integer(v[5]);
+            if(body<=0 || lat<0 || lat>=36 || lon<0 || lon>=72 ||
+               id<=0 || id>=(std::int64_t{1}<<60))
+                throw std::invalid_argument("invalid original source/receipt");
+            const PlanetarySiteKey key{std::uint64_t(body),
+                std::uint16_t(lat),std::uint16_t(lon),1};
+            bool accepted=false;
+            if(v[0]=="PLANET_MEDICAL"){
+                if(v[4]!="TREAT")throw std::invalid_argument("unknown treatment");
+                accepted=world.planetary_surface_treatment(principal,ship,key,
+                    std::uint64_t(id));
+            }else{
+                Simulation::OriginalSuitAction action{};
+                if(v[4]=="MAKE")action=Simulation::OriginalSuitAction::Manufacture;
+                else if(v[4]=="RETIRE")action=Simulation::OriginalSuitAction::Retire;
+                else if(v[4]=="REPAIR")action=Simulation::OriginalSuitAction::Repair;
+                else if(v[4]=="EQUIP")action=Simulation::OriginalSuitAction::Equip;
+                else if(v[4]=="UNEQUIP")action=Simulation::OriginalSuitAction::Unequip;
+                else if(v[4]=="CHARGE")action=Simulation::OriginalSuitAction::Charge;
+                else throw std::invalid_argument("unknown original suit action");
+                accepted=world.planetary_surface_suit_action(
+                    principal,ship,key,action,std::uint64_t(id));
+            }
+            if(!accepted)throw std::invalid_argument("original source or person refused");
+            announce(world.world(),std::string(v[0]=="PLANET_MEDICAL"?
+                "PLANET_MEDICAL_COMMITTED|":"PLANET_SUIT_COMMITTED|")+
+                std::to_string(id)+"|"+std::to_string(world.generation()));
+        }catch(const std::exception&){
+            announce(world.world(),v[0]=="PLANET_MEDICAL"?
+                "ERROR|PLANET_MEDICAL_DENIED":"ERROR|PLANET_SUIT_DENIED");
+        }
+        return;
+    }
     // S6-F5: authenticated ORIGINAL world motion; only local signed
     // displacement, never requested absolute XYZ, body position or Godot pose.
     // PLAYER: PLANET_SURFACE_MOVE|body|lat|lon|PLAYER|dx|dz|receipt
