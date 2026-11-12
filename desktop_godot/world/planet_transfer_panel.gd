@@ -10,6 +10,7 @@ var _sites: OptionButton
 var _actions: Dictionary = {}
 var _cancel: Button
 var _refreshing := false
+var _last_site_key := ""
 
 func _ready() -> void:
     name="OriginalShuttleTransferPanel_NOT_AUTHORITY"
@@ -69,12 +70,18 @@ func present(frame: Dictionary, options: Array[Dictionary], pending: bool=false)
         return
     var state := int(frame["state"])
     var phase := int(frame["phase"])
+    var key := JSON.stringify(options)
+    if key!=_last_site_key:
+        _refreshing=true
+        _sites.clear()
+        for o in options:
+            _sites.add_item("Body %d / latitude %d / longitude %d / original site %d" % [
+                int(o["body"]),int(o["lat"]),int(o["lon"]),int(o["site"])])
+        _refreshing=false
+        _last_site_key=key
     _refreshing=true
-    _sites.clear()
-    for o in options:
-        _sites.add_item("Body %d / latitude %d / longitude %d / original site %d" % [
-            int(o["body"]),int(o["lat"]),int(o["lon"]),int(o["site"])])
-    _sites.select(int(frame["selected"]))
+    if _sites.selected!=int(frame["selected"]):
+        _sites.select(int(frame["selected"]))
     _refreshing=false
     _sites.disabled=pending or state!=0 or options.size()<2
     var person_location := "ORIGINAL SHIP" if state==0 else (
