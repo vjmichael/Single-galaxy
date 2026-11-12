@@ -71,7 +71,11 @@ bool Simulation::planetary_surface_move(PlayerId owner,EntityId ship,
             return false;
         position=&n->second.surface_pose;
     }
-    if(position->last_move_receipt && position->last_move_tick>=tick_)
+    // A recorded local pose belongs to exactly one original surface
+    // custody ID. Never interpret it after physical NPC relocation.
+    if(position->last_move_receipt &&
+       (position->last_move_tick>=tick_ ||
+        position->surface_location!=facility->second.surface_location))
         return false;
     const auto x=position->x_mm+dx_mm;
     const auto z=position->z_mm+dz_mm;
@@ -131,6 +135,7 @@ bool Simulation::planetary_surface_move(PlayerId owner,EntityId ship,
     position->x_mm=x;
     position->y_mm=contact->ground_y_mm;
     position->z_mm=z;
+    position->surface_location=facility->second.surface_location;
     position->last_move_tick=tick_;
     position->last_move_receipt=receipt;
     surface_move_receipts_.insert(receipt);
