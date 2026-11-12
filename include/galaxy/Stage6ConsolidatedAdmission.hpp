@@ -43,10 +43,13 @@ inline Evidence observe(const PersistentWorld& source) {
     if(!out.generation || out.total_ore!=source.resource_origin())
         throw std::logic_error("S6-G original resource/genesis journal mismatch");
     for(const auto& [key,shuttle]:w.planetary_shuttles()) {
+        // A built but unstaffed/damaged shuttle remains original material
+        // custody, not a reason to erase an otherwise legitimate old world.
+        // Player embarkation/flight still requires a live authorized pilot
+        // in the actual native action and recovery gates.
         const auto s=w.planetary_sites().find(key);
         if(s==w.planetary_sites().end() ||
            !std::get<0>(key) || !shuttle.owner || !shuttle.source_ship ||
-           (shuttle.flight_phase>0 && !shuttle.pilot_npc) ||
            shuttle.flight_phase>3 ||
            shuttle.owner!=s->second.owner ||
            shuttle.source_ship!=s->second.source_ship)
