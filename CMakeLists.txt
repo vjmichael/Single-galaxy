@@ -1322,6 +1322,17 @@ if(BUILD_TESTING)
     COMMAND galaxy_play13d_planetary_geography_tests)
 endif()
 
+# STAGE6-C v127 immutable physical planetary material sources and
+# zero-material historical migration in the original SQLite world writer.
+if(BUILD_TESTING)
+  add_executable(galaxy_stage06_finite_planet_genesis_tests
+    tests/Stage06FinitePlanetaryGenesisTests.cpp)
+  target_link_libraries(galaxy_stage06_finite_planet_genesis_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_stage06_finite_planet_genesis
+    COMMAND galaxy_stage06_finite_planet_genesis_tests
+      "${CMAKE_CURRENT_BINARY_DIR}/stage06c_original.sqlite")
+endif()
+
 # STAGE6-ENV01 / PGF-01C canonical seasonal climate, world-source
 # identity and conservation (all observations remain read-only).
 if(BUILD_TESTING)
