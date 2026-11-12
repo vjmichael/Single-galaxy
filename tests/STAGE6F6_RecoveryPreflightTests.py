@@ -73,7 +73,7 @@ def main():
             ("--seed-boarded",3,5,0),
             ("--seed-transit",3,6,1),
             ("--seed-shuttle",3,5,2),
-            ("--seed",4,7,2),
+            ("--seed-surface",4,7,2),
         ]
         saves={}
         for index,(flag,role,state,phase) in enumerate(fixtures):
