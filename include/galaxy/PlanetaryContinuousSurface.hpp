@@ -102,9 +102,20 @@ inline std::uint32_t cosine_ppm(std::int64_t lat) noexcept {
     // Linear source-ring interpolation; smooth across every 5-degree cell
     // boundary. At poles a conservative 1/1000 scale avoids singularity.
     const auto shifted=lat+175*(kDegree/2);
-    if(shifted<=0||shifted>=35*kCellSpan)
-        return std::max<std::uint32_t>(1000,kCosCellCenterPpm[
-            shifted<=0?0:35]);
+    // Last 2.5 degrees taper the terminal source-ring cosine toward the
+    // single pole. Floor at 0.001 to prevent a division singularity.
+    if(shifted<=0){
+        const auto away=std::clamp<std::int64_t>(lat+kPole,0,kCellSpan/2);
+        return std::max<std::uint32_t>(1000,
+            static_cast<std::uint32_t>(away*kCosCellCenterPpm[0]/
+                                       (kCellSpan/2)));
+    }
+    if(shifted>=35*kCellSpan){
+        const auto away=std::clamp<std::int64_t>(kPole-lat,0,kCellSpan/2);
+        return std::max<std::uint32_t>(1000,
+            static_cast<std::uint32_t>(away*kCosCellCenterPpm[35]/
+                                       (kCellSpan/2)));
+    }
     const auto index=shifted/kCellSpan;
     const auto fraction=(shifted%kCellSpan)/(kCellSpan/kWeight);
     const auto left=std::int64_t(kCosCellCenterPpm[index]);
@@ -178,6 +189,9 @@ inline bool within_radius(GeoPoint a,GeoPoint b,
     if(!canonical(a)||!canonical(b)||
        radius_mm<kMinWalkableBodyRadiusMm||
        radius_mm>kMaxWalkableBodyRadiusMm||limit_mm>32000)return false;
+    // Every longitude at a mathematical pole is the SAME actual point.
+    if(a.latitude_pdeg==kPole && b.latitude_pdeg==kPole)return true;
+    if(a.latitude_pdeg== -kPole && b.latitude_pdeg== -kPole)return true;
     const auto allowed=(limit_mm*kPdegPerRadian+radius_mm-1)/radius_mm;
     const auto lat_diff=static_cast<std::uint64_t>(
         a.latitude_pdeg>b.latitude_pdeg?
