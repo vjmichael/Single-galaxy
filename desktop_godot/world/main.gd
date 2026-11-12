@@ -1366,6 +1366,10 @@ func _unhandled_input(event: InputEvent) -> void:
 				if not save.is_absolute_path() or not FileAccess.file_exists(save):
 					_on_native_player_status("Original cockpit save missing; planetary transfer refused")
 				else:
+					# A new explicit human journey gets its own single bounded
+					# automatic recovery allowance, never an infinite retry loop.
+					_planet_auto_recovery_used=false
+					_planet_recovery_blocked=false
 					_planet_current_save=save
 					var old_pid: int=native_player_session.process_id()
 					native_player_session.stop("Human selected source-owned planetary shuttle transport",true)
