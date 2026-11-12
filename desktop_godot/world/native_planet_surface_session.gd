@@ -4,6 +4,7 @@ extends RefCounted
 ## are supplied ONLY by the verified C++ PFRAME. No Godot collision or local
 ## CharacterBody movement is ever submitted as authoritative.
 const SGDX_LAUNCH := preload("res://world/sgdx_process_launch.gd")
+const SOURCE_ID := preload("res://world/native_source_id.gd")
 signal pose_received(pose: Dictionary)
 signal status_changed(message: String)
 signal connection_changed(connected: bool)
@@ -150,10 +151,15 @@ func _accept(line: String) -> void:
     # player is no longer ashore. Never fabricate a final surface pose.
     if p.size()==11 and p[0]=="PLEAVE" and p[1]=="1":
         for i in range(2,11):
+            if i==5:
+                if not SOURCE_ID.valid(p[i]):
+                    stop("Invalid original unsigned planetary body on reboard")
+                    return
+                continue
             if not _integer(p[i]):
                 stop("Malformed original shuttle reboarding receipt")
                 return
-        if not has_verified_pose() or _pending_kind!="PREBOARD" or                 int(p[2])!=_session or int(p[3])!=_pending or                 int(p[4])!=int(_last_pose.get("ship",0)) or                 int(p[5])!=int(_last_pose.get("body",0)) or                 int(p[6])!=int(_last_pose.get("lat",-1)) or                 int(p[7])!=int(_last_pose.get("lon",-1)) or                 int(p[8])<_tick or int(p[9])<=_generation or                 int(p[10])<=_last_action_receipt:
+        if not has_verified_pose() or _pending_kind!="PREBOARD" or                 int(p[2])!=_session or int(p[3])!=_pending or                 int(p[4])!=int(_last_pose.get("ship",0)) or                 not SOURCE_ID.same(p[5],_last_pose.get("body","0")) or                 int(p[6])!=int(_last_pose.get("lat",-1)) or                 int(p[7])!=int(_last_pose.get("lon",-1)) or                 int(p[8])<_tick or int(p[9])<=_generation or                 int(p[10])<=_last_action_receipt:
             stop("Original reboarding source/epoch mismatch")
             return
         _last_action_receipt=int(p[10])
@@ -165,13 +171,18 @@ func _accept(line: String) -> void:
         stop("Unexpected original planetary host frame")
         return
     for i in range(2,40):
+        if i==5:
+            if not SOURCE_ID.valid(p[i]):
+                stop("Invalid original unsigned planetary body")
+                return
+            continue
         if not _integer(p[i]):
             stop("Non-numeric original planetary pose")
             return
     var sess := int(p[2])
     var req := int(p[3])
     var ship := int(p[4])
-    var body := int(p[5])
+    var body: String=p[5]
     var lat := int(p[6])
     var lon := int(p[7])
     var x := int(p[8])
@@ -206,7 +217,7 @@ func _accept(line: String) -> void:
     var hypoxia_ms := int(p[37])
     var care_count := int(p[38])
     var last_care_tick := int(p[39])
-    if sess<=0 or ship<=0 or body<=0 or site<=0 or lat<0 or lat>=36 or lon<0 or lon>=72 or        abs(x)>1000000000000 or abs(z)>1000000000000 or abs(y)>100000000 or        abs(lat_pdeg)>90000000000000 or abs(lon_pdeg)>180000000000000 or        move_tick<0 or move_tick>tick or receipt<0 or tick<0 or gen<=0 or \
+    if sess<=0 or ship<=0 or site<=0 or lat<0 or lat>=36 or lon<0 or lon>=72 or        abs(x)>1000000000000 or abs(z)>1000000000000 or abs(y)>100000000 or        abs(lat_pdeg)>90000000000000 or abs(lon_pdeg)>180000000000000 or        move_tick<0 or move_tick>tick or receipt<0 or tick<0 or gen<=0 or \
        gravity<0 or gravity>50000 or abs(radial_speed)>60000 or \
        grounded not in [0,1] or oxygen_kg<0 or oxygen_kg>4 or co2_kg<0 or co2_kg>4 or \
        oxygen_kg+co2_kg>4 or thermal_ms<0 or thermal_ms>1000000000000 or \
@@ -223,7 +234,7 @@ func _accept(line: String) -> void:
        care_count<0 or care_count>100000 or last_care_tick<0 or last_care_tick>tick:
         stop("Native planetary source/pose out of bounds")
         return
-    var identity := "%d:%d:%d:%d:%d" % [ship,body,lat,lon,site]
+    var identity := "%d:%s:%d:%d:%d" % [ship,body,lat,lon,site]
     if _session == 0:
         if req!=0 or command_receipt!=0:
             stop("Unsolicited planetary movement acknowledgement")
