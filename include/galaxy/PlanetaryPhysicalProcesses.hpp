@@ -85,4 +85,70 @@ inline void advance_physical_environment(
     x.updated_tick=tick;
     verify_physical_environment(x,water,soil);
 }
+// S6-D cross-region physical flux: bounded SOURCE-OWNED matter, not rainfall.
+// The original planetresource region stock is moved in lockstep with its
+// v128 physical phase subaccount. Each edge is chosen by the authoritative
+// canonical watershed. Input budgets are immutable during a planning pass;
+// the original world STEP commits the complete deterministic resulting map.
+struct NeighborPhysicalFlux {
+    std::int64_t liquid_kg=0;
+    std::int64_t aquifer_kg=0;
+    std::int64_t sediment_kg=0;
+    bool empty() const noexcept {
+        return !liquid_kg && !aquifer_kg && !sediment_kg;
+    }
+};
+inline NeighborPhysicalFlux propose_neighbor_flux(
+    const PhysicalEnvironment& upstream,const PhysicalEnvironment& downstream,
+    const std::array<std::int64_t,4>& from_stock,
+    const std::array<std::int64_t,4>& to_stock,
+    bool canonical_downstream,bool downstream_ocean) {
+    if(!canonical_downstream)return {};
+    verify_physical_environment(upstream,from_stock[0],from_stock[1]);
+    verify_physical_environment(downstream,to_stock[0],to_stock[1]);
+    // Absolute rate caps prevent one clock tick from teleporting lakes or
+    // creating huge erosion in a single 36x72 climate/region cell.
+    const auto liquid=std::min<std::int64_t>(
+        {upstream.water_kg[0]/20,50,100000000-to_stock[0]});
+    const auto aquifer=upstream.water_kg[2]>downstream.water_kg[2]+40?
+        std::min<std::int64_t>({(upstream.water_kg[2]-
+                 downstream.water_kg[2])/20,10,100000000-to_stock[0]-liquid}):0;
+    const auto sediment=upstream.hazard==PhysicalHazard::Flood ||
+                        downstream_ocean?
+        std::min<std::int64_t>(
+            {upstream.soil_kg[1]/20,10,100000000-to_stock[1]}):0;
+    return {std::max<std::int64_t>(0,liquid),
+            std::max<std::int64_t>(0,aquifer),
+            std::max<std::int64_t>(0,sediment)};
+}
+inline void apply_neighbor_flux(
+    PhysicalEnvironment& upstream,PhysicalEnvironment& downstream,
+    std::array<std::int64_t,4>& from_stock,
+    std::array<std::int64_t,4>& to_stock,
+    const NeighborPhysicalFlux& flux) {
+    if(flux.liquid_kg<0 || flux.aquifer_kg<0 || flux.sediment_kg<0 ||
+       flux.liquid_kg>upstream.water_kg[0] ||
+       flux.aquifer_kg>upstream.water_kg[2] ||
+       flux.sediment_kg>upstream.soil_kg[1] ||
+       flux.liquid_kg+flux.aquifer_kg>100000000-to_stock[0] ||
+       flux.sediment_kg>100000000-to_stock[1])
+        throw std::invalid_argument("physical interregion flux overdraw");
+    const auto before_water=from_stock[0]+to_stock[0];
+    const auto before_soil=from_stock[1]+to_stock[1];
+    upstream.water_kg[0]-=flux.liquid_kg;
+    downstream.water_kg[0]+=flux.liquid_kg;
+    upstream.water_kg[2]-=flux.aquifer_kg;
+    downstream.water_kg[2]+=flux.aquifer_kg;
+    upstream.soil_kg[1]-=flux.sediment_kg;
+    downstream.soil_kg[1]+=flux.sediment_kg;
+    from_stock[0]-=flux.liquid_kg+flux.aquifer_kg;
+    to_stock[0]+=flux.liquid_kg+flux.aquifer_kg;
+    from_stock[1]-=flux.sediment_kg;
+    to_stock[1]+=flux.sediment_kg;
+    verify_physical_environment(upstream,from_stock[0],from_stock[1]);
+    verify_physical_environment(downstream,to_stock[0],to_stock[1]);
+    if(from_stock[0]+to_stock[0]!=before_water ||
+       from_stock[1]+to_stock[1]!=before_soil)
+        throw std::logic_error("physical regional exchange minted water or soil");
+}
 } // namespace galaxy::planetary
