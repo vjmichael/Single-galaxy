@@ -2,6 +2,7 @@ extends Node3D
 ## S6-F5-E: bounded original-world tiles, as one NON-COLLIDING render mesh.
 ## A new original host session must match before even a cached file is shown.
 ## This view neither invents terrain nor feeds a Godot physics ground contact.
+const SOURCE_ID := preload("res://world/native_source_id.gd")
 const GRID_WIDTH := 17
 const VERTICES_PER_TILE := 289
 const INDICES_PER_TILE := 1536
@@ -119,6 +120,11 @@ func _load_if_changed() -> void:
             "native_generation","native_tick","native_move_receipt",
             "center_x_mm","center_y_mm","center_z_mm"]
         for key in required:
+            if key=="body":
+                if not SOURCE_ID.valid(tile.get(key,null)):
+                    _hide()
+                    return
+                continue
             if not _int_string(tile.get(key,null)):
                 _hide()
                 return
@@ -126,7 +132,7 @@ func _load_if_changed() -> void:
            int(tile.get("width",0))!=GRID_WIDTH or \
            int(tile.get("stride_mm",0))!=4000 or \
            int(tile["owner"])!=7 or \
-           int(tile["body"])!=int(_pose.get("body",-1)) or \
+           not SOURCE_ID.same(tile["body"],_pose.get("body","0")) or \
            int(tile["ship"])!=int(_pose.get("ship",-1)) or \
            int(tile["surface_location"])!=int(_pose.get("site",-1)) or \
            int(tile["native_generation"])>int(_pose.get("gen",-1)) or \
