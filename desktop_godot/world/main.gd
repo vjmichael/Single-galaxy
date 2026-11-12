@@ -1287,9 +1287,12 @@ func _advance_native_handoff() -> void:
 		else:
 			_on_native_player_status("Original planetary transfer save missing; cannot start new world")
 	elif destination == "station":
-		station_test_save_selected = true
+		station_test_save_selected = _planet_current_save.is_empty() or (
+			_planet_current_save == OS.get_user_data_dir().path_join("single_galaxy_station_test.sqlite"))
 		last_station_player_state = -1 # only fresh native PERSON can unlock P
-		native_station_session.start()
+		# Existing save identity is never silently replaced by a fixture
+		# if a recovered station uses the older authoritative path.
+		native_station_session.start(_planet_current_save)
 	elif destination == "ship":
 		var save_override := _planet_current_save if not _planet_current_save.is_empty() else (
 			OS.get_user_data_dir().path_join("single_galaxy_station_test.sqlite") if station_test_save_selected else "")
