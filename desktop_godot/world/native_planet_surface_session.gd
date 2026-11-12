@@ -18,6 +18,8 @@ var _session := 0
 var _request := 1
 var _pending := 0
 var _last_send_ms := -100000
+var _last_frame_ms := 0
+const MAX_IDLE_PFRAME_MS := 3000
 var _tick := -1
 var _generation := -1
 var _identity := ""
@@ -66,6 +68,7 @@ func start(save: String) -> void:
     _identity = ""
     _last_pose.clear()
     _last_action_receipt = 0
+    _last_frame_ms = Time.get_ticks_msec()
     _buffer.clear()
     connection_changed.emit(true)
     status_changed.emit("Verifying original planetary custody; no local movement")
@@ -114,6 +117,12 @@ func poll() -> void:
             return
     if _pending != 0 and Time.get_ticks_msec() - _last_send_ms > 3000:
         stop("Planet movement ACK timed out; reconnect to recover original pose")
+        return
+    # Background world STEP must produce continuous original PFRAME proof even
+    # with zero Godot input. A live-but-stalled writer is not a valid clock.
+    # Keep the displayed character locked until the original SQLite reload.
+    if Time.get_ticks_msec() - _last_frame_ms > MAX_IDLE_PFRAME_MS:
+        stop("Original planetary clock stalled; SQLite recovery required")
         return
     if not OS.is_process_running(_pid):
         stop("Planet host exited; no Godot-local fall back to movement")
@@ -222,6 +231,7 @@ func _accept(line: String) -> void:
             _pending=0
     _tick=tick
     _generation=gen
+    _last_frame_ms=Time.get_ticks_msec()
     _last_pose={"session":sess,"ship":ship,"body":body,"lat":lat,"lon":lon,"site":site,
         "x_mm":x,"y_mm":y,"z_mm":z,"latitude_pdeg":lat_pdeg,
         "longitude_pdeg":lon_pdeg,"last_move_tick":move_tick,
