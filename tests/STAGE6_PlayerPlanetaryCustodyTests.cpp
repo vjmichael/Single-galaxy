@@ -1,4 +1,5 @@
 #include "galaxy/Stage6GodotPacket.hpp"
+#include "galaxy/Stage6ConsolidatedAdmission.hpp"
 #include <algorithm>
 #include <chrono>
 #include <filesystem>
@@ -58,6 +59,7 @@ try {
     const auto rock=seed.add_asteroid({2000,0},60);
     seed.ensure_physical_celestial_systems();
     seed.ensure_ship_frame_registry();
+    seed.enable_native_galactic_physics({{selected.system,galactic::Point{{0,100000},{0,100000},{0,100000}}}});
     const auto origin=seed.total_ore();
     PersistentWorld world(db,std::move(seed));
     CHECK(world.register_player_person(7,ship));
@@ -86,6 +88,7 @@ try {
     CHECK(world.build_planetary_shuttle(7,ship,key));
     CHECK(world.assign_planetary_shuttle_pilot(7,ship,key,crew[2]));
     CHECK(world.load_planetary_shuttle(7,ship,key,ShuttleCargo::Water,10));
+    (void)stage6::consolidated::admit(world);
     CHECK(!world.planetary_player_shuttle_action(
         7,ship,key,PlanetaryPlayerAction::Disembark,81101));
     CHECK(!world.planetary_player_shuttle_action(
