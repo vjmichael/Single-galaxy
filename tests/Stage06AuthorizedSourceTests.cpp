@@ -26,6 +26,7 @@ int main(int argc,char** argv){
         Simulation seed(777,1);
         const auto ship=seed.add_colony_ship(7,{0,0},50,5);
         seed.provision_starter_exploration_scanner(ship);
+        seed.enable_native_galactic_physics({{1,galactic::Point{{0,100000},{0,100000},{0,100000}}}});
         CHECK(stage6::provision_first_planet_seed(seed));
         CHECK(seed.physical_planetary_environment_enabled());
         const auto sources=seed.planetary_region_sources();
@@ -85,6 +86,7 @@ int main(int argc,char** argv){
         // generation CAS, idempotent repeat and injected rollback.
         Simulation historical(900,1);
         historical.add_colony_ship(7,{0,0},30,3);
+        historical.enable_native_galactic_physics({{1,galactic::Point{{0,100000},{0,100000},{0,100000}}}});
         historical.ensure_planetary_genesis_manifest();
         historical.enable_physical_planetary_environment();
         const auto old_mass=historical.total_ore();
