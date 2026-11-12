@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <iostream>
 #include <stdexcept>
+#include <string>
 using namespace galaxy::planetary;
 #define CHECK(x) do{if(!(x))throw std::runtime_error("STAGE6-ENV01 line "+std::to_string(__LINE__)+": " #x);}while(false)
 static void verify(const PlanetaryWorldKey& key,
