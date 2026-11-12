@@ -8,6 +8,8 @@
 #include "galaxy/SpaceMiningContact.hpp"
 #include "galaxy/SpaceMiningSurvey.hpp"
 #include "galaxy/ColonyOnboarding.hpp"
+#include "galaxy/PlanetaryContinuousSurface.hpp"
+#include "galaxy/PlanetarySurfaceMovement.hpp"
 #include <charconv>
 #include <chrono>
 #include <cstdint>
@@ -185,8 +187,128 @@ void deny(std::uint64_t id,const char* reason){
     std::cout<<"DENY|1|"<<id<<'|'<<reason<<'\n'<<std::flush;
 }
 }
+
+//// S6-F5-C ingress reconciliation: this is a distinct mode of the EXISTING
+//// desktop executable and the SAME PersistentWorld SQLite writer, not another
+//// planet, NPC, Godot physics authority, or new game-save genesis.
+//// It intentionally refuses nonexistent or not-yet-landed originals.
+static int run_planet_host(const std::string& save_utf8){
+    namespace grid=planetary::continuous_surface;
+    namespace surface=planetary::surface_motion;
+    try{
+        const fs::path save=fs::u8path(save_utf8);
+        if(save_utf8.empty()||save_utf8.size()>1024||
+           !fs::exists(save)||!fs::is_regular_file(save))
+            throw std::invalid_argument("planetary mode requires an existing original SQLite world");
+        NativeWriterLease custody(save);
+        // Constructor ignores this seed for an existing verified save.
+        // No room, colony, generated body, inventory or player is created.
+        PersistentWorld world(save_utf8,Simulation(0xC021));
+        const auto landed=[&]()->const PlayerPerson*{
+            const auto it=world.world().player_people().find(kLocalOwner);
+            if(it==world.world().player_people().end())return nullptr;
+            const auto& p=it->second;
+            if(p.state!=PlayerPersonState::AtPlanetarySurface ||
+               !p.home_ship || p.physical_ship || p.physical_station ||
+               !p.planet_body || p.planet_revision!=1 ||
+               p.planet_latitude>=36 || p.planet_longitude>=72 ||
+               !p.planet_descent_receipt)return nullptr;
+            const PlanetarySiteKey key{p.planet_body,p.planet_latitude,
+                                       p.planet_longitude,p.planet_revision};
+            const auto it_site=world.world().planetary_sites().find(key);
+            const auto it_shuttle=world.world().planetary_shuttles().find(key);
+            const auto* ship=world.world().find(p.home_ship);
+            if(it_site==world.world().planetary_sites().end() ||
+               it_shuttle==world.world().planetary_shuttles().end() ||
+               !ship || ship->type!=EntityType::Ship ||
+               ship->owner_id!=kLocalOwner ||
+               it_site->second.owner!=kLocalOwner ||
+               it_site->second.source_ship!=p.home_ship ||
+               !it_site->second.surface_location ||
+               it_site->second.spaceport_phase!=3 ||
+               it_shuttle->second.owner!=kLocalOwner ||
+               it_shuttle->second.source_ship!=p.home_ship ||
+               it_shuttle->second.flight_phase!=2 ||
+               it_shuttle->second.descent_receipt!=p.planet_descent_receipt)
+                return nullptr;
+            return &p;
+        };
+        if(!landed())throw std::runtime_error(
+            "original player not verified ashore; no native planet session");
+        const auto session=new_epoch();
+        const auto receipt_base=(new_epoch()&((std::uint64_t{1}<<60)-1))
+              & ~((std::uint64_t{1}<<20)-1);
+        std::uint64_t last_request=0,attempts=0;
+        const auto emit=[&](std::uint64_t request){
+            const auto* p=landed();
+            if(!p)throw std::runtime_error("planetary player custody lost");
+            const auto& pose=p->surface_pose;
+            auto latitude=pose.latitude_pdeg,longitude=pose.longitude_pdeg;
+            if(!pose.last_move_receipt){
+                const auto center=grid::cell_center(
+                    {p->planet_latitude,p->planet_longitude});
+                if(!center)throw std::runtime_error("invalid native planetary home cell");
+                latitude=center->latitude_pdeg;
+                longitude=center->longitude_pdeg;
+            }
+            std::cout<<"PFRAME|1|"<<session<<'|'<<request<<'|'<<p->home_ship
+                     <<'|'<<p->planet_body<<'|'<<p->planet_latitude
+                     <<'|'<<p->planet_longitude<<'|'<<pose.x_mm
+                     <<'|'<<pose.y_mm<<'|'<<pose.z_mm
+                     <<'|'<<latitude<<'|'<<longitude
+                     <<'|'<<pose.last_move_tick<<'|'<<pose.last_move_receipt
+                     <<'|'<<world.world().tick()<<'|'<<world.generation()
+                     <<'|'<<world.world().planetary_sites().at(
+                        PlanetarySiteKey{p->planet_body,p->planet_latitude,
+                           p->planet_longitude,p->planet_revision}).surface_location
+                     <<'\n'<<std::flush;
+            if(!std::cout)throw std::runtime_error("Godot planet pipe closed");
+        };
+        emit(0);
+        std::string line;
+        while(std::getline(std::cin,line)){
+            if(line=="QUIT")return 0;
+            if(++attempts>100000){deny(0,"planet-session-budget");return 3;}
+            if(line.size()>kMaxLine){deny(0,"planet-command-oversize");continue;}
+            const auto f=split(line);
+            std::uint64_t supplied=0,req=0;
+            std::int64_t dx=0,dz=0;
+            if(f.size()!=5 || f[0]!="PMOVE" ||
+               !number(f[1],supplied)||!number(f[2],req)||
+               !number(f[3],dx)||!number(f[4],dz)){
+                deny(0,"planet-command-malformed");continue;
+            }
+            if(supplied!=session){deny(req,"planet-session-mismatch");continue;}
+            if(!req || req<=last_request || req>=1000000){
+                deny(req,"planet-request-replayed");continue;
+            }
+            last_request=req;
+            if(!surface::within_step(dx,dz,true)){
+                deny(req,"planet-step-limit");continue;
+            }
+            const auto* before=landed();
+            if(!before){deny(req,"planet-custody-lost");return 3;}
+            const PlanetarySiteKey key{before->planet_body,before->planet_latitude,
+                before->planet_longitude,before->planet_revision};
+            const auto ship=before->home_ship;
+            // An original world tick is required between ground steps.
+            // No host-side local interpolation or physics may advance the person.
+            world.steps(1);
+            if(!world.planetary_surface_move(kLocalOwner,ship,key,0,dx,dz,
+                      receipt_base+req)){
+                deny(req,"planet-native-movement-refused");continue;
+            }
+            emit(req); // only AFTER the original SQLite atomic commit
+        }
+        return 0;
+    }catch(const std::exception& e){
+        std::cerr<<"Original planetary player host refused: "<<e.what()<<'\n';
+        return 3;
+    }
+}
 static int run_host(int argc,char** argv){
-    if(argc!=2){std::cerr<<"Usage: galaxy_desktop_player_host SQLITE_PATH\n";return 2;}
+    if(argc==3 && std::string(argv[2])=="--planet")return run_planet_host(argv[1]);
+    if(argc!=2){std::cerr<<"Usage: galaxy_desktop_player_host SQLITE_PATH [--planet]\n";return 2;}
     try{
         const std::string save_utf8(argv[1]);
    // sqlite3_open_v2 takes UTF-8; NativeWriterLease uses an accurately

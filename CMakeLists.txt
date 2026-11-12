@@ -1396,6 +1396,13 @@ if(BUILD_TESTING)
   target_link_libraries(galaxy_stage6f5b_continuous_surface_math_tests PRIVATE galaxy_kernel)
   add_test(NAME galaxy_stage6f5b_continuous_surface_math
     COMMAND galaxy_stage6f5b_continuous_surface_math_tests)
+  # S6-F5-C: deterministic radial motion + source-backed survival
+  # contract ONLY. Not yet connected to the original world tick/health ledger.
+  add_executable(galaxy_stage6f5c_vertical_physics_tests
+    tests/STAGE6F5C_VerticalPhysicsTests.cpp)
+  target_link_libraries(galaxy_stage6f5c_vertical_physics_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_stage6f5c_vertical_physics
+    COMMAND galaxy_stage6f5c_vertical_physics_tests)
   find_program(SG_STAGE6F5_NODE NAMES node node.exe)
   if(SG_STAGE6F5_NODE)
     add_test(NAME galaxy_stage6f5_surface_packet_contract
