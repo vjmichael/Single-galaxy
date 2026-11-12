@@ -1361,6 +1361,23 @@ if(BUILD_TESTING)
     COMMAND galaxy_stage06_seasonal_environment_tests)
 endif()
 
+# S6-F: original-body survey tiles and read-only, bounded Godot terrain bridge.
+# The adapter cannot issue a landing, grant player custody or mint inventory.
+add_executable(galaxy_stage6_godot_export tools/stage6_godot_export.cpp)
+target_link_libraries(galaxy_stage6_godot_export PRIVATE galaxy_kernel)
+if(BUILD_TESTING)
+  add_executable(galaxy_stage6_original_planet_surface_tests
+    tests/STAGE6_OriginalPlanetSurfaceTests.cpp)
+  target_link_libraries(galaxy_stage6_original_planet_surface_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_stage6_original_planet_surface
+    COMMAND galaxy_stage6_original_planet_surface_tests)
+  add_executable(galaxy_stage6_authorized_landing_tests
+    tests/STAGE6_AuthorizedLandingTests.cpp)
+  target_link_libraries(galaxy_stage6_authorized_landing_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_stage6_authorized_landing
+    COMMAND galaxy_stage6_authorized_landing_tests)
+endif()
+
 # PGF-01B.2: authenticated real host planetary survey and saved restart.
 if(BUILD_TESTING)
   add_executable(galaxy_play13d_live_planet_survey_tests
