@@ -6,6 +6,7 @@ const PLAYER_SCRIPT := preload("res://world/player_controller.gd")
 const NATIVE_SESSION := preload("res://world/native_session.gd")
 const NATIVE_PLAYER_SESSION := preload("res://world/native_player_session.gd")
 const NATIVE_PLANET_SURFACE_SESSION := preload("res://world/native_planet_surface_session.gd")
+const NATIVE_PLANET_TERRAIN := preload("res://world/native_planet_terrain.gd")
 const NATIVE_STATION_SESSION := preload("res://world/native_station_session.gd")
 const REFINERY_TERMINAL_UI := preload("res://world/refinery_terminal_ui.gd")
 const FLIGHT_INSTRUMENTS := preload("res://world/native_flight_instruments.gd")
@@ -73,6 +74,7 @@ var _last_native_dock := -1
 var _geometry_parent: Node3D
 var native_session
 var native_planet_surface_session
+var native_planet_terrain: Node3D
 var native_player_session
 var native_station_session
 var refinery_terminal
@@ -155,6 +157,10 @@ func _ready() -> void:
 	space_preview.add_child(_mining_survey_markers)
 	_show_native_location(true) # station first; only native PERSON/POSE chooses later
 	_build_player()
+	# Pure-source mesh viewer, never a Godot collision or movement writer.
+	native_planet_terrain=NATIVE_PLANET_TERRAIN.new()
+	native_planet_terrain.name="OriginalPlanetarySurfaceTerrain"
+	add_child(native_planet_terrain)
 	_apply_visual_quality()
 	_build_hud()
 	_apply_technical_hud()
@@ -792,6 +798,8 @@ func _apply_technical_hud() -> void:
 func _show_native_location(in_station: bool) -> void:
 	# The only callers after genesis are verified native PERSON and POSE frames.
 	# This never relocates a real PlayerPerson or writes a second world.
+	if is_instance_valid(native_planet_terrain):
+		native_planet_terrain.clear()
 	if is_instance_valid(station_space):
 		station_space.visible = in_station
 		# Godot visibility alone does NOT disable hidden collision bodies.
@@ -1100,6 +1108,8 @@ func _advance_native_handoff() -> void:
 	if destination == "planet":
 		# Original live-colony save, not the station graybox fixture.
 		var save := OS.get_user_data_dir().path_join("single_galaxy_authoritative.sqlite")
+		if is_instance_valid(native_planet_terrain):
+			native_planet_terrain.set_source(save+".stage6.walkpatch.json")
 		native_planet_surface_session.start(save)
 	elif destination == "station":
 		station_test_save_selected = true
@@ -1904,12 +1914,16 @@ func _on_native_planet_intent(heading: Vector3) -> void:
 		native_planet_surface_session.submit_walk(heading, is_instance_valid(player) and player.run_toggled)
 
 func _on_original_planet_connection(connected: bool) -> void:
+	if not connected and is_instance_valid(native_planet_terrain):
+		native_planet_terrain.clear()
 	if not connected and is_instance_valid(player):
 		player.use_native_planet_surface(false)
 		player.use_native_authority(true) # never permit local physics fallback
 
 func _on_original_planet_pose(pose: Dictionary) -> void:
 	_record_native_projection("PLANET", pose)
+	if is_instance_valid(native_planet_terrain):
+		native_planet_terrain.accept_pose(pose)
 	if is_instance_valid(player):
 		player.use_native_authority(true)
 		player.use_native_planet_surface(true)
@@ -1917,8 +1931,9 @@ func _on_original_planet_pose(pose: Dictionary) -> void:
 		player.apply_native_station_pose(Vector3(float(pose["x_mm"])/1000.0,
 			AVATAR_CENTER_HEIGHT_M + float(pose["y_mm"])/1000.0,
 			float(pose["z_mm"])/1000.0), true)
-	# Explicitly no fake planet mesh: the Stage 6 tile renderer remains a
-	# separate source-backed renderer until the installed source is integrated.
+	# The adjacent original-host world-sourced 17x17 terrain patch is
+	# rendered as a VISUAL, NON-COLLIDING mesh. The original native C++
+	# elevation and swept collision still govern actual gameplay.
 	if is_instance_valid(station_space): station_space.visible=false
 	if is_instance_valid(ship_space): ship_space.visible=false
 	if is_instance_valid(space_preview): space_preview.visible=false
