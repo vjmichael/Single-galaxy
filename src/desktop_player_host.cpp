@@ -200,13 +200,14 @@ void deny(std::uint64_t id,const char* reason){
 //// planet, NPC, Godot physics authority, or new game-save genesis.
 //// It intentionally refuses nonexistent or not-yet-landed originals.
 
-// Source-derived installed Godot mesh packet. Published ONLY by the same
+// Source-derived, bounded 3x3 installed Godot tile stream. Published ONLY by the same
 // authenticated, original-world owning process, never from a Godot vertex.
 // Atomic replace keeps renderer from observing partial JSON.
 static void publish_original_walking_patch(const std::string& save,
         const PersistentWorld& world,PlayerId owner,EntityId ship,
         const PlanetarySiteKey& key,std::uint64_t session){
-    const auto packet=stage6::original_walking_patch(world,owner,ship,key);
+    const auto packet=stage6::original_walking_tiles(
+        world,owner,ship,key,session);
     const fs::path target=fs::u8path(save+".stage6.walkpatch.json");
     if(!packet){
         std::error_code ec;fs::remove(target,ec);

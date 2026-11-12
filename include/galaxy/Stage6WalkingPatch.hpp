@@ -6,6 +6,7 @@
 #include "galaxy/Persistence.hpp"
 #include "galaxy/PlanetaryContinuousSurface.hpp"
 #include <algorithm>
+#include <cstdlib>
 #include <array>
 #include <cstdint>
 #include <iomanip>
@@ -18,8 +19,17 @@
 namespace galaxy::stage6 {
 inline std::optional<std::string> original_walking_patch(
        const PersistentWorld& world,PlayerId owner,EntityId ship,
-       const PlanetarySiteKey& key) {
+       const PlanetarySiteKey& key,
+       std::int64_t tile_offset_x_mm=0,
+       std::int64_t tile_offset_z_mm=0) {
     namespace grid=planetary::continuous_surface;
+    // A fixed 3x3, 192-metre window; no arbitrary client-controlled
+    // source query, terrain generator, or unbounded geospatial allocation.
+    constexpr std::int64_t kTileSpacingMm=64000;
+    if(std::llabs(tile_offset_x_mm)>kTileSpacingMm ||
+       std::llabs(tile_offset_z_mm)>kTileSpacingMm ||
+       tile_offset_x_mm%kTileSpacingMm ||
+       tile_offset_z_mm%kTileSpacingMm)return std::nullopt;
     constexpr std::int64_t kGridStepMm=4000;
     constexpr unsigned kGridWidth=17;
     const auto& original=world.world();
@@ -58,6 +68,10 @@ inline std::optional<std::string> original_walking_patch(
     const auto center=source_pose.last_move_receipt?
         grid::GeoPoint{source_pose.latitude_pdeg,source_pose.longitude_pdeg}:*home;
     if(!grid::canonical(center))return std::nullopt;
+    const auto tile_center=grid::native_offset(
+        center,tile_offset_x_mm,-tile_offset_z_mm,
+        radius->physical_radius_mm);
+    if(!tile_center)return std::nullopt;
     std::map<std::pair<std::uint16_t,std::uint16_t>,grid::Sample> cached;
     const auto sample=[&](grid::SourceCell cell)->std::optional<grid::Sample>{
         const auto k=std::make_pair(cell.latitude,cell.longitude);
@@ -73,7 +87,7 @@ inline std::optional<std::string> original_walking_patch(
         cached.emplace(k,value);
         return value;
     };
-    const auto zero=grid::source_ground(center,sample);
+    const auto zero=grid::source_ground(*tile_center,sample);
     if(!zero || zero->ocean)return std::nullopt;
     std::ostringstream out;
     out<<std::setprecision(12);
@@ -85,9 +99,9 @@ inline std::optional<std::string> original_walking_patch(
        <<"\"native_generation\":\""<<world.generation()<<"\","
        <<"\"native_tick\":\""<<original.tick()<<"\","
        <<"\"native_move_receipt\":\""<<source_pose.last_move_receipt<<"\","
-       <<"\"center_x_mm\":\""<<source_pose.x_mm<<"\","
+       <<"\"center_x_mm\":\""<<source_pose.x_mm+tile_offset_x_mm<<"\","
        <<"\"center_y_mm\":\""<<zero->height_mm<<"\","
-       <<"\"center_z_mm\":\""<<source_pose.z_mm<<"\","
+       <<"\"center_z_mm\":\""<<source_pose.z_mm+tile_offset_z_mm<<"\","
        <<"\"stride_mm\":"<<kGridStepMm<<","
        <<"\"width\":"<<kGridWidth<<","
        <<"\"vertices\":[";
@@ -96,7 +110,7 @@ inline std::optional<std::string> original_walking_patch(
             const auto dx=(std::int64_t(col)-8)*kGridStepMm;
             const auto dz=(std::int64_t(row)-8)*kGridStepMm;
             const auto geodetic=grid::native_offset(
-                center,dx,-dz,radius->physical_radius_mm);
+                *tile_center,dx,-dz,radius->physical_radius_mm);
             if(!geodetic)return std::nullopt;
             const auto ground=grid::source_ground(*geodetic,sample);
             if(!ground || ground->ocean)return std::nullopt;
@@ -116,6 +130,32 @@ inline std::optional<std::string> original_walking_patch(
                 first=false;out<<index;
             }
         }
+    out<<"]}";
+    return out.str();
+}
+// Move the same immutable, finite, surveyed planetary source under the
+// original player. Each tile repeats its body/site/receipt evidence so the
+// installed renderer can reject mixed generations and unrelated worlds.
+// Ocean / unknown survey tiles are deliberately absent, never invented land.
+inline std::optional<std::string> original_walking_tiles(
+       const PersistentWorld& world,PlayerId owner,EntityId ship,
+       const PlanetarySiteKey& key,std::uint64_t session) {
+    if(!session)return std::nullopt;
+    std::ostringstream out;
+    out<<"{\"schema\":\"SG-STAGE6-WALKTILES-01\","
+       <<"\"session\":\""<<session<<"\","
+       <<"\"tiles\":[";
+    unsigned count=0;
+    for(int row=-1;row<=1;++row)
+        for(int col=-1;col<=1;++col){
+            const auto tile=original_walking_patch(
+                world,owner,ship,key,
+                std::int64_t(col)*64000,std::int64_t(row)*64000);
+            if(!tile)continue;
+            if(count++)out<<',';
+            out<<*tile;
+        }
+    if(!count)return std::nullopt;
     out<<"]}";
     return out.str();
 }

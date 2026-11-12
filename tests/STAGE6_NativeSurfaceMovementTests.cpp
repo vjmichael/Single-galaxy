@@ -284,6 +284,14 @@ try {
     CHECK(walkpatch->find("SG-STAGE6-WALKPATCH-01")!=std::string::npos);
     CHECK(walkpatch->find(R"("width":17)")!=std::string::npos);
     CHECK(!stage6::original_walking_patch(world,8,ship,key));
+    const auto tiles=stage6::original_walking_tiles(world,7,ship,key,44001);
+    CHECK(tiles && tiles->find("SG-STAGE6-WALKTILES-01")!=std::string::npos);
+    CHECK(tiles->find(R"("session":"44001")")!=std::string::npos);
+    CHECK(tiles->find(R"("center_x_mm":"0")")!=std::string::npos);
+    CHECK(tiles->size()<1000000);
+    CHECK(!stage6::original_walking_tiles(world,8,ship,key,44001));
+    CHECK(!stage6::original_walking_tiles(world,7,ship,key,0));
+    CHECK(!stage6::original_walking_patch(world,7,ship,key,128000,0));
 
     // Never assume an existing v134 player has atmospheric oxygen simply
     // from a biosphere or life-support tank. The original v135 migration
@@ -348,6 +356,28 @@ try {
         PersistentWorld::recover_copy(v135_file,durable_copy);
         PersistentWorld restored(durable_copy,Simulation(613));
         CHECK(restored.world().state_hash()==native.world().state_hash());
+        // Simulated unattended ticks are original journal commits, not
+        // client input. A recovered copy must contain the exact last tick,
+        // survival delta and source state without offline catch-up.
+        const auto start_tick=native.world().tick();
+        const auto start_vertical=native.world().player_people().at(7)
+                                  .surface_survival.last_vertical_tick;
+        for(int i=0;i<12;++i)native.step();
+        CHECK(native.world().tick()==start_tick+12);
+        CHECK(native.world().player_people().at(7)
+              .surface_survival.last_vertical_tick>start_vertical);
+        const auto recovered_file=(dir/"native-unattended-recovery.sqlite").string();
+        PersistentWorld::recover_copy(v135_file,recovered_file);
+        PersistentWorld resumed(recovered_file,Simulation(613));
+        CHECK(resumed.world().tick()==native.world().tick());
+        CHECK(resumed.generation()==native.generation());
+        CHECK(resumed.world().state_hash()==native.world().state_hash());
+        const auto resumed_tick=resumed.world().tick();
+        resumed.step();
+        CHECK(resumed.world().tick()==resumed_tick+1);
+        CHECK(resumed.world().player_people().at(7)
+              .surface_survival.last_vertical_tick==
+              resumed.world().tick());
     }
 
     CHECK(world.planetary_player_shuttle_action(
