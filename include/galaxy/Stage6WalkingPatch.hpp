@@ -6,6 +6,7 @@
 #include "galaxy/Persistence.hpp"
 #include "galaxy/PlanetaryContinuousSurface.hpp"
 #include <algorithm>
+#include <array>
 #include <cstdint>
 #include <iomanip>
 #include <map>

@@ -22,6 +22,8 @@
 #include <mutex>
 #include <thread>
 #include "galaxy/PlanetaryAtmosphere.hpp"
+#include "galaxy/Stage6WalkingPatch.hpp"
+#include <fstream>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -197,6 +199,38 @@ void deny(std::uint64_t id,const char* reason){
 //// desktop executable and the SAME PersistentWorld SQLite writer, not another
 //// planet, NPC, Godot physics authority, or new game-save genesis.
 //// It intentionally refuses nonexistent or not-yet-landed originals.
+
+// Source-derived installed Godot mesh packet. Published ONLY by the same
+// authenticated, original-world owning process, never from a Godot vertex.
+// Atomic replace keeps renderer from observing partial JSON.
+static void publish_original_walking_patch(const std::string& save,
+        const PersistentWorld& world,PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,std::uint64_t session){
+    const auto packet=stage6::original_walking_patch(world,owner,ship,key);
+    const fs::path target=fs::u8path(save+".stage6.walkpatch.json");
+    if(!packet){
+        std::error_code ec;fs::remove(target,ec);
+        return; // unavailable original survey means no synthetic floor
+    }
+    const fs::path staged=fs::u8path(save+".stage6.walkpatch."+
+        std::to_string(session)+".tmp");
+    if(fs::is_symlink(staged))
+        throw std::runtime_error("unsafe original terrain staging path");
+    {
+        std::ofstream file(staged,std::ios::binary|std::ios::trunc);
+        if(!file)throw std::runtime_error("native walking patch staging refused");
+        file<<*packet;file.flush();
+        if(!file)throw std::runtime_error("native walking patch write failed");
+    }
+#ifdef _WIN32
+    if(!::MoveFileExW(staged.c_str(),target.c_str(),
+          MOVEFILE_REPLACE_EXISTING|MOVEFILE_WRITE_THROUGH))
+        throw std::runtime_error("native walking patch atomic publish failed");
+#else
+    fs::rename(staged,target);
+#endif
+}
+
 static int run_planet_host(const std::string& save_utf8){
     namespace grid=planetary::continuous_surface;
     namespace surface=planetary::surface_motion;
@@ -311,6 +345,15 @@ static int run_planet_host(const std::string& save_utf8){
             if(!std::cout)throw std::runtime_error("Godot planet pipe closed");
         };
         emit(0,0);
+        const auto source_person=landed();
+        if(!source_person)throw std::runtime_error("original landed player lost");
+        const PlanetarySiteKey walking_site{
+            source_person->planet_body,source_person->planet_latitude,
+            source_person->planet_longitude,source_person->planet_revision};
+        std::int64_t published_x=source_person->surface_pose.x_mm;
+        std::int64_t published_z=source_person->surface_pose.z_mm;
+        publish_original_walking_patch(save_utf8,world,kLocalOwner,
+            source_person->home_ship,walking_site,session);
         // Native host has one mutex-protected original PersistentWorld.
         // Autonomous world ticks continue independently of blocked stdin
         // and of Godot FPS/input; no detached second SQLite writer exists.
@@ -420,6 +463,19 @@ static int run_planet_host(const std::string& save_utf8){
             }
             if(!accepted){
                 deny(req,"planet-native-action-refused");continue;
+            }
+            if(walking){
+                const auto* current=landed();
+                if(current){
+                    const auto x=current->surface_pose.x_mm;
+                    const auto z=current->surface_pose.z_mm;
+                    if(std::llabs(x-published_x)>=20000 ||
+                       std::llabs(z-published_z)>=20000){
+                        publish_original_walking_patch(save_utf8,world,
+                            kLocalOwner,ship,key,session);
+                        published_x=x;published_z=z;
+                    }
+                }
             }
             emit(req,proof); // only AFTER the verified SQLite atomic commit
         }
