@@ -11171,6 +11171,126 @@ bool Simulation::unload_planetary_shuttle(PlayerId owner,EntityId ship,
         snapshot_version_=std::max(snapshot_version_,109);
     return true;
 }
+// S6-D7: the SAME original site, shuttle, ship and global accepted-ID ledger.
+// Extractor output already occupies site.regional_geology_kg; neither this
+// operation nor a forecast is allowed to create a fresh source deposit.
+bool Simulation::load_planetary_geology_shuttle(
+        PlayerId owner,EntityId ship,const PlanetarySiteKey& key,
+        PlanetaryResource resource,std::int64_t kg,std::uint64_t request_id) {
+    const auto index=unsigned(resource);
+    const auto facility=planetary_sites_.find(key);
+    const auto shuttle=planetary_shuttles_.find(key);
+    const auto vessel=entities_.find(ship);
+    const auto frame=ship_frames_.find(ship);
+    if(snapshot_version_<129 || !owner || owner==kServerAuthority ||
+       !ship || std::get<3>(key)!=1 || index<1 || index>3 ||
+       kg<=0 || kg>1000 || !request_id ||
+       request_id>=(std::uint64_t{1}<<50) ||
+       submitted_ids_.count(request_id) ||
+       shuttle_flight_request_ids_.count(request_id) ||
+       planetary_source_transfers_.count(request_id) ||
+       player_planet_receipts_.count(request_id) ||
+       surface_move_receipts_.count(request_id) ||
+       local_delivery_orders_.count(request_id) ||
+       pending_celestial_transits_.count(request_id) ||
+       completed_celestial_transits_.count(request_id) ||
+       facility==planetary_sites_.end() ||
+       shuttle==planetary_shuttles_.end() ||
+       vessel==entities_.end() || vessel->second.owner_id!=owner ||
+       vessel->second.type!=EntityType::Ship ||
+       vessel->second.dock_state!=DockState::InSpace ||
+       vessel->second.jump_state!=ShipJumpState::Ready ||
+       frame==ship_frames_.end() ||
+       frame->second.anchor_body!=std::get<0>(key) ||
+       !colony_ships_.count(ship) ||
+       facility->second.owner!=owner ||
+       facility->second.source_ship!=ship ||
+       facility->second.spaceport_phase!=3 ||
+       shuttle->second.owner!=owner ||
+       shuttle->second.source_ship!=ship ||
+       shuttle->second.flight_phase!=2 ||
+       !shuttle->second.pilot_npc || !shuttle->second.descent_receipt ||
+       !shuttle_flight_request_ids_.count(shuttle->second.descent_receipt))
+        return false;
+    for(const auto& [id,transit]:pending_celestial_transits_) {
+        (void)id;
+        if(transit.ship==ship)return false;
+    }
+    auto& src=facility->second.regional_geology_kg[index-1];
+    auto& hold=shuttle->second.regional_geology_kg[index-1];
+    const auto& sh=shuttle->second;
+    const auto used=sh.water_kg+sh.food_kg+sh.nutrients_kg+
+                    sh.oxygen_kg+sh.regional_geology_kg[0]+
+                    sh.regional_geology_kg[1]+sh.regional_geology_kg[2];
+    if(src<kg || hold>1000-kg || used>1000-kg ||
+       sh.housing_module) return false;
+    src-=kg;hold+=kg;
+    submitted_ids_.insert(request_id);
+    snapshot_version_=std::max(snapshot_version_,136);
+    return true;
+}
+bool Simulation::unload_planetary_geology_shuttle(
+        PlayerId owner,EntityId ship,const PlanetarySiteKey& key,
+        PlanetaryResource resource,std::int64_t kg,std::uint64_t request_id) {
+    const auto index=unsigned(resource);
+    const auto facility=planetary_sites_.find(key);
+    const auto shuttle=planetary_shuttles_.find(key);
+    const auto vessel=entities_.find(ship);
+    const auto frame=ship_frames_.find(ship);
+    const auto carrier=colony_ships_.find(ship);
+    if(snapshot_version_<129 || !owner || owner==kServerAuthority ||
+       !ship || std::get<3>(key)!=1 || index<1 || index>3 ||
+       kg<=0 || kg>1000 || !request_id ||
+       request_id>=(std::uint64_t{1}<<50) ||
+       submitted_ids_.count(request_id) ||
+       shuttle_flight_request_ids_.count(request_id) ||
+       planetary_source_transfers_.count(request_id) ||
+       player_planet_receipts_.count(request_id) ||
+       surface_move_receipts_.count(request_id) ||
+       local_delivery_orders_.count(request_id) ||
+       pending_celestial_transits_.count(request_id) ||
+       completed_celestial_transits_.count(request_id) ||
+       facility==planetary_sites_.end() ||
+       shuttle==planetary_shuttles_.end() ||
+       vessel==entities_.end() || vessel->second.owner_id!=owner ||
+       vessel->second.type!=EntityType::Ship ||
+       vessel->second.dock_state!=DockState::InSpace ||
+       vessel->second.jump_state!=ShipJumpState::Ready ||
+       frame==ship_frames_.end() ||
+       frame->second.anchor_body!=std::get<0>(key) ||
+       carrier==colony_ships_.end() ||
+       facility->second.owner!=owner ||
+       facility->second.source_ship!=ship ||
+       facility->second.spaceport_phase!=3 ||
+       shuttle->second.owner!=owner ||
+       shuttle->second.source_ship!=ship ||
+       shuttle->second.flight_phase!=0 ||
+       !shuttle->second.ascent_receipt ||
+       !shuttle_flight_request_ids_.count(shuttle->second.ascent_receipt))
+        return false;
+    for(const auto& [id,transit]:pending_celestial_transits_) {
+        (void)id;
+        if(transit.ship==ship)return false;
+    }
+    auto& held=shuttle->second.regional_geology_kg[index-1];
+    static const char* codes[]={"planetary_soil","planetary_mineral",
+                                 "planetary_volatile"};
+    const auto* code=codes[index-1];
+    const auto previous=carrier->second.goods_kg.find(code);
+    const auto existing=previous==carrier->second.goods_kg.end()?0:
+                        previous->second;
+    if(held<kg || existing>1000000000-kg ||
+       ship_inventory_snapshot(ship).free_liters()<kg)
+        return false;
+    // The manifest retains the load through a real ascent. Only NOW is
+    // ship cargo credited; there is no direct surface-to-orbit teleport.
+    held-=kg;
+    carrier->second.goods_kg[code]=existing+kg;
+    submitted_ids_.insert(request_id);
+    snapshot_version_=std::max(snapshot_version_,136);
+    return true;
+}
+
 bool Simulation::assign_planetary_shuttle_pilot(PlayerId owner,EntityId ship,
        const PlanetarySiteKey& key,std::uint64_t npc) {
     auto shuttle=planetary_shuttles_.find(key);
