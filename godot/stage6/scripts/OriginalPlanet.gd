@@ -255,13 +255,44 @@ func _show_verified_surface_inspection(data: Dictionary, tiles: Array) -> void:
         # No remote floating camera that pretends absent terrain was streamed.
         _clear_surface_inspection()
         return
-    var stamp := loaded_generation + ":" + loaded_hash + ":" + receipt + ":" + str(lat) + ":" + str(lon)
+    # This text is an observation of a committed ORIGINAL player pose,
+    # not the free-camera inspector's transform or client input authority.
+    var real_player_here := data.get("player_surface_verified", false) == true
+    var player_receipt := str(data.get("player_disembark_receipt", "0"))
+    if real_player_here and (not player_receipt.is_valid_int() or int(player_receipt) <= 0):
+        _clear_surface_inspection()
+        push_error("Unverifiable original player disembark receipt")
+        return
+    var posed := data.get("native_surface_pose_verified", false) == true
+    var px := str(data.get("native_surface_x_mm", "0"))
+    var py := str(data.get("native_surface_y_mm", "0"))
+    var pz := str(data.get("native_surface_z_mm", "0"))
+    var motion_id := str(data.get("native_surface_move_receipt", "0"))
+    if posed:
+        if not real_player_here or not px.is_valid_int() or not py.is_valid_int() or not pz.is_valid_int() or not motion_id.is_valid_int() or \
+                absi(int(px)) > 32000 or absi(int(pz)) > 32000 or absi(int(py)) > 32768000 or int(motion_id) <= 0:
+            _clear_surface_inspection()
+            push_error("Unverifiable original ground motion packet")
+            return
+    var status_text := ""
+    if real_player_here:
+        status_text = "ORIGINAL PLAYER ASHORE (descent " + receipt + ", disembark " + player_receipt + ")"
+        if posed:
+            status_text += " | native feet mm: " + px + ", " + py + ", " + pz + " (motion " + motion_id + ")"
+        else:
+            status_text += " | at original shuttle hatch, no committed movement"
+    else:
+        status_text = "NPC SHUTTLE LANDED (receipt " + receipt + ") | player not ashore"
+    status_text += " | free camera is NOT the original player"
+    # Changing world generation (including native footsteps) must refresh
+    # the status but must not reset the user's independent local camera.
+    var stamp := receipt + ":" + str(lat) + ":" + str(lon) + ":" + surface_id + ":" + pilot_id
     if is_instance_valid(_inspector) and stamp == _inspector_receipt:
+        _status_hint.text = status_text
         return
     _clear_surface_inspection()
-    # These unit-sphere coordinates reproduce the SOURCE cell centre, using
-    # the original native mesh's documented latitude/longitude convention.
-    # NEVER send the visual transform back to Simulation/PersistentWorld.
+    # Rendering coordinates only: a 1,000-unit display sphere cannot serve
+    # as the original body's millimetre physical collision coordinate system.
     var phi := deg_to_rad(-90.0 + (float(lat) + 0.5) * 5.0)
     var lam := deg_to_rad(-180.0 + (float(lon) + 0.5) * 5.0)
     var outward := Vector3(cos(phi) * cos(lam), sin(phi), cos(phi) * sin(lam)).normalized()
@@ -269,19 +300,7 @@ func _show_verified_surface_inspection(data: Dictionary, tiles: Array) -> void:
     add_child(_inspector)
     _inspector.global_position = outward * (VISUAL_RADIUS + 1.8)
     _inspector_receipt = stamp
-    # The original player's separate disembark receipt is read-only.
-    # Even when true, this inspection avatar is not a movable canonical
-    # PlayerPerson. Original surface walking belongs to S6-F5.
-    var real_player_here := data.get("player_surface_verified", false) == true
-    var player_receipt := str(data.get("player_disembark_receipt", "0"))
-    if real_player_here and (not player_receipt.is_valid_int() or int(player_receipt) <= 0):
-        _clear_surface_inspection()
-        push_error("Unverifiable original player disembark receipt")
-        return
-    if real_player_here:
-        _status_hint.text = "ORIGINAL PLAYER LANDED (receipt " + player_receipt + ") | local camera inspection only — NOT native walking"
-    else:
-        _status_hint.text = "NPC SHUTTLE LANDED (receipt " + receipt + ") | local camera inspection only — original player not yet ashore"
+    _status_hint.text = status_text
     print("Original shuttle at native surface ", surface_id,
         "; local terrain inspector is NOT a movable original PlayerPerson")
 
