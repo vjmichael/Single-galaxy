@@ -1306,7 +1306,8 @@ func _advance_native_handoff() -> void:
 
 func _on_planet_save_selected(path: String) -> void:
 	if not path.is_absolute_path() or not FileAccess.file_exists(path) or \
-			not path.to_lower().ends_with(".sqlite") or not _handoff_target.is_empty():
+			not path.to_lower().ends_with(".sqlite") or not _handoff_target.is_empty() or \
+			native_planet_recovery_probe.is_active():
 		_on_native_player_status("Choose an existing original .sqlite file")
 		return
 	_planet_current_save=path
@@ -1374,6 +1375,8 @@ func _unhandled_input(event: InputEvent) -> void:
 		elif _handoff_target.is_empty() and not native_planet_recovery_probe.is_active() and 				not _planet_current_save.is_empty() and FileAccess.file_exists(_planet_current_save):
 			_planet_auto_recovery_used=false # explicit human retry, not an auto-loop
 			_begin_native_planet_recovery(_planet_current_save)
+		elif native_planet_recovery_probe.is_active():
+			_on_native_player_status("Original SQLite preflight still running; no competing recovery")
 		elif _handoff_target.is_empty() and is_instance_valid(_planet_save_picker):
 			# F9: reopen a landed world. Shift+F9: recover an interrupted
 			# original shuttle journey from that same existing SQLite save.
