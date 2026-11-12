@@ -2,6 +2,7 @@ extends RefCounted
 ## S6-F6: read-only, short-lived SGDX-contained original-save recovery gate.
 ## NEVER opens a new save, guesses player custody or advances world time.
 const SGDX_LAUNCH := preload("res://world/sgdx_process_launch.gd")
+const SOURCE_ID := preload("res://world/native_source_id.gd")
 signal decision_ready(result: Dictionary)
 signal recovery_blocked(reason: String)
 const MAX_LINE := 256
@@ -22,6 +23,10 @@ static func parse_frame(line: String) -> Dictionary:
     if f.size()!=12 or f[0]!="RFRAME" or f[1]!="1":
         return {}
     for i in range(2,12):
+        if i==5:
+            if not SOURCE_ID.valid(f[i],true):
+                return {}
+            continue
         if f[i].is_empty() or f[i].begins_with("+") or \
                 f[i].begins_with("-") or f[i].length()>19 or \
                 not f[i].is_valid_int():
@@ -29,7 +34,7 @@ static func parse_frame(line: String) -> Dictionary:
     var role := int(f[2])
     var state := int(f[3])
     var ship := int(f[4])
-    var body := int(f[5])
+    var body: String=f[5]
     var lat := int(f[6])
     var lon := int(f[7])
     var site := int(f[8])
@@ -37,14 +42,14 @@ static func parse_frame(line: String) -> Dictionary:
     var tick := int(f[10])
     var gen := int(f[11])
     if role not in [1,2,3,4] or tick<0 or gen<=0 or \
-            ship<0 or body<0 or lat<0 or lat>=36 or \
+            ship<0 or lat<0 or lat>=36 or \
             lon<0 or lon>=72 or site<0 or phase not in [0,1,2,3]:
         return {}
-    if role==1 and (state!=4 or ship!=0 or body!=0 or lat!=0 or lon!=0 or site!=0 or phase!=0):
+    if role==1 and (state!=4 or ship!=0 or body!="0" or lat!=0 or lon!=0 or site!=0 or phase!=0):
         return {}
-    if role==2 and (state!=0 or ship==0 or body!=0 or lat!=0 or lon!=0 or site!=0 or phase!=0):
+    if role==2 and (state!=0 or ship==0 or body!="0" or lat!=0 or lon!=0 or site!=0 or phase!=0):
         return {}
-    if role==3 and (state not in [5,6] or ship==0 or body==0 or \
+    if role==3 and (state not in [5,6] or ship==0 or body=="0" or \
             site==0 or (state==5 and phase not in [0,2]) or \
             (state==6 and phase not in [1,3])):
         return {}
