@@ -2256,6 +2256,13 @@ if(BUILD_TESTING)
   add_test(NAME galaxy_dock07_local_industry
     COMMAND galaxy_dock07_industry_tests
     "${CMAKE_CURRENT_BINARY_DIR}/dock07_world.sqlite")
+  # DOCK-08 staged native original industrial facility + named-NPC proof.
+  add_executable(galaxy_dock08_management_tests
+    tests/Dock08ColonyManagementTests.cpp)
+  target_link_libraries(galaxy_dock08_management_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_dock08_colony_facility_workforce
+    COMMAND galaxy_dock08_management_tests
+    "${CMAKE_CURRENT_BINARY_DIR}/dock08_world.sqlite")
 endif()
 add_executable(galaxy_desktop_station_host src/desktop_station_host.cpp)
 target_link_libraries(galaxy_desktop_station_host PRIVATE galaxy_kernel)
