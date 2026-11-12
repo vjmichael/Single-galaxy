@@ -26,8 +26,10 @@ inline std::optional<std::string> original_walking_patch(
     // A fixed 3x3, 192-metre window; no arbitrary client-controlled
     // source query, terrain generator, or unbounded geospatial allocation.
     constexpr std::int64_t kTileSpacingMm=64000;
-    if(std::llabs(tile_offset_x_mm)>kTileSpacingMm ||
-       std::llabs(tile_offset_z_mm)>kTileSpacingMm ||
+    if(tile_offset_x_mm < -kTileSpacingMm ||
+       tile_offset_x_mm > kTileSpacingMm ||
+       tile_offset_z_mm < -kTileSpacingMm ||
+       tile_offset_z_mm > kTileSpacingMm ||
        tile_offset_x_mm%kTileSpacingMm ||
        tile_offset_z_mm%kTileSpacingMm)return std::nullopt;
     constexpr std::int64_t kGridStepMm=4000;
