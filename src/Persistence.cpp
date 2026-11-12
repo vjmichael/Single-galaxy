@@ -9993,6 +9993,54 @@ bool PersistentWorld::book_planetary_shuttle_passenger(PlayerId owner,EntityId s
 }
 // S6-F5: only the original SQLite generation/writer can authorize a real
 // player or named NPC footstep. Failed writes leave receipts and poses intact.
+// v135 source-only inventory and medical actions in the SAME verified
+// SQLite writer. Neither Godot commands nor staff credentials can alter
+// state without original Simulation admission and successful atomic commit.
+bool PersistentWorld::planetary_surface_suit_action(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,Simulation::OriginalSuitAction action,
+        std::uint64_t receipt,FailPoint fail){
+    if(!receipt || receipt>=(std::uint64_t{1}<<60) ||
+       store_->station_receipt_used(receipt))return false;
+    for(const auto& [id,t]:world_.pending_celestial_transits_){
+        (void)id;if(t.ship==ship)return false;
+    }
+    auto next=world_;
+    if(!next.planetary_surface_suit_action(owner,ship,key,action,receipt))
+        return false;
+    if(next.total_ore()!=resource_origin_ ||
+       next.total_credits()!=credit_origin_ ||
+       next.total_material_kg()!=world_.total_material_kg())
+        throw std::logic_error("manufactured suit changed original world matter");
+    if(Simulation::from_snapshot(next.canonical_state()).state_hash()!=
+       next.state_hash())
+        throw std::logic_error("manufactured equipment cannot recover");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);++generation_;
+    return true;
+}
+bool PersistentWorld::planetary_surface_treatment(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,std::uint64_t receipt,FailPoint fail){
+    if(!receipt || receipt>=(std::uint64_t{1}<<60) ||
+       store_->station_receipt_used(receipt))return false;
+    for(const auto& [id,t]:world_.pending_celestial_transits_){
+        (void)id;if(t.ship==ship)return false;
+    }
+    auto next=world_;
+    if(!next.planetary_surface_treatment(owner,ship,key,receipt))return false;
+    if(next.total_ore()!=resource_origin_ ||
+       next.total_credits()!=credit_origin_ ||
+       next.total_material_kg()!=world_.total_material_kg())
+        throw std::logic_error("medical care changed original conserved material");
+    if(Simulation::from_snapshot(next.canonical_state()).state_hash()!=
+       next.state_hash())
+        throw std::logic_error("original medical care cannot recover");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);++generation_;
+    return true;
+}
+
 // S6-F5-C: one v134 source-verified game tick and a one-use jump/wait
 // decision are committed together in the ORIGINAL SQLite journal. A failed
 // authority or snapshot attempt cannot publish a partial radial motion.

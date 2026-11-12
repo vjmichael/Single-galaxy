@@ -963,6 +963,12 @@ public:
     bool planetary_surface_oxygen_action(PlayerId owner,EntityId ship,
         const PlanetarySiteKey& key,bool return_to_site,std::uint64_t receipt,
         FailPoint fail=FailPoint::None);
+    bool planetary_surface_suit_action(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,Simulation::OriginalSuitAction action,
+        std::uint64_t receipt,FailPoint fail=FailPoint::None);
+    bool planetary_surface_treatment(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,std::uint64_t receipt,
+        FailPoint fail=FailPoint::None);
     // One original SQLite world step, immutable dock movement receipt and
     // original NPC custody mutation in one atomic transaction. Host only.
     bool station_dock_worker_transfer(PlayerId owner,EntityId ship,
