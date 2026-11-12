@@ -115,6 +115,73 @@
         throw Error('Invalid shuttle operation receipt');
       return {...e,id,latitude,longitude,operation,generation};
     }
+    if(t==='PLANET_PLAYER_REGISTERED'){
+      if(v.length!==7)throw Error('Malformed native person registration');
+      const owner=numeric(v[4],Number.MAX_SAFE_INTEGER),ship=numeric(v[5],Number.MAX_SAFE_INTEGER),
+        generation=numeric(v[6],Number.MAX_SAFE_INTEGER);
+      if(!owner||!ship||!generation)throw Error('Invalid original player admission');
+      return {...e,owner,ship,generation};
+    }
+    if(t==='PLANET_PLAYER_COMMITTED'){
+      if(v.length!==11)throw Error('Malformed original player travel receipt');
+      const owner=numeric(v[4],Number.MAX_SAFE_INTEGER),body=numeric(v[5],Number.MAX_SAFE_INTEGER),
+        latitude=numeric(v[6],35),longitude=numeric(v[7],71),operation=v[8],
+        receipt=numeric(v[9],Number.MAX_SAFE_INTEGER),
+        generation=numeric(v[10],Number.MAX_SAFE_INTEGER);
+      if(!owner||!body||!receipt||!generation||
+         !new Set(['BOARD','DISEMBARK','REBOARD','EXIT']).has(operation))
+        throw Error('Invalid player transport');
+      return {...e,owner,body,latitude,longitude,operation,receipt,generation};
+    }
+    if(t==='PLANET_PLAYER_STATUS'){
+      if(v.length!==17)throw Error('Malformed native player custody status');
+      const owner=numeric(v[4],Number.MAX_SAFE_INTEGER),ship=numeric(v[5],Number.MAX_SAFE_INTEGER),
+        state=numeric(v[6],7),body=numeric(v[7],Number.MAX_SAFE_INTEGER),
+        latitude=numeric(v[8],35),longitude=numeric(v[9],71),revision=numeric(v[10],1),
+        flight=numeric(v[11],Number.MAX_SAFE_INTEGER),descent=numeric(v[12],Number.MAX_SAFE_INTEGER),
+        ascent=numeric(v[13],Number.MAX_SAFE_INTEGER),last=numeric(v[14],Number.MAX_SAFE_INTEGER),
+        worldTick=numeric(v[15],Number.MAX_SAFE_INTEGER),
+        generation=numeric(v[16],Number.MAX_SAFE_INTEGER);
+      if(!owner||!ship||!generation||!worldTick ||
+         ((state>=5)&&(body<=0||revision!==1)))
+        throw Error('Invalid native planetary person');
+      return {...e,owner,ship,state,body,latitude,longitude,revision,
+        flight,descent,ascent,last,worldTick,generation};
+    }
+    if(t==='PLANET_SURFACE_COMMITTED'){
+      if(v.length!==7)throw Error('Malformed original surface motion receipt');
+      const npc=numeric(v[4],Number.MAX_SAFE_INTEGER),
+        receipt=numeric(v[5],Number.MAX_SAFE_INTEGER),
+        generation=numeric(v[6],Number.MAX_SAFE_INTEGER);
+      if(!receipt||!generation)throw Error('Invalid original surface movement');
+      return {...e,npc,receipt,generation};
+    }
+    if(t==='PLANET_SURFACE_POSE'){
+      if(v.length!==16)throw Error('Malformed original person ground pose');
+      const signed=(raw,max)=>{
+        if(!/^(?:0|-[1-9][0-9]*|[1-9][0-9]*)$/.test(raw))
+          throw Error('Noncanonical original ground coordinate');
+        const value=Number(raw);
+        if(!Number.isSafeInteger(value)||Math.abs(value)>max)
+          throw Error('Unbounded original ground coordinate');
+        return value;
+      };
+      const owner=numeric(v[4],Number.MAX_SAFE_INTEGER),
+        npc=numeric(v[5],Number.MAX_SAFE_INTEGER),
+        body=numeric(v[6],Number.MAX_SAFE_INTEGER),
+        latitude=numeric(v[7],35),longitude=numeric(v[8],71),
+        x=signed(v[9],32000),y=signed(v[10],32768000),z=signed(v[11],32000),
+        lastMoveTick=numeric(v[12],Number.MAX_SAFE_INTEGER),
+        receipt=numeric(v[13],Number.MAX_SAFE_INTEGER),
+        worldTick=numeric(v[14],Number.MAX_SAFE_INTEGER),
+        generation=numeric(v[15],Number.MAX_SAFE_INTEGER);
+      if(!owner||!body||!generation||
+         ((receipt===0)!==(lastMoveTick===0))||
+         (receipt>0&&lastMoveTick>worldTick))
+        throw Error('Invalid original ground provenance');
+      return {...e,owner,npc,body,latitude,longitude,
+        x,y,z,lastMoveTick,receipt,worldTick,generation};
+    }
     if(t==='WORK_COMMITTED'){
       if(v.length!==6)throw Error('Malformed work delegation receipt');
       const id=numeric(v[4],Number.MAX_SAFE_INTEGER),
@@ -940,7 +1007,8 @@
       if(v.length!==7||!/^\d+$/.test(v[4])||!/^[A-Z_]+$/.test(v[5]))throw Error('Bad action result');
       e.id=numeric(v[4],Number.MAX_SAFE_INTEGER);e.outcome=v[5];e.transferred=numeric(v[6]);
     }else if(t==='ERROR'){
-      if(v.length!==5||!['INVALID_INPUT','INVALID_SAFETY_ORDER','UNAUTHORIZED_PRINCIPAL','FRAME_TRAVEL_DENIED','FRAME_TRANSIT_BLOCKED','FLEET_SELECTION_DENIED','FLEET_WORK_DENIED','YARD_CONTRACT_DENIED','WORK_DENIED'].includes(v[4]))throw Error('Bad rejected input');e.error=v[4];
+      if(v.length!==5||!['INVALID_INPUT','INVALID_SAFETY_ORDER','UNAUTHORIZED_PRINCIPAL','FRAME_TRAVEL_DENIED','FRAME_TRANSIT_BLOCKED','FLEET_SELECTION_DENIED','FLEET_WORK_DENIED','YARD_CONTRACT_DENIED','WORK_DENIED',
+        'PLANET_PLAYER_REGISTER_DENIED','PLANET_PLAYER_DENIED','PLANET_SURFACE_DENIED'].includes(v[4]))throw Error('Bad rejected input');e.error=v[4];
     }else throw Error('Unknown colony event');
     return e;
   }
