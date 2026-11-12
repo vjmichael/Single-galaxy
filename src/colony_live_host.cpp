@@ -4,6 +4,7 @@
 // stdout SGVIEW frames; stderr bounded COLONY telemetry for the local relay.
 #include "galaxy/Simulation.hpp"
 #include "galaxy/Persistence.hpp"
+#include "galaxy/Stage6ConsolidatedAdmission.hpp"
 #include "galaxy/PlanetaryGenesisBootstrap.hpp"
 #include "galaxy/ServerDiagnostics.hpp"
 #include "galaxy/ServerBreadcrumb.hpp"
@@ -2422,12 +2423,11 @@ int main(int argc,char** argv){
         world.configure_probe_report_tick_ms(static_cast<std::uint64_t>(ms));
         // Existing saves are upgraded atomically on first new-host start.
         world.ensure_physical_celestial_systems();
-        // Atomic original SQLite v127 migration grants ZERO kilograms
-        // to old worlds and preserves their physical oasis stocks.
-        world.ensure_planetary_genesis_manifest();
-        world.ensure_physical_planetary_environment();
-        world.ensure_planetary_source_custody();
-    world.ensure_planetary_ecology();
+        // S6-G: the desktop station/cockpit/surface/shuttle and this
+        // original colony host must apply the SAME idempotent, audited
+        // v127-v135 migration. Source body, region stock, NPC/person,
+        // original cash and all material remain one durable SQLite world.
+        (void)stage6::consolidated::admit(world);
         // PLAY-13C.2B: migrate current ships to durable legacy-local frames.
         world.ensure_ship_frame_registry();
         // PLAY-13C.4: durable, idempotent region seeding for pre-v73 arrivals.
