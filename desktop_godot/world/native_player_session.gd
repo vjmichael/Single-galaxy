@@ -13,6 +13,7 @@ signal flight_command_sent(request_id: int, verb: String)
 signal flight_command_result(request_id: int, verb: String, disposition: String, elapsed_ms: int, outcome: int)
 signal equipment_result_received(kind: String, request_id: int, outcome: int, command_id: int)
 signal asteroid_survey_received(observation: Dictionary)
+signal colony_onboarding_received(snapshot: Dictionary)
 
 const MAX_LINE := 256
 var _pid := -1
@@ -28,6 +29,7 @@ var _initial_ship_seen := false
 var _last_ship_telemetry_request := -1
 var _last_contact_request := -1
 var _last_nav_request := -1
+var _last_onboarding_request := -1
 var _dock_state := -1
 var _flight_cycle := 0
 var _seat_sequence := -1
@@ -109,6 +111,7 @@ func start(save_override: String = "") -> void:
 	_last_ship_telemetry_request = -1
 	_last_contact_request = -1
 	_last_nav_request = -1
+	_last_onboarding_request = -1
 	_dock_state = -1
 	_flight_cycle = 0
 	_seat_sequence = -1
@@ -166,7 +169,7 @@ func _accept_line(line: String) -> void:
 			return
 		var request := int(parts[2])
 		var rejected_verb := _pending_flight_verb if request == _pending and _pending_kind == "FLIGHT" else ""
-		var rejected_equipment := _pending_kind if request == _pending and _pending_kind in ["MINE","FIT","UNFIT","FAB","POWER"] else ""
+		var rejected_equipment := _pending_kind if request == _pending and _pending_kind in ["MINE","FIT","UNFIT","FAB","POWER","ONBUILD"] else ""
 		if request == _pending:
 			if _pending_kind == "FLIGHT":
 				flight_command_result.emit(request, _pending_flight_verb, "DENY",
@@ -187,6 +190,9 @@ func _accept_line(line: String) -> void:
 			elif rejected_verb == "ASC" or rejected_verb == "DES":
 				message = "Vertical control refused: this saved world may lack native 3D physics or custody"
 		_status(message)
+		return
+	if parts.size()>0 and parts[0]=="ONBOARD":
+		_accept_colony_onboarding(parts)
 		return
 	if parts.size() > 0 and parts[0] in ["SHEAD","SROW","SEND"]:
 		_accept_original_survey(parts)
@@ -289,7 +295,7 @@ func _accept_ship(parts: PackedStringArray) -> void:
 			return
 		_initial_ship_seen = true
 	else:
-		if not _initial_ship_seen or _pending_kind not in ["FLIGHT","MINE","FIT","UNFIT","FAB","POWER"] or request != _pending or \
+		if not _initial_ship_seen or _pending_kind not in ["FLIGHT","MINE","FIT","UNFIT","FAB","POWER","ONBUILD"] or request != _pending or \
 			command_id < 1152921504606846976 or tick <= _tick or generation <= _generation:
 			stop("Unrequested or stale native flight acknowledgement")
 			return
@@ -315,6 +321,38 @@ func _accept_ship(parts: PackedStringArray) -> void:
 		"vx":vx,"vy":vy,"vz":vz,"heading":heading,"dock":dock})
 	if request != 0 and outcome != 0:
 		_status("Original ship command rejected with outcome code %d (native journal retained)" % outcome)
+
+func _accept_colony_onboarding(parts: PackedStringArray) -> void:
+	# Exactly one original-world inventory receipt following a paired SHIP.
+	# These native materials are never a client-side construction ledger.
+	if parts.size()!=17 or parts[1]!="1":
+		stop("Malformed original colony construction source")
+		return
+	for i in range(2,17):
+		if not _integer(parts[i]) or int(parts[i])<0:
+			stop("Invalid original construction material source")
+			return
+	var request := int(parts[3])
+	if int(parts[2])!=_session or int(parts[4])!=_ship or \
+			request!=_last_ship_telemetry_request or \
+			request<=_last_onboarding_request or \
+			int(parts[5])!=_tick or int(parts[6])!=_generation or \
+			int(parts[7])>1000000000 or int(parts[8])>1000000000 or \
+			int(parts[9])>1000000000 or int(parts[10])>1000000000000 or \
+			int(parts[11])>1000000000000 or \
+			parts[13] not in ["0","1"] or parts[14] not in ["0","1"] or \
+			parts[15] not in ["0","1"] or parts[16] not in ["0","1"]:
+		stop("Original colony ship source/generation mismatch")
+		return
+	_last_onboarding_request=request
+	colony_onboarding_received.emit({
+		"ship":int(parts[4]),"request":request,"tick":_tick,
+		"gen":_generation,"cargo_tonnes":int(parts[7]),
+		"refined_tonnes":int(parts[8]),"modules":int(parts[9]),
+		"plagioclase_kg":int(parts[10]),"aluminum_kg":int(parts[11]),
+		"constructed_site":int(parts[12]),
+		"can_refine":parts[13]=="1","can_modules":parts[14]=="1",
+		"can_outpost":parts[15]=="1","can_aluminum":parts[16]=="1"})
 
 func _accept_original_asteroid(parts: PackedStringArray) -> void:
 	# One snapshot per verified original SHIP tick; never an independent oracle.
@@ -523,6 +561,14 @@ func request_mine_one_tonne() -> void:
 	# ore and cargo. Tool manufacturing is deferred; old source mode applies.
 	_send_equipment("MINE",_current_rock_id)
 
+func request_colony_ship_construction(operation: int) -> void:
+	# Explicit user click; the original C++ nominates the exact fixed
+	# recipe, checks mass/custody and later supplies a committed SHIP event.
+	if operation<1 or operation>4:
+		_status("Unsupported original physical ship construction action")
+		return
+	_send_equipment("ONBUILD",operation)
+
 func request_fabricate_drill() -> void:
 	_send_equipment("FAB",1)
 
@@ -543,7 +589,8 @@ func _send_equipment(kind: String, value: int) -> void:
 			_last_contact_request != _last_ship_telemetry_request):
 		_status("Mining refused: no current original rock contact")
 		return
-	if kind not in ["MINE","FAB","FIT","UNFIT","POWER"] or value < 0:
+	if kind not in ["MINE","FAB","FIT","UNFIT","POWER","ONBUILD"] or value < 0 or \
+			(kind=="ONBUILD" and (value<1 or value>4)):
 		_status("Invalid mining/equipment request")
 		return
 	var now := Time.get_ticks_msec()
@@ -647,5 +694,6 @@ func stop(message: String = "Native player stopped; last committed pose retained
 	_pending = 0
 	_pending_kind = ""
 	_survey_batch.clear()
+	_last_onboarding_request=-1
 	connection_changed.emit(false)
 	_status(message)
