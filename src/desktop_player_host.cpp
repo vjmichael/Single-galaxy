@@ -315,7 +315,7 @@ static int run_planet_host(const std::string& save_utf8){
                 body->atmosphere_toxic}:planetary::air::State{};
             const bool atmosphere_known=
                 world.world().original_surface_atmosphere_enabled() &&
-                body!=nullptr;
+                body.has_value();
             const bool breathable=atmosphere_known &&
                 planetary::air::breathable(body_air);
             std::cout<<"PFRAME|1|"<<session<<'|'<<request<<'|'<<p->home_ship
