@@ -18007,23 +18007,6 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                        home->second.dock_station==station->first &&
                        home->second.system_id==station->second.system_id;
             }();
-            if(!result.colony_ships_.count(n.home_ship) ||
-                (n.role==NpcRole::Ship && n.assigned_site!=n.home_ship) ||
-                (n.role==NpcRole::Farm && (!result.farms_.count(n.assigned_site) ||
-                  result.farms_.at(n.assigned_site).source_ship!=n.home_ship)) ||
-                (n.role==NpcRole::Habitat && (!result.habitats_.count(n.assigned_site) ||
-                  result.habitats_.at(n.assigned_site).source_ship!=n.home_ship)) ||
-                (n.role==NpcRole::PlanetarySurface && ![&](){
-                    if(result.snapshot_version_<78)return false;
-                    for(const auto& [key,facility]:result.planetary_sites_){
-                        (void)key;
-                        if(facility.surface_location==n.assigned_site &&
-                           facility.source_ship==n.home_ship &&
-                           (facility.delegated_npcs[0]==id ||
-                            facility.delegated_npcs[1]==id))return true;
-                    }
-                    return false;
-                }()) ||
             const bool genuine_station_visitor=[&](){
                 if(result.snapshot_version_<120 || n.transport_id ||
                    n.role!=NpcRole::Ship || n.assigned_site!=n.home_ship ||
@@ -18047,6 +18030,24 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                 }
                 return false;
             }();
+
+            if(!result.colony_ships_.count(n.home_ship) ||
+                (n.role==NpcRole::Ship && n.assigned_site!=n.home_ship) ||
+                (n.role==NpcRole::Farm && (!result.farms_.count(n.assigned_site) ||
+                  result.farms_.at(n.assigned_site).source_ship!=n.home_ship)) ||
+                (n.role==NpcRole::Habitat && (!result.habitats_.count(n.assigned_site) ||
+                  result.habitats_.at(n.assigned_site).source_ship!=n.home_ship)) ||
+                (n.role==NpcRole::PlanetarySurface && ![&](){
+                    if(result.snapshot_version_<78)return false;
+                    for(const auto& [key,facility]:result.planetary_sites_){
+                        (void)key;
+                        if(facility.surface_location==n.assigned_site &&
+                           facility.source_ship==n.home_ship &&
+                           (facility.delegated_npcs[0]==id ||
+                            facility.delegated_npcs[1]==id))return true;
+                    }
+                    return false;
+                }()) ||
                 (!n.transport_id && n.location!=n.assigned_site &&
                  !shuttle_custody && !genuine_shore_duty && !genuine_station_visitor &&
                  ![&](){for(const auto& [voyage_id,v]:result.voyages_){(void)voyage_id;
