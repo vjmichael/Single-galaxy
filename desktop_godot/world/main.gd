@@ -9,6 +9,7 @@ const NATIVE_PLANET_SURFACE_SESSION := preload("res://world/native_planet_surfac
 const NATIVE_PLANET_TERRAIN := preload("res://world/native_planet_terrain.gd")
 const NATIVE_PLANET_TRANSFER_SESSION := preload("res://world/native_planet_transfer_session.gd")
 const PLANET_TRANSFER_PANEL := preload("res://world/planet_transfer_panel.gd")
+const NATIVE_PLANET_RECOVERY_PROBE := preload("res://world/native_planet_recovery_probe.gd")
 const NATIVE_STATION_SESSION := preload("res://world/native_station_session.gd")
 const REFINERY_TERMINAL_UI := preload("res://world/refinery_terminal_ui.gd")
 const FLIGHT_INSTRUMENTS := preload("res://world/native_flight_instruments.gd")
@@ -77,6 +78,12 @@ var _geometry_parent: Node3D
 var native_session
 var native_planet_surface_session
 var native_planet_transfer_session
+var native_planet_recovery_probe
+var _planet_recovery_blocked := false
+var _planet_auto_recovery_used := false
+var _planet_expected_disconnect := false
+var _planet_surface_verified := false
+var _planet_transfer_verified := false
 var _planet_transfer_panel: PanelContainer
 var _planet_current_save := ""
 var _planet_picker_transfer := false
@@ -211,6 +218,9 @@ func _ready() -> void:
 	native_planet_transfer_session.connection_changed.connect(_on_planet_transfer_connection)
 	native_planet_transfer_session.landed.connect(_on_planet_transfer_landed)
 	native_planet_transfer_session.returned_to_ship.connect(_on_planet_transfer_returned)
+	native_planet_recovery_probe = NATIVE_PLANET_RECOVERY_PROBE.new()
+	native_planet_recovery_probe.decision_ready.connect(_on_planet_recovery_decision)
+	native_planet_recovery_probe.recovery_blocked.connect(_on_planet_recovery_blocked)
 	native_player_session = NATIVE_PLAYER_SESSION.new()
 	native_player_session.pose_received.connect(_on_native_player_pose)
 	native_player_session.ship_state_received.connect(_on_native_ship_state)
@@ -323,6 +333,9 @@ func _show_sgdx_diagnostics() -> void:
 		sgdx_dx_dialog.popup_centered(Vector2i(730,480))
 
 func _ask_world_reset() -> void:
+	if (native_planet_recovery_probe != null and native_planet_recovery_probe.is_active()):
+		_on_native_player_status("Reset blocked during original SQLite recovery preflight")
+		return
 	if (native_planet_surface_session != null and native_planet_surface_session.is_active()) or 			(native_planet_transfer_session != null and native_planet_transfer_session.is_active()) or 			not _handoff_target.is_empty():
 		_on_native_player_status("Reset refused while an original planetary writer or handoff is active")
 		return
@@ -338,6 +351,9 @@ func _ask_world_reset() -> void:
 	new_game_confirm.popup_centered(Vector2i(530, 210))
 
 func _confirmed_world_reset() -> void:
+	if native_planet_recovery_probe != null and native_planet_recovery_probe.is_active():
+		_on_native_player_status("Reset denied until source recovery probe exits")
+		return
 	if (native_planet_surface_session != null and native_planet_surface_session.is_active()) or 			(native_planet_transfer_session != null and native_planet_transfer_session.is_active()) or 			not _handoff_target.is_empty():
 		_on_native_player_status("Reset denied: planetary SQLite writer still owned")
 		return
@@ -400,6 +416,8 @@ func _advance_world_reset() -> void:
 	_colony_return_pending = false
 	_colony_return_armed = false
 	_planet_current_save = ""
+	_planet_recovery_blocked=false
+	_planet_auto_recovery_used=false
 	_last_native_dock = -1
 	_verified_flight_ship.clear()
 	_verified_flight_rock.clear()
@@ -415,12 +433,70 @@ func _advance_world_reset() -> void:
 func _open_saved_station_automatically() -> void:
 	if _world_reset_pending or _world_reset_blocked or _station_connect_attempted:
 		return
-	_station_connect_attempted = true
-	_station_connection_failure = ""
-	_on_native_player_status("Connecting to your original saved station...")
-	# One SQLite writer, whether we are launching or changing roles.
-	# A missing, damaged or locked save is NEVER automatically replaced.
-	_schedule_native_handoff("station", native_player_session.process_id())
+	_station_connect_attempted=true
+	_station_connection_failure=""
+	var save := OS.get_user_data_dir().path_join("single_galaxy_station_test.sqlite")
+	if FileAccess.file_exists(save):
+		# Existing world MUST choose its role from original PlayerPerson,
+		# physical shuttle/site and a generation-fenced native SQLite reopen.
+		# Never invoke station genesis as a fallback after a failed preflight.
+		_begin_native_planet_recovery(save)
+	else:
+		# First-run original station genesis remains a separate native mode.
+		_on_native_player_status("No previous native station save; creating the original first station")
+		_schedule_native_handoff("station",-1)
+
+func _begin_native_planet_recovery(save: String) -> void:
+	if _world_reset_pending or _world_reset_blocked or 			not _handoff_target.is_empty() or native_planet_recovery_probe.is_active() or 			native_planet_transfer_session.is_active() or native_planet_surface_session.is_active() or 			native_player_session.is_active() or native_station_session.is_active():
+		_on_native_player_status("Native recovery requires all original SQLite writers to be released")
+		return
+	_planet_recovery_blocked=false
+	_planet_current_save=save
+	if is_instance_valid(player):
+		player.use_native_authority(true)
+	_on_native_player_status("Reading original committed player and shuttle custody; no offline clock catch-up")
+	native_planet_recovery_probe.start(save)
+
+func _on_planet_recovery_decision(frame: Dictionary) -> void:
+	if _world_reset_pending or _world_reset_blocked or not _handoff_target.is_empty() or 			native_player_session.is_active() or native_station_session.is_active() or 			native_planet_transfer_session.is_active() or native_planet_surface_session.is_active():
+		_on_planet_recovery_blocked("Recovery decision arrived during another native writer; original save untouched")
+		return
+	var save: String=frame["save"]
+	var role: int=int(frame["role"])
+	_planet_current_save=save
+	station_test_save_selected = save == OS.get_user_data_dir().path_join("single_galaxy_station_test.sqlite")
+	if role==1:
+		_schedule_native_handoff("station",-1)
+	elif role==2:
+		_schedule_native_handoff("ship",-1)
+	elif role==3:
+		_schedule_native_handoff("planet-transfer",-1)
+	elif role==4:
+		_planet_requested_save=save
+		_schedule_native_handoff("planet",-1)
+	else:
+		_on_planet_recovery_blocked("Native world returned an unknown recovery role")
+
+func _on_planet_recovery_blocked(reason: String) -> void:
+	_planet_recovery_blocked=true
+	_station_connection_failure=reason
+	if is_instance_valid(player): player.use_native_authority(true)
+	_on_native_player_status("PLANETARY RECOVERY BLOCKED: "+reason+" | F9 retries existing original world")
+	if is_instance_valid(retry_station_button):
+		retry_station_button.visible=true
+
+func _recover_unexpected_planet_exit(old_pid: int) -> void:
+	if _planet_expected_disconnect or _world_reset_pending or _world_reset_blocked or 			_planet_recovery_blocked or not _handoff_target.is_empty() or 			native_planet_recovery_probe.is_active():
+		return
+	if not _planet_current_save.is_absolute_path() or 			not FileAccess.file_exists(_planet_current_save):
+		_on_planet_recovery_blocked("Interrupted world save is unavailable")
+		return
+	if _planet_auto_recovery_used:
+		_on_planet_recovery_blocked("Automatic recovery already attempted; inspect native custody before explicit F9 retry")
+		return
+	_planet_auto_recovery_used=true
+	_on_native_player_status("Original planetary worker disconnected; verifying last committed SQLite state")
+	_schedule_native_handoff("recover-probe",old_pid)
 
 func _retry_original_station() -> void:
 	if _world_reset_pending or _world_reset_blocked:
@@ -436,8 +512,15 @@ func _retry_original_station() -> void:
 	_station_connect_attempted = true
 	if is_instance_valid(retry_station_button):
 		retry_station_button.visible = false
-	_on_native_player_status("Retrying your saved station without resetting the world...")
-	_schedule_native_handoff("station", native_station_session.process_id())
+	if native_planet_recovery_probe.is_active() or not _handoff_target.is_empty():
+		_on_native_player_status("Previous native recovery is still reconciling")
+		return
+	var save := _planet_current_save
+	if not save.is_empty() and FileAccess.file_exists(save):
+		_begin_native_planet_recovery(save)
+	else:
+		_on_native_player_status("Retrying your saved station without resetting the world...")
+		_schedule_native_handoff("station",native_station_session.process_id())
 
 func _enter_cockpit_after_verified_board() -> void:
 	if not _player_session_autoconnect or not native_station_session.is_active() or last_station_player_state != 0 or not _handoff_target.is_empty():
@@ -1060,6 +1143,12 @@ func _build_hud() -> void:
 func _refresh_interaction_prompt() -> void:
 	if not is_instance_valid(interaction_label):
 		return
+	if native_planet_recovery_probe != null and native_planet_recovery_probe.is_active():
+		interaction_label.text="Reading original SQLite player/shuttle custody; no commands until recovered"
+		return
+	if _planet_recovery_blocked:
+		interaction_label.text="Planetary recovery blocked — original save untouched. F9 explicit retry or F5 diagnostics"
+		return
 	if native_planet_transfer_session != null and native_planet_transfer_session.is_active():
 		interaction_label.text="Original shuttle transfer: choose a site and approve each action in the native panel"
 		return
@@ -1147,6 +1236,7 @@ func _advance_native_handoff() -> void:
 		if Time.get_ticks_msec() - _handoff_started_msec > 3000:
 			# Fail closed, rather than launching two original-world writers.
 			_handoff_target = ""
+			_planet_recovery_blocked=true
 			_on_native_player_status("Native writer handoff blocked: prior SGDX guardian still alive; retry after it exits")
 			# Remain in native-authority mode: local Godot walking cannot silently
 			# replace a live original C++ world while recovery is unresolved.
@@ -1154,7 +1244,10 @@ func _advance_native_handoff() -> void:
 	var destination := _handoff_target
 	_handoff_target = ""
 	_handoff_pid = -1
-	if destination == "planet":
+	if destination=="recover-probe":
+		_begin_native_planet_recovery(_planet_current_save)
+	elif destination == "planet":
+		_planet_surface_verified=false
 		# One original SQLite writer: this is either a verified TLAND handoff
 		# or an explicit existing-world surface selection, never a new genesis.
 		var save := _planet_requested_save
@@ -1168,6 +1261,7 @@ func _advance_native_handoff() -> void:
 			_on_native_player_status("Selected original planetary save missing")
 
 	elif destination == "planet-transfer":
+		_planet_transfer_verified=false
 		if _planet_current_save.is_absolute_path() and FileAccess.file_exists(_planet_current_save):
 			if is_instance_valid(player):
 				player.use_native_authority(true)
@@ -1200,7 +1294,9 @@ func _on_planet_save_selected(path: String) -> void:
 		_on_native_player_status("Choose an existing original .sqlite file")
 		return
 	_planet_current_save=path
-	_planet_requested_save=path if not _planet_picker_transfer else ""
+	_planet_requested_save=""
+	_planet_auto_recovery_used=false
+	_planet_recovery_blocked=false
 	var old_pid := -1
 	if native_station_session != null and native_station_session.is_active():
 		old_pid=native_station_session.process_id()
@@ -1208,7 +1304,7 @@ func _on_planet_save_selected(path: String) -> void:
 	elif native_player_session != null and native_player_session.is_active():
 		old_pid=native_player_session.process_id()
 		native_player_session.stop("Releasing source writer for selected planet",true)
-	_schedule_native_handoff("planet-transfer" if _planet_picker_transfer else "planet",old_pid)
+	_schedule_native_handoff("recover-probe",old_pid)
 
 func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_F1 and \
@@ -1259,6 +1355,9 @@ func _unhandled_input(event: InputEvent) -> void:
 					_schedule_native_handoff("planet-transfer",old_pid)
 		elif _handoff_target.is_empty() and native_station_session.is_active():
 			_on_native_player_status("Board the actual ship and travel to a built planetary shuttle site first")
+		elif _handoff_target.is_empty() and not native_planet_recovery_probe.is_active() and 				not _planet_current_save.is_empty() and FileAccess.file_exists(_planet_current_save):
+			_planet_auto_recovery_used=false # explicit human retry, not an auto-loop
+			_begin_native_planet_recovery(_planet_current_save)
 		elif _handoff_target.is_empty() and is_instance_valid(_planet_save_picker):
 			# F9: reopen a landed world. Shift+F9: recover an interrupted
 			# original shuttle journey from that same existing SQLite save.
@@ -2024,6 +2123,7 @@ func _on_native_planet_intent(heading: Vector3) -> void:
 		native_planet_surface_session.submit_walk(heading, is_instance_valid(player) and player.run_toggled)
 
 func _on_planet_transfer_state(frame: Dictionary) -> void:
+	_planet_transfer_verified=true
 	_record_native_projection("PLANET_TRANSFER",frame)
 	if is_instance_valid(_planet_transfer_panel):
 		_planet_transfer_panel.present(frame,native_planet_transfer_session.sites(),
@@ -2055,6 +2155,13 @@ func _on_planet_transfer_select(index: int) -> void:
 			native_planet_transfer_session.sites(),true)
 
 func _on_planet_transfer_connection(connected: bool) -> void:
+	if connected:
+		_planet_transfer_verified=false
+	else:
+		var was_verified := _planet_transfer_verified
+		_planet_transfer_verified=false
+		if was_verified:
+			_recover_unexpected_planet_exit(native_planet_transfer_session.process_id())
 	if not connected and is_instance_valid(_planet_transfer_panel):
 		_planet_transfer_panel.visible=false
 	if not connected and is_instance_valid(player):
@@ -2065,14 +2172,18 @@ func _on_planet_transfer_landed() -> void:
 		return
 	var old_pid: int=native_planet_transfer_session.process_id()
 	_planet_requested_save=_planet_current_save
+	_planet_expected_disconnect=true
 	native_planet_transfer_session.stop("Original landing committed; handing off SQLite to surface host",true)
+	_planet_expected_disconnect=false
 	_schedule_native_handoff("planet",old_pid)
 
 func _on_planet_transfer_returned() -> void:
 	if not native_planet_transfer_session.is_active():
 		return
 	var old_pid: int=native_planet_transfer_session.process_id()
+	_planet_expected_disconnect=true
 	native_planet_transfer_session.stop("Original shuttle return committed; handing off to cockpit",true)
+	_planet_expected_disconnect=false
 	_schedule_native_handoff("ship",old_pid)
 
 func _on_planet_transfer_abort() -> void:
@@ -2080,17 +2191,28 @@ func _on_planet_transfer_abort() -> void:
 		_on_native_player_status("Cannot abandon a committed shuttle flight; recover original transit")
 		return
 	var old_pid: int=native_planet_transfer_session.process_id()
+	_planet_expected_disconnect=true
 	native_planet_transfer_session.stop("Human cancelled before boarding; original world unchanged",true)
+	_planet_expected_disconnect=false
 	_schedule_native_handoff("ship",old_pid)
 
 func _on_original_planet_reboarded() -> void:
 	if not native_planet_surface_session.is_active():
 		return
 	var old_pid: int=native_planet_surface_session.process_id()
+	_planet_expected_disconnect=true
 	native_planet_surface_session.stop("Native surface reboard committed; original journal handoff",true)
+	_planet_expected_disconnect=false
 	_schedule_native_handoff("planet-transfer",old_pid)
 
 func _on_original_planet_connection(connected: bool) -> void:
+	if connected:
+		_planet_surface_verified=false
+	else:
+		var was_verified := _planet_surface_verified
+		_planet_surface_verified=false
+		if was_verified:
+			_recover_unexpected_planet_exit(native_planet_surface_session.process_id())
 	if not connected:
 		_planet_visual_origin_ready=false
 	if not connected and is_instance_valid(native_planet_terrain):
@@ -2100,6 +2222,7 @@ func _on_original_planet_connection(connected: bool) -> void:
 		player.use_native_authority(true) # never permit local physics fallback
 
 func _on_original_planet_pose(pose: Dictionary) -> void:
+	_planet_surface_verified=true
 	_record_native_projection("PLANET", pose)
 	# Rebase ONLY visual metres from the original fixed-point odometer. The
 	# physical C++ location/receipt and collision rules never change.
@@ -2232,7 +2355,10 @@ func _on_native_snapshot(frame: Dictionary) -> void:
 		native_markers.add_child(marker)
 
 func _exit_tree() -> void:
+	_planet_expected_disconnect=true
 	_flush_native_visual_evidence()
+	if native_planet_recovery_probe != null:
+		native_planet_recovery_probe.stop("Desktop shutting down")
 	if native_planet_transfer_session != null:
 		native_planet_transfer_session.stop("Original shuttle UI closed")
 	if native_session != null:
@@ -2278,6 +2404,8 @@ func _process(delta: float) -> void:
 		native_planet_surface_session.poll()
 	if native_planet_transfer_session != null:
 		native_planet_transfer_session.poll()
+	if native_planet_recovery_probe != null:
+		native_planet_recovery_probe.poll()
 	if native_station_session != null:
 		native_station_session.poll()
 		# One requested census per visited colony, never one NPC allocation
