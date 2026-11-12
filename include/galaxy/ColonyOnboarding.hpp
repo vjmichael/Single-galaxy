@@ -8,6 +8,7 @@
 #include <limits>
 #include <optional>
 #include <sstream>
+#include <stdexcept>
 #include <string>
 namespace galaxy::colony_onboarding {
 
