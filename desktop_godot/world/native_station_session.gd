@@ -122,7 +122,7 @@ func _host_path() -> String:
 	var binary := "galaxy_desktop_station_host.exe" if OS.get_name() == "Windows" else "galaxy_desktop_station_host"
 	return SGDX_LAUNCH.native_host_path(binary)
 
-func start() -> void:
+func start(save_override: String = "") -> void:
 	if _active:
 		return
 	# A previous QUIT may be delayed by a blocked host or SQLite flush.
@@ -145,7 +145,11 @@ func start() -> void:
 		if DirAccess.make_dir_recursive_absolute(save_dir) != OK:
 			_status("Saved colony directory is not writable; refusing to reset or substitute SQLite world")
 			return
-	var save := save_dir.path_join("single_galaxy_station_test.sqlite")
+	var save := save_override if not save_override.is_empty() else save_dir.path_join("single_galaxy_station_test.sqlite")
+	if not save_override.is_empty() and (not save_override.is_absolute_path() or
+			not FileAccess.file_exists(save_override)):
+		_status("Native saved-station recovery requires an existing absolute SQLite path")
+		return
 	var spec := SGDX_LAUNCH.supervised_command(save, "godot_station", exe,
 		PackedStringArray([save, "--explicit-test-station"]))
 	if spec.is_empty():
