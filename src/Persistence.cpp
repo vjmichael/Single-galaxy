@@ -9864,6 +9864,16 @@ PersistentWorld::~PersistentWorld() = default;
 // navigation now use identical Simulation physical guards and effects.
 bool PersistentWorld::begin_celestial_transit(
     PlayerId owner,EntityId ship,std::uint64_t body,std::uint64_t id,FailPoint fail) {
+    // No ship may abandon its original player inside a planetary shuttle,
+    // descending, or on the surface. This is not a client navigation hint.
+    for(const auto& [principal,p]:world_.player_people()){
+        (void)principal;
+        if(p.home_ship==ship &&
+           (p.state==PlayerPersonState::InPlanetaryShuttle ||
+            p.state==PlayerPersonState::PlanetaryTransit ||
+            p.state==PlayerPersonState::AtPlanetarySurface))
+            return false;
+    }
     // Do not commandeer an active, owner-authorized NPC navigation ship or
     // adopt its durable planned receipt as a different host command.
     for(const auto& [flight_id,order]:world_.npc_flight_orders_){
@@ -9981,6 +9991,33 @@ bool PersistentWorld::book_planetary_shuttle_passenger(PlayerId owner,EntityId s
     ++generation_;
     return true;
 }
+// S6-F4: one original SQLite writer transaction for an explicitly approved
+// player shuttle boarding, surface release, reboard or original ship return.
+// This is not the visual inspector, NPC transport manifest or a new world.
+bool PersistentWorld::planetary_player_shuttle_action(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,PlanetaryPlayerAction action,
+        std::uint64_t receipt,FailPoint fail) {
+    if(!receipt || receipt>=(std::uint64_t{1}<<60) ||
+       store_->station_receipt_used(receipt))return false;
+    for(const auto& [id,p]:world_.pending_celestial_transits_) {
+        (void)id;
+        if(p.ship==ship)return false;
+    }
+    auto next=world_;
+    if(!next.planetary_player_shuttle_action(owner,ship,key,action,receipt))
+        return false;
+    if(next.total_ore()!=resource_origin_ ||
+       next.total_credits()!=credit_origin_)
+        throw std::logic_error("player planetary transport changed conserved resources");
+    if(Simulation::from_snapshot(next.canonical_state()).state_hash()!=
+       next.state_hash())
+        throw std::logic_error("player planetary custody cannot restore");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);++generation_;
+    return true;
+}
+
 bool PersistentWorld::launch_planetary_shuttle(PlayerId owner,EntityId ship,
         const PlanetarySiteKey& key,std::uint64_t request_id,bool ascend,FailPoint fail) {
     for(const auto& [id,p]:world_.pending_celestial_transits_) {
