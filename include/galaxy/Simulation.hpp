@@ -128,6 +128,15 @@ struct NativePlanetarySurvivalState {
     std::uint64_t thermal_exposure_ms=0,unverified_air_exposure_ms=0;
     std::uint32_t injury_points=0;
     bool initialized=false,grounded=true;
+    // v135 source-manufactured original player equipment and medical ledger.
+    // Suit mass remains in world material conservation after ship fabrication.
+    std::int64_t suit_embodied_kg=0; // 10 kg exact inputs or absent
+    std::uint32_t suit_integrity=0,suit_charge=0,suit_power_ticks=0;
+    bool suit_equipped=false;
+    std::uint64_t suit_manufacture_receipt=0;
+    std::uint64_t hypoxia_exposure_ms=0;
+    std::uint64_t last_medical_tick=0;
+    std::uint32_t medical_treatments=0;
 };
 // PLAY-STATION-02: host-validated finite station traversal and ship transfer.
 enum class StationPlayerAction : std::uint8_t { Walk=1, Board=2, Disembark=3 };
@@ -165,6 +174,10 @@ struct PhysicalCelestialBody {
     // v134 sealed original source: generated bulk mass in 1e18 kilograms.
     // Older snapshots require a one-time source-validated migration.
     std::uint64_t physical_mass_1e18_kg=0;
+    // v135 sealed original deterministic atmosphere / vacuum, not a renderer.
+    std::uint32_t atmosphere_pressure_pa=0;
+    std::uint16_t atmosphere_oxygen_permille=0;
+    bool atmosphere_toxic=false;
 };
 
 enum class EntityType { Ship, Asteroid, Station, Stargate, Wreck };
@@ -1573,6 +1586,17 @@ public:
     // Atomic original life-support stock transfer near the verified hatch.
     bool planetary_surface_oxygen_action(PlayerId owner,EntityId ship,
         const PlanetarySiteKey& key,bool return_to_site,std::uint64_t receipt);
+    // Explicit ORIGINAL owner action. Make/retire only aboard actual ship;
+    // equip/unequip and charge only at the original landed site.
+    enum class OriginalSuitAction : std::uint8_t {
+        Manufacture=1, Retire=2, Equip=3, Unequip=4, Charge=5
+    };
+    bool planetary_surface_suit_action(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,OriginalSuitAction action,std::uint64_t receipt);
+    // Original planetary medical service room/qualified supervisor and
+    // finite local medical inventory, never autonomous magical healing.
+    bool planetary_surface_treatment(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,std::uint64_t receipt);
     // DOCK-03A: trusted host-only, same-owner temporary ship-to-berth
     // shore duty. Moves one ORIGINAL named NPC physical location; neither
     // creates a new resident nor alters its legal home/crew contract.
@@ -1965,6 +1989,7 @@ public:
 private:
     // S6-F5-C: original deterministic generated mass is sealed into v134.
     bool establish_original_surface_gravity();
+    bool establish_original_surface_atmosphere();
     void process_original_surface_survival();
     // S6-F5-B: body radius comes ONLY from the existing immutable celestial
     // registry. A person/NPC can never manufacture a planet or hatch location.
