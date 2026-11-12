@@ -2340,6 +2340,13 @@ if(BUILD_TESTING AND Python3_Interpreter_FOUND)
       $<TARGET_FILE:galaxy_desktop_player_host>)
   set_tests_properties(galaxy_stage6f6_original_role_reconciliation
     PROPERTIES TIMEOUT 450 LABELS "stage6;native;sqlite;recovery;one-writer")
+  add_test(NAME galaxy_stage06g_original_world_audit_matrix
+    COMMAND ${Python3_EXECUTABLE}
+      ${CMAKE_CURRENT_SOURCE_DIR}/tests/Stage06GOriginalWorldAuditMatrix.py
+      $<TARGET_FILE:galaxy_stage6f5e_planet_host_fixture>
+      $<TARGET_FILE:galaxy_desktop_player_host>)
+  set_tests_properties(galaxy_stage06g_original_world_audit_matrix
+    PROPERTIES TIMEOUT 450 LABELS "stage6;integration;sqlite;origins;one-writer")
 endif()
 if(BUILD_TESTING AND Python3_Interpreter_FOUND)
   add_test(NAME galaxy_stage6f5c_original_planet_host_refusal
