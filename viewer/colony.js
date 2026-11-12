@@ -6,7 +6,13 @@
   const minerals=new Set(['serpentine','saponite','magnetite','pyrrhotite','carbonates','olivine','pyroxene','nickel_iron','other','plagioclase','troilite']);
   function numeric(x,max=1e12){if(!/^(0|[1-9][0-9]*)$/.test(x))throw Error('Noncanonical number');const n=Number(x);if(!Number.isSafeInteger(n)||n>max)throw Error('Numeric overflow');return n;}
   function decode(raw){
-    if(typeof raw!=='string'||raw.length>180||!/^COLONY\|1\|/.test(raw)||!/^[A-Za-z0-9_|-]+$/.test(raw))throw Error('Invalid colony telemetry');
+    // Planetary player/ground receipts contain several original 64-bit IDs.
+    // Keep the existing 180-byte limit for every unrelated event.
+    const extended=typeof raw==='string' &&
+      /^COLONY\|1\|[0-9]{1,20}\|(?:PLANET_PLAYER_STATUS|PLANET_PLAYER_COMMITTED|PLANET_SURFACE_POSE|PLANET_SURFACE_COMMITTED)\|/.test(raw);
+    if(typeof raw!=='string'||raw.length>(extended?260:180)||
+       !/^COLONY\|1\|/.test(raw)||!/^[A-Za-z0-9_|-]+$/.test(raw))
+      throw Error('Invalid colony telemetry');
     const v=raw.split('|'),tick=numeric(v[2],Number.MAX_SAFE_INTEGER),t=v[3];let e={tick,type:t};
     if(t==='LOCAL_FRAME'){
       if(v.length!==6)throw Error('Malformed local frame');
