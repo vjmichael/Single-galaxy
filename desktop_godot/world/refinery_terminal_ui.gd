@@ -7,6 +7,8 @@ signal industry_refresh_requested()
 signal industry_batch_requested(trade: int)
 signal industry_tick_requested()
 signal industry_transfer_requested(selector: int)
+signal industry_management_refresh_requested()
+signal industry_management_apply_requested(selector: int)
 signal terminal_closed()
 signal dock_status_requested()
 signal dock_worker_requested()
@@ -54,6 +56,11 @@ var _industry_cut_button: Button
 var _industry_shape_button: Button
 var _industry_tick_button: Button
 var _industry_transfers: Array[Button] = []
+var _management_status: Label
+var _management_workers: Label
+var _management_action: OptionButton
+var _management_apply: Button
+var _management_snapshot := {}
 
 func _ready() -> void:
 	name = "ColonyInventoryAndOperations"
@@ -249,6 +256,67 @@ func _ready() -> void:
 	_industry_tick_button.tooltip_text = "Runs one native simulation tick on this save; never grants material or instant completed goods"
 	_industry_tick_button.pressed.connect(func(): industry_tick_requested.emit())
 	column.add_child(_industry_tick_button)
+	var manager_title := Label.new()
+	manager_title.text = "INDUSTRIAL FACILITIES | NAMED WORKERS | ORIGINAL SHIFTS"
+	column.add_child(manager_title)
+	_management_status = Label.new()
+	_management_status.text = "Inspect actual colony facilities, material modules and utilities."
+	_management_status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	column.add_child(_management_status)
+	_management_workers = Label.new()
+	_management_workers.text = "No original industrial staffing report yet"
+	_management_workers.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	column.add_child(_management_workers)
+	var manager_refresh := Button.new()
+	manager_refresh.text = "Refresh facility and workforce status"
+	manager_refresh.pressed.connect(func(): industry_management_refresh_requested.emit())
+	column.add_child(manager_refresh)
+	_management_action = OptionButton.new()
+	_management_action.custom_minimum_size = Vector2(490,0)
+	_management_action.add_item("Choose one native facility / workforce command")
+	_management_action.set_item_disabled(0,true)
+	var labels := [
+		"Build workshop — original construction module",
+		"Build warehouse — original construction module",
+		"Build local utility plant — original construction modules",
+		"Build local habitation — original construction modules",
+		"Install workshop frame-finishing machine",
+		"Build and commission physical station refinery",
+		"Deliver 100 kg ship food to local habitation",
+		"Deliver 100 kg ship water to local habitation",
+		"Deliver 100 kg ship oxygen to local habitation",
+		"Move one real resident from ship into habitation",
+		"Appoint one existing resident as utility technician",
+		"Deliver one existing physical utility spare",
+		"Authorize maintained-utility service",
+		"Repair original installed utility with real modules",
+		"Train one available local panel trade worker (1 kg)",
+		"Train one available local frame trade worker (1 kg)",
+		"Appoint certified original panel supervisor",
+		"Appoint certified original frame supervisor",
+		"Schedule 16-tick original panel-operator shift",
+		"Schedule 16-tick original frame-finisher shift",
+		"Assign real available panel workshop operator",
+		"Assign real available frame workshop finisher",
+		"Cancel original approved panel batch program",
+		"Cancel original approved frame batch program",
+		"Release original panel operator from workshop",
+		"Release original frame finisher from workshop",
+		"Cancel original panel-operator shift",
+		"Cancel original frame-finisher shift"]
+	for index in range(labels.size()):
+		_management_action.add_item(labels[index])
+		_management_action.set_item_metadata(index+1,index+1)
+		_management_action.set_item_disabled(index+1,true)
+	_management_action.select(0)
+	_management_action.item_selected.connect(func(_index: int): _update_management_apply())
+	column.add_child(_management_action)
+	_management_apply = Button.new()
+	_management_apply.text = "Authorize one selected original-world action"
+	_management_apply.disabled = true
+	_management_apply.tooltip_text = "Native C++ rechecks actual colony ownership, physical ship, material, workforce, facility, energy and exact journal outcome."
+	_management_apply.pressed.connect(_on_management_apply)
+	column.add_child(_management_apply)
 	var future := Label.new()
 	future.text = "Only existing native workshop panel/frame recipes are executable. Candidate recipes, station-mineral feed conversion, unattended factories and intercolony stock transfer are not authorized."
 	future.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -379,6 +447,17 @@ func show_waiting() -> void:
 	visible = true
 	_current.clear()
 	_industry_state.clear()
+	_management_snapshot.clear()
+	if is_instance_valid(_management_status):
+		_management_status.text="Inspecting original local factory facilities and named workers..."
+	if is_instance_valid(_management_workers):
+		_management_workers.text="Native supervisor/shift status pending"
+	if is_instance_valid(_management_action):
+		_management_action.select(0)
+		for index in range(1,_management_action.item_count):
+			_management_action.set_item_disabled(index,true)
+	if is_instance_valid(_management_apply):
+		_management_apply.disabled=true
 	if is_instance_valid(_industry_stocks):
 		_industry_stocks.clear()
 	if is_instance_valid(_industry_status):
@@ -409,6 +488,10 @@ func show_waiting() -> void:
 		_unload_button.disabled = true
 
 func report_error(message: String) -> void:
+	if is_instance_valid(_management_status):
+		_management_status.text = message
+	if is_instance_valid(_management_apply):
+		_management_apply.disabled=true
 	if is_instance_valid(_status):
 		_status.text = message
 	if is_instance_valid(_refine_button):
@@ -424,6 +507,74 @@ func _on_industry_transfer_pressed(selector: int) -> void:
 		return
 	button.disabled = true
 	industry_transfer_requested.emit(selector)
+
+func _update_management_apply() -> void:
+	if not is_instance_valid(_management_apply) or \
+			not is_instance_valid(_management_action):
+		return
+	var selected := _management_action.selected
+	if selected<=0:
+		_management_apply.disabled=true
+		return
+	var selector := int(_management_action.get_item_metadata(selected))
+	var options: Dictionary = _management_snapshot.get("options",{})
+	_management_apply.disabled=not bool(options.get(selector,false))
+
+func _on_management_apply() -> void:
+	if _management_apply.disabled or _management_action.selected<=0:
+		return
+	var selector := int(_management_action.get_item_metadata(
+		_management_action.selected))
+	var options: Dictionary = _management_snapshot.get("options",{})
+	if selector<1 or selector>28 or not bool(options.get(selector,false)):
+		return
+	_management_apply.disabled=true
+	_management_status.text = "Authorizing one real original-world task; waiting for native SQLite event..."
+	industry_management_apply_requested.emit(selector)
+
+func set_industry_management(snapshot: Dictionary) -> void:
+	# Original physical facilities and distinct named NPC labor are the only
+	# authority. This panel neither books people nor constructs equipment.
+	if not is_instance_valid(_management_status):
+		return
+	_management_snapshot=snapshot.duplicate(true)
+	var msg := "Colony #%d | founding hull #%d %s\n" % [
+		int(snapshot.get("station",0)),int(snapshot.get("source_ship",0)),
+		"docked here" if bool(snapshot.get("docked",false)) else "not docked here"]
+	msg += "Original facilities: workshop %s, warehouse %s, utility %s, habitation %s, finisher %s, refinery %s\n" % [
+		"built" if snapshot.get("workshop",false) else "not built",
+		"built" if snapshot.get("storage",false) else "not built",
+		"built" if snapshot.get("utility",false) else "not built",
+		"built" if snapshot.get("habitat",false) else "not built",
+		"installed" if snapshot.get("finisher",false) else "not installed",
+		"built" if snapshot.get("refinery",false) else "not built"]
+	msg += "Physical construction modules: %d | residents: %d | utility technicians: %d\n" % [
+		int(snapshot.get("modules",0)),int(snapshot.get("residents",0)),
+		int(snapshot.get("technicians",0))]
+	msg += "Utility: %s, stored energy %d, spares %d | named supervisor #%d (trade %d)" % [
+		"powered" if snapshot.get("powered",false) else "offline",
+		int(snapshot.get("energy",0)),int(snapshot.get("spares",0)),
+		int(snapshot.get("supervisor",0)),int(snapshot.get("supervisor_trade",0))]
+	if int(snapshot.get("result",0))==1:
+		msg += "\nCommitted action #%d to the ORIGINAL world journal." % int(snapshot.get("chosen",0))
+	elif int(snapshot.get("result",0))==2:
+		msg += "\nOriginal C++ rejected action #%d; no success credited." % int(snapshot.get("chosen",0))
+	_management_status.text=msg
+	var worker_rows := PackedStringArray()
+	for row in snapshot.get("workers",[]):
+		worker_rows.append("%s | worker #%d, suggested #%d | training %d/3 | shift end tick %d | native gate %d, status %d" % [
+			"Panel machine" if int(row.get("trade",0))==1 else "Frame machine",
+			int(row.get("worker",0)),int(row.get("suggested",0)),
+			int(row.get("training_units",0)),int(row.get("shift_end",0)),
+			int(row.get("gate",0)),int(row.get("state",0))])
+	_management_workers.text = "\n".join(worker_rows) if worker_rows.size()>0 else \
+		"No constructed original workshop; no phantom employees or work shifts"
+	var options: Dictionary = snapshot.get("options",{})
+	for index in range(1,_management_action.item_count):
+		var selector := int(_management_action.get_item_metadata(index))
+		_management_action.set_item_disabled(index,not bool(options.get(selector,false)))
+	_management_action.select(0)
+	_update_management_apply()
 
 func set_industry(snapshot: Dictionary) -> void:
 	# Never merge warehouse, workshop, refinery or escrow stock into a second
