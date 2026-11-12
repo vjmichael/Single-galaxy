@@ -4,6 +4,7 @@
 #include "galaxy/GalacticPhysicalPosition.hpp"
 #include "galaxy/Astronomy.hpp"
 #include "galaxy/PlanetaryGeography.hpp"
+#include "galaxy/PlanetarySeasonalClimate.hpp"
 #include "galaxy/NpcTransport.hpp"
 #include "galaxy/UniversalTransport.hpp"
 #include "galaxy/ShipStatusEffects.hpp"
@@ -1772,6 +1773,12 @@ public:
     bool retrieve_planetary_site(PlayerId owner,EntityId ship,std::uint64_t body,
         std::uint16_t latitude,std::uint16_t longitude,bool food,std::int64_t kilograms);
     std::optional<planetary::GeographicSite> scan_planetary_geography(
+        PlayerId owner, EntityId ship, std::uint64_t body_id,
+        std::uint16_t latitude, std::uint16_t longitude) const;
+    // STAGE6-ENV01: observed source-world quarter-by-quarter climate
+    // potential, not owned water, weather events or free soil/biomass.
+    // Exactly the same original owner/scanner/body gate as geography.
+    std::optional<planetary::SeasonalSite> scan_planetary_seasons(
         PlayerId owner, EntityId ship, std::uint64_t body_id,
         std::uint16_t latitude, std::uint16_t longitude) const;
     // A persistent celestial body can be addressed by ID as a future navigation
