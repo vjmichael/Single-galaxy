@@ -11576,6 +11576,7 @@ bool Simulation::transfer_planetary_shuttle_visitor(PlayerId owner,EntityId ship
                                          sh->second.duty_ids.end(),npc);
         if(duty!=sh->second.duty_ids.end() && *duty==npc)
             sh->second.duty_ids.erase(duty);
+        person->second.surface_pose={}; // original named visitor physically boarded
     }else {
         auto at=std::lower_bound(aboard.begin(),aboard.end(),npc);
         if(at==aboard.end() || *at!=npc || visitors.size()>=64 ||
