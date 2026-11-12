@@ -83,7 +83,7 @@ def main():
                 ("BOARDED","--seed-boarded",5),
                 ("TRANSIT","--seed-transit",6),
                 ("LANDED_SHUTTLE","--seed-shuttle",5),
-                ("SURFACE","--seed",7)]:
+                ("SURFACE","--seed-surface",7)]:
             save=base/(label.lower()+".sqlite")
             before=stage(fixture,option,save)
             assert before[0]==person,(label,before)
