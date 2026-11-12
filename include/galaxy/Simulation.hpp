@@ -112,6 +112,10 @@ struct NativePlanetarySurfacePose {
     // not an additional body, resource or world location registry.
     EntityId surface_location=0;
     std::uint64_t last_move_tick=0,last_move_receipt=0;
+    // v133 original physical body-relative position (signed picodegrees).
+    // Local x/z above remain bounded longitudinal odometers for old v132
+    // clients; they are NEVER a world-wide Euclidean position/teleport.
+    std::int64_t latitude_pdeg=0,longitude_pdeg=0;
 };
 // PLAY-STATION-02: host-validated finite station traversal and ship transfer.
 enum class StationPlayerAction : std::uint8_t { Walk=1, Board=2, Disembark=3 };
