@@ -238,6 +238,8 @@ bool is_known_mineral(const std::string& name) {
 bool is_known_good(const std::string& name) {
     return name=="freight_water" || name=="freight_food" ||
            name=="freight_nutrients" ||
+           name=="planetary_soil" || name=="planetary_mineral" ||
+           name=="planetary_volatile" ||
            name=="structural_alloy" || name=="aluminum" || name=="aluminum_panels" || name=="aluminum_scrap" || name=="aluminum_frames" || name=="ceramic" ||
            name=="glass" || name=="water" || name=="sulfur" || name=="carbon_feed";
 }
@@ -13682,6 +13684,8 @@ std::string Simulation::canonical_state() const {
             if(snapshot_version_>=87)out<<'|'<<v.nutrients_kg;
             if(snapshot_version_>=109)
                 out<<'|'<<v.oxygen_kg<<'|'<<unsigned(v.housing_module);
+            if(snapshot_version_>=136)
+                for(const auto kg:v.regional_geology_kg)out<<'|'<<kg;
             out<<'\n';
         }
     // v116 named original child custody, never a separate NPC population.
@@ -14405,7 +14409,7 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
     if (!std::getline(in, line)) throw std::runtime_error("snapshot: missing header");
     auto h = fields(line);
     require_fields(h, 5);
-    if (h[0] != "galaxy-kernel-v135" && h[0] != "galaxy-kernel-v134" && h[0] != "galaxy-kernel-v133" && h[0] != "galaxy-kernel-v132" && h[0] != "galaxy-kernel-v131" && h[0] != "galaxy-kernel-v130" && h[0] != "galaxy-kernel-v129" && h[0] != "galaxy-kernel-v128" && h[0] != "galaxy-kernel-v127" && h[0] != "galaxy-kernel-v126" && h[0] != "galaxy-kernel-v125" && h[0] != "galaxy-kernel-v123" && h[0] != "galaxy-kernel-v122" && h[0] != "galaxy-kernel-v121" && h[0] != "galaxy-kernel-v120" && h[0] != "galaxy-kernel-v119" && h[0] != "galaxy-kernel-v118" && h[0] != "galaxy-kernel-v117" && h[0] != "galaxy-kernel-v116" && h[0] != "galaxy-kernel-v115" && h[0] != "galaxy-kernel-v114" && h[0] != "galaxy-kernel-v113" && h[0] != "galaxy-kernel-v112" && h[0] != "galaxy-kernel-v111" && h[0] != "galaxy-kernel-v110" && h[0] != "galaxy-kernel-v109" && h[0] != "galaxy-kernel-v108" && h[0] != "galaxy-kernel-v107" && h[0] != "galaxy-kernel-v106" && h[0] != "galaxy-kernel-v105" && h[0] != "galaxy-kernel-v1" && h[0] != "galaxy-kernel-v2" && h[0] != "galaxy-kernel-v3" && h[0] != "galaxy-kernel-v4" && h[0] != "galaxy-kernel-v5" && h[0] != "galaxy-kernel-v6" && h[0] != "galaxy-kernel-v7" && h[0] != "galaxy-kernel-v8" && h[0] != "galaxy-kernel-v9" && h[0] != "galaxy-kernel-v10" && h[0] != "galaxy-kernel-v11" && h[0] != "galaxy-kernel-v12" && h[0] != "galaxy-kernel-v13" && h[0] != "galaxy-kernel-v14" && h[0] != "galaxy-kernel-v15" && h[0] != "galaxy-kernel-v16" && h[0] != "galaxy-kernel-v17" && h[0] != "galaxy-kernel-v18" && h[0] != "galaxy-kernel-v19" && h[0] != "galaxy-kernel-v20" && h[0] != "galaxy-kernel-v21" && h[0] != "galaxy-kernel-v22" && h[0] != "galaxy-kernel-v23" && h[0] != "galaxy-kernel-v24" && h[0] != "galaxy-kernel-v25" && h[0] != "galaxy-kernel-v26" && h[0] != "galaxy-kernel-v27" && h[0] != "galaxy-kernel-v28" && h[0] != "galaxy-kernel-v29" && h[0] != "galaxy-kernel-v30" && h[0] != "galaxy-kernel-v31" && h[0] != "galaxy-kernel-v32" && h[0] != "galaxy-kernel-v33" && h[0] != "galaxy-kernel-v34" && h[0] != "galaxy-kernel-v35" && h[0] != "galaxy-kernel-v36" && h[0] != "galaxy-kernel-v37" && h[0] != "galaxy-kernel-v38" && h[0] != "galaxy-kernel-v39" && h[0] != "galaxy-kernel-v40" && h[0] != "galaxy-kernel-v41" && h[0] != "galaxy-kernel-v44" && h[0] != "galaxy-kernel-v48" && h[0] != "galaxy-kernel-v49" && h[0] != "galaxy-kernel-v52" && h[0] != "galaxy-kernel-v53" && h[0] != "galaxy-kernel-v56" && h[0] != "galaxy-kernel-v57" && h[0] != "galaxy-kernel-v58" && h[0] != "galaxy-kernel-v59" && h[0] != "galaxy-kernel-v60" && h[0] != "galaxy-kernel-v61" && h[0] != "galaxy-kernel-v62" && h[0] != "galaxy-kernel-v63" && h[0] != "galaxy-kernel-v64" && h[0] != "galaxy-kernel-v65" && h[0] != "galaxy-kernel-v66" && h[0] != "galaxy-kernel-v67" && h[0] != "galaxy-kernel-v68" && h[0] != "galaxy-kernel-v69" && h[0] != "galaxy-kernel-v70" && h[0] != "galaxy-kernel-v71" && h[0] != "galaxy-kernel-v72" && h[0] != "galaxy-kernel-v73" && h[0] != "galaxy-kernel-v74" && h[0] != "galaxy-kernel-v75" && h[0] != "galaxy-kernel-v76" && h[0] != "galaxy-kernel-v77" && h[0] != "galaxy-kernel-v78" && h[0] != "galaxy-kernel-v79" && h[0] != "galaxy-kernel-v80" && h[0] != "galaxy-kernel-v81" && h[0] != "galaxy-kernel-v82" && h[0] != "galaxy-kernel-v83" && h[0] != "galaxy-kernel-v84" && h[0] != "galaxy-kernel-v85" && h[0] != "galaxy-kernel-v86" && h[0] != "galaxy-kernel-v87" && h[0] != "galaxy-kernel-v88" && h[0] != "galaxy-kernel-v89" && h[0] != "galaxy-kernel-v90" && h[0] != "galaxy-kernel-v91" && h[0] != "galaxy-kernel-v92" && h[0] != "galaxy-kernel-v93" && h[0] != "galaxy-kernel-v94" && h[0] != "galaxy-kernel-v95" && h[0] != "galaxy-kernel-v96" && h[0] != "galaxy-kernel-v97" && h[0] != "galaxy-kernel-v98" && h[0] != "galaxy-kernel-v99" && h[0] != "galaxy-kernel-v100" && h[0] != "galaxy-kernel-v101" && h[0] != "galaxy-kernel-v102" && h[0] != "galaxy-kernel-v103" && h[0] != "galaxy-kernel-v104") throw std::runtime_error("snapshot: unsupported version");
+    if (h[0] != "galaxy-kernel-v136" && h[0] != "galaxy-kernel-v135" && h[0] != "galaxy-kernel-v134" && h[0] != "galaxy-kernel-v133" && h[0] != "galaxy-kernel-v132" && h[0] != "galaxy-kernel-v131" && h[0] != "galaxy-kernel-v130" && h[0] != "galaxy-kernel-v129" && h[0] != "galaxy-kernel-v128" && h[0] != "galaxy-kernel-v127" && h[0] != "galaxy-kernel-v126" && h[0] != "galaxy-kernel-v125" && h[0] != "galaxy-kernel-v123" && h[0] != "galaxy-kernel-v122" && h[0] != "galaxy-kernel-v121" && h[0] != "galaxy-kernel-v120" && h[0] != "galaxy-kernel-v119" && h[0] != "galaxy-kernel-v118" && h[0] != "galaxy-kernel-v117" && h[0] != "galaxy-kernel-v116" && h[0] != "galaxy-kernel-v115" && h[0] != "galaxy-kernel-v114" && h[0] != "galaxy-kernel-v113" && h[0] != "galaxy-kernel-v112" && h[0] != "galaxy-kernel-v111" && h[0] != "galaxy-kernel-v110" && h[0] != "galaxy-kernel-v109" && h[0] != "galaxy-kernel-v108" && h[0] != "galaxy-kernel-v107" && h[0] != "galaxy-kernel-v106" && h[0] != "galaxy-kernel-v105" && h[0] != "galaxy-kernel-v1" && h[0] != "galaxy-kernel-v2" && h[0] != "galaxy-kernel-v3" && h[0] != "galaxy-kernel-v4" && h[0] != "galaxy-kernel-v5" && h[0] != "galaxy-kernel-v6" && h[0] != "galaxy-kernel-v7" && h[0] != "galaxy-kernel-v8" && h[0] != "galaxy-kernel-v9" && h[0] != "galaxy-kernel-v10" && h[0] != "galaxy-kernel-v11" && h[0] != "galaxy-kernel-v12" && h[0] != "galaxy-kernel-v13" && h[0] != "galaxy-kernel-v14" && h[0] != "galaxy-kernel-v15" && h[0] != "galaxy-kernel-v16" && h[0] != "galaxy-kernel-v17" && h[0] != "galaxy-kernel-v18" && h[0] != "galaxy-kernel-v19" && h[0] != "galaxy-kernel-v20" && h[0] != "galaxy-kernel-v21" && h[0] != "galaxy-kernel-v22" && h[0] != "galaxy-kernel-v23" && h[0] != "galaxy-kernel-v24" && h[0] != "galaxy-kernel-v25" && h[0] != "galaxy-kernel-v26" && h[0] != "galaxy-kernel-v27" && h[0] != "galaxy-kernel-v28" && h[0] != "galaxy-kernel-v29" && h[0] != "galaxy-kernel-v30" && h[0] != "galaxy-kernel-v31" && h[0] != "galaxy-kernel-v32" && h[0] != "galaxy-kernel-v33" && h[0] != "galaxy-kernel-v34" && h[0] != "galaxy-kernel-v35" && h[0] != "galaxy-kernel-v36" && h[0] != "galaxy-kernel-v37" && h[0] != "galaxy-kernel-v38" && h[0] != "galaxy-kernel-v39" && h[0] != "galaxy-kernel-v40" && h[0] != "galaxy-kernel-v41" && h[0] != "galaxy-kernel-v44" && h[0] != "galaxy-kernel-v48" && h[0] != "galaxy-kernel-v49" && h[0] != "galaxy-kernel-v52" && h[0] != "galaxy-kernel-v53" && h[0] != "galaxy-kernel-v56" && h[0] != "galaxy-kernel-v57" && h[0] != "galaxy-kernel-v58" && h[0] != "galaxy-kernel-v59" && h[0] != "galaxy-kernel-v60" && h[0] != "galaxy-kernel-v61" && h[0] != "galaxy-kernel-v62" && h[0] != "galaxy-kernel-v63" && h[0] != "galaxy-kernel-v64" && h[0] != "galaxy-kernel-v65" && h[0] != "galaxy-kernel-v66" && h[0] != "galaxy-kernel-v67" && h[0] != "galaxy-kernel-v68" && h[0] != "galaxy-kernel-v69" && h[0] != "galaxy-kernel-v70" && h[0] != "galaxy-kernel-v71" && h[0] != "galaxy-kernel-v72" && h[0] != "galaxy-kernel-v73" && h[0] != "galaxy-kernel-v74" && h[0] != "galaxy-kernel-v75" && h[0] != "galaxy-kernel-v76" && h[0] != "galaxy-kernel-v77" && h[0] != "galaxy-kernel-v78" && h[0] != "galaxy-kernel-v79" && h[0] != "galaxy-kernel-v80" && h[0] != "galaxy-kernel-v81" && h[0] != "galaxy-kernel-v82" && h[0] != "galaxy-kernel-v83" && h[0] != "galaxy-kernel-v84" && h[0] != "galaxy-kernel-v85" && h[0] != "galaxy-kernel-v86" && h[0] != "galaxy-kernel-v87" && h[0] != "galaxy-kernel-v88" && h[0] != "galaxy-kernel-v89" && h[0] != "galaxy-kernel-v90" && h[0] != "galaxy-kernel-v91" && h[0] != "galaxy-kernel-v92" && h[0] != "galaxy-kernel-v93" && h[0] != "galaxy-kernel-v94" && h[0] != "galaxy-kernel-v95" && h[0] != "galaxy-kernel-v96" && h[0] != "galaxy-kernel-v97" && h[0] != "galaxy-kernel-v98" && h[0] != "galaxy-kernel-v99" && h[0] != "galaxy-kernel-v100" && h[0] != "galaxy-kernel-v101" && h[0] != "galaxy-kernel-v102" && h[0] != "galaxy-kernel-v103" && h[0] != "galaxy-kernel-v104") throw std::runtime_error("snapshot: unsupported version");
     const auto sys = u64(h[1]);
     if (sys == 0 || sys > std::numeric_limits<std::uint32_t>::max())
         throw std::runtime_error("snapshot: invalid system");
@@ -14537,7 +14541,8 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                                 throw std::runtime_error("snapshot: too many visitor receipts");
                             require_fields(f,receipts_offset+1+2*static_cast<std::size_t>(receipts)+
                                 (result.snapshot_version_>=87?1:0)+
-                                (result.snapshot_version_>=109?2:0));
+                                (result.snapshot_version_>=109?2:0)+
+                                (result.snapshot_version_>=136?3:0));
                         }else require_fields(f,duty_offset+1+static_cast<std::size_t>(duty));
                     }else require_fields(f,offset+1+static_cast<std::size_t>(visitors));
                 }else require_fields(f,17+static_cast<std::size_t>(count));
@@ -14549,16 +14554,26 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                                        std::uint32_t(rev)};
             PlanetaryShuttleState state{owner,ship,pilot,mass,water,food};
             if(result.snapshot_version_>=87)
-                state.nutrients_kg=i64(f[result.snapshot_version_>=109?
+                state.nutrients_kg=i64(f[result.snapshot_version_>=136?
+                                          f.size()-6:
+                                          result.snapshot_version_>=109?
                                           f.size()-3:f.size()-1]);
             if(result.snapshot_version_>=109) {
-                state.oxygen_kg=i64(f[f.size()-2]);
+                state.oxygen_kg=i64(f[f.size()-(result.snapshot_version_>=136?5:2)]);
                 if(state.oxygen_kg<0 || state.oxygen_kg>1000)
                     throw std::runtime_error("snapshot: invalid shuttle oxygen");
-                const auto module=u64(f.back());
+                const auto module=u64(f[f.size()-(result.snapshot_version_>=136?4:1)]);
                 if(module>1)
                     throw std::runtime_error("snapshot: invalid shuttle module rack");
                 state.housing_module=std::uint8_t(module);
+            }
+            if(result.snapshot_version_>=136) {
+                for(std::size_t i=0;i<3;++i) {
+                    state.regional_geology_kg[i]=i64(f[f.size()-3+i]);
+                    if(state.regional_geology_kg[i]<0 ||
+                       state.regional_geology_kg[i]>1000)
+                        throw std::runtime_error("snapshot: invalid physical geological shuttle mass");
+                }
             }
             if(result.snapshot_version_>=81) {
                 const auto phase=u64(f[11]);
@@ -14635,6 +14650,9 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                mass!=4 || water<0 || food<0 || state.nutrients_kg<0 ||
                water>1000 || food>1000-water ||
                state.nutrients_kg>1000-water-food ||
+               state.regional_geology_kg[0]+state.regional_geology_kg[1]+
+                 state.regional_geology_kg[2]>
+                 1000-water-food-state.nutrients_kg-state.oxygen_kg ||
                result.planetary_shuttles_.size()>=10000 ||
                !result.planetary_shuttles_.emplace(key,state).second)
                 throw std::runtime_error("snapshot: invalid shuttle custody");
@@ -20080,6 +20098,11 @@ std::int64_t Simulation::total_ore() const {
            v.nutrients_kg>1000-v.water_kg-v.food_kg ||
            v.oxygen_kg<0 ||
            v.oxygen_kg>1000-v.water_kg-v.food_kg-v.nutrients_kg ||
+           v.regional_geology_kg[0]<0 || v.regional_geology_kg[1]<0 ||
+           v.regional_geology_kg[2]<0 ||
+           v.regional_geology_kg[0]+v.regional_geology_kg[1]+
+             v.regional_geology_kg[2]>
+             1000-v.water_kg-v.food_kg-v.nutrients_kg-v.oxygen_kg ||
            v.housing_module>1 ||
            !colony_ships_.count(v.source_ship) ||
            total>std::numeric_limits<std::int64_t>::max()-v.dry_mass_ore)
