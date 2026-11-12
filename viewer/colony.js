@@ -496,11 +496,26 @@
         soilKg=numeric(v[9],100000000),
         mineralKg=numeric(v[10],100000000),
         volatileKg=numeric(v[11],100000000);
-      if(!id||!revision || ![waterKg,soilKg,mineralKg,volatileKg].some(Boolean) ||
-         [waterKg,soilKg,mineralKg,volatileKg].some(n=>n%1000))
+      if(!id||!revision || [waterKg,soilKg,mineralKg,volatileKg].some(n=>n%1000))
         throw Error('Invalid original physical region source stock');
       return {...e,id,latitude,longitude,revision,
         waterKg,soilKg,mineralKg,volatileKg};
+    }
+    if(t==='PLANET_SOURCE_TRANSFER'){
+      if(v.length!==14)throw Error('Malformed geological transfer receipt');
+      const id=numeric(v[4],Number.MAX_SAFE_INTEGER),
+        latitude=numeric(v[5],35),longitude=numeric(v[6],71),
+        revision=numeric(v[7],100000),requestId=numeric(v[8],(2**50)-1),
+        resource=v[9],phase=numeric(v[10],2),
+        kg=numeric(v[11],10000),worker=numeric(v[12],Number.MAX_SAFE_INTEGER),
+        generation=numeric(v[13],Number.MAX_SAFE_INTEGER);
+      if(!id||!revision||!requestId||!worker||!generation||
+         !['WATER','SOIL','MINERAL','VOLATILE'].includes(resource) ||
+         (resource==='WATER'?![0,2].includes(phase):phase!==0) ||
+         kg<1000||kg%1000)
+        throw Error('Invalid geological source receipt');
+      return {...e,id,latitude,longitude,revision,requestId,resource,
+        phase,kg,worker,generation};
     }
     if(t==='PLANET_PHYSICAL'){
       // Actual conserved source kg, never model rainfall or mining authority.
@@ -1827,7 +1842,46 @@
              q('signatureFeedback').textContent=
                'Operation requested. A native survey of this exact region is required.';
            });
-           actions.append(caption,choice,firstNpc,secondNpc,crewButton,statusButton,policySelect,policyButton,perform);
+           // S6-D5 explicit original geological source, never OasisReserve.
+           const sourceChoice=document.createElement('select');
+           sourceChoice.setAttribute('aria-label','Finite geological resource');
+           for(const [label,kind,phase] of [
+             ['Liquid surface water','WATER',0],['Groundwater','WATER',2],
+             ['Topsoil','SOIL',0],['Minerals','MINERAL',0],
+             ['Volatiles','VOLATILE',0]])sourceChoice.add(new Option(label,kind+':'+phase));
+           const sourceKg=document.createElement('input');
+           sourceKg.type='number';sourceKg.min='1000';sourceKg.max='10000';
+           sourceKg.step='1000';sourceKg.value='1000';
+           sourceKg.setAttribute('aria-label','Original source kilograms');
+           const sourceWorker=document.createElement('input');
+           sourceWorker.type='number';sourceWorker.min='1';sourceWorker.step='1';
+           sourceWorker.placeholder='Certified on-site worker ID';
+           sourceWorker.setAttribute('aria-label','Qualified source extraction NPC ID');
+           const sourceButton=document.createElement('button');
+           sourceButton.type='button';sourceButton.textContent='Extract finite planetary deposit';
+           let sourceCounter=0;
+           sourceButton.addEventListener('click',()=>{
+             const lat=Number(latitude.value),lon=Number(longitude.value),
+               kg=Number(sourceKg.value),worker=Number(sourceWorker.value);
+             if(!Number.isSafeInteger(lat)||lat<0||lat>=36||
+                !Number.isSafeInteger(lon)||lon<0||lon>=72||
+                !Number.isSafeInteger(kg)||kg<1000||kg>10000||kg%1000||
+                !Number.isSafeInteger(worker)||worker<=0){
+               q('signatureFeedback').textContent=
+                 'Select a valid surveyed cell, certified NPC and whole tonnes.';
+               return;
+             }
+             const [resource,phase]=sourceChoice.value.split(':');
+             const requestId=Date.now()*128+(++sourceCounter%128);
+             window.GalaxyColonyCommand?.('colonyPlanetGeoExtract',
+               {body:body.id,latitude:lat,longitude:lon,resource,
+                phase:Number(phase),kg,worker,requestId});
+             q('signatureFeedback').textContent=
+               'Requested. Native equipment, actual worker, power and original '+
+               'geological stock checks determine whether this can execute.';
+           });
+           actions.append(caption,choice,firstNpc,secondNpc,crewButton,statusButton,policySelect,policyButton,perform,
+             sourceChoice,sourceKg,sourceWorker,sourceButton);
            const shuttlePanel=document.createElement('details');
            const shuttleTitle=document.createElement('summary');
            shuttleTitle.textContent='Orbital shuttle / surface logistics';
@@ -2306,6 +2360,13 @@
           '), world generation '+e.generation+
           '. Use Check spaceport progress for the current state.';
      }
+     if(e.type==='PLANET_SOURCE_TRANSFER'){
+       q('signatureFeedback').textContent=
+         'Original finite source transfer committed: '+e.kg+'kg '+e.resource+
+         ' to the actual planetary site by worker #'+e.worker+
+         '; request '+e.requestId+', generation '+e.generation+
+         '. Further orbital cargo movement requires a real shuttle.';
+     }
      if(e.type==='PLANET_REGION'){
        const seasonalKey=[e.id,e.latitude,e.longitude,e.revision].join(':');
        if(discoveredSeasonalSites.size()>=64)
@@ -2335,7 +2396,7 @@
          e.soilKg+'kg soil, '+e.mineralKg+'kg minerals and '+
          e.volatileKg+'kg volatiles. This is owner-authorized geological '+
          'observation only; physical extraction and transport require a '+
-         'future approved native facility, workers and conservation receipts.';
+         'completed native machinery, a qualified worker, power and durable receipts.';
      }
      if(e.type==='PLANET_PHYSICAL'){
        const key=[e.id,e.latitude,e.longitude,e.revision].join(':');
