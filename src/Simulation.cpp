@@ -13593,18 +13593,21 @@ std::string Simulation::canonical_state() const {
            <<'|'<<origin.y.sector<<'|'<<origin.y.millimeters
            <<'|'<<origin.z.sector<<'|'<<origin.z.millimeters<<'\n';
     if(snapshot_version_>=68)out<<"probelatency|"<<probe_report_delay_ticks_<<'\n';
-    if(snapshot_version_>=70)for(const auto& [system,bodies]:physical_celestial_systems_)
-        for(const auto& body:bodies)
-            out<<"celestial|"<<system<<'|'<<body.id<<'|'<<unsigned(body.kind)<<'|'
-               <<body.parent_id<<'|'<<body.orbital_radius_milli_au<<'|'
-               <<body.position.x_mm<<'|'<<body.position.y_mm<<'|'
-               <<body.position.z_mm<<'|'<<body.physical_radius_mm;
-            if(snapshot_version_>=134)out<<'|'<<body.physical_mass_1e18_kg;
-            if(snapshot_version_>=135)
-                out<<'|'<<body.atmosphere_pressure_pa
-                   <<'|'<<body.atmosphere_oxygen_permille
-                   <<'|'<<unsigned(body.atmosphere_toxic);
-            out<<'\n';
+    if(snapshot_version_>=70)
+        for(const auto& [system,bodies]:physical_celestial_systems_) {
+            for(const auto& body:bodies) {
+                out<<"celestial|"<<system<<'|'<<body.id<<'|'<<unsigned(body.kind)<<'|'
+                   <<body.parent_id<<'|'<<body.orbital_radius_milli_au<<'|'
+                   <<body.position.x_mm<<'|'<<body.position.y_mm<<'|'
+                   <<body.position.z_mm<<'|'<<body.physical_radius_mm;
+                if(snapshot_version_>=134)out<<'|'<<body.physical_mass_1e18_kg;
+                if(snapshot_version_>=135)
+                    out<<'|'<<body.atmosphere_pressure_pa
+                       <<'|'<<body.atmosphere_oxygen_permille
+                       <<'|'<<unsigned(body.atmosphere_toxic);
+                out<<'\n';
+            }
+        }
     if(snapshot_version_>=127) {
         for(const auto& [body,gen]:planetary_genesis_) {
             (void)body;
