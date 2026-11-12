@@ -11330,6 +11330,22 @@ void PersistentWorld::ensure_ship_frame_registry() {
     world_.swap(next);
     ++generation_;
 }
+void PersistentWorld::ensure_planetary_genesis_manifest(FailPoint fail) {
+    // Never provision missing matter while upgrading an existing save.
+    // The original SQLite world generation and complete canonical hash are
+    // committed before publishing the new v127 immutable source manifest.
+    auto next=world_;
+    const auto prior_mass=world_.total_ore();
+    next.ensure_planetary_genesis_manifest();
+    if(next.total_ore()!=prior_mass ||
+       next.total_ore()!=resource_origin_)
+        throw std::logic_error("planetary migration changed original physical resources");
+    if(next.canonical_state()==world_.canonical_state())return;
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);
+    ++generation_;
+}
 void PersistentWorld::ensure_physical_celestial_systems() {
     auto next=world_;
     next.ensure_physical_celestial_systems();
