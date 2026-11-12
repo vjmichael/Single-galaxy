@@ -5,6 +5,7 @@ const SGDX_LAUNCH := preload("res://world/sgdx_process_launch.gd")
 signal decision_ready(result: Dictionary)
 signal recovery_blocked(reason: String)
 const MAX_LINE := 256
+const MAX_PROBE_MS := 5000
 var _pid := -1
 var _active := false
 var _stdout: FileAccess
@@ -13,6 +14,8 @@ var _buffer := PackedByteArray()
 var _frame: Dictionary = {}
 var _error := ""
 var _save := ""
+var _started_ms := 0
+var _kill_issued := false
 
 static func parse_frame(line: String) -> Dictionary:
     var f := line.split("|",false)
@@ -37,9 +40,9 @@ static func parse_frame(line: String) -> Dictionary:
             ship<0 or body<0 or lat<0 or lat>=36 or \
             lon<0 or lon>=72 or site<0 or phase not in [0,1,2,3]:
         return {}
-    if role==1 and (state!=4 or body!=0 or site!=0 or phase!=0):
+    if role==1 and (state!=4 or ship!=0 or body!=0 or lat!=0 or lon!=0 or site!=0 or phase!=0):
         return {}
-    if role==2 and (state!=0 or ship==0 or body!=0 or site!=0 or phase!=0):
+    if role==2 and (state!=0 or ship==0 or body!=0 or lat!=0 or lon!=0 or site!=0 or phase!=0):
         return {}
     if role==3 and (state not in [5,6] or ship==0 or body==0 or \
             site==0 or (state==5 and phase not in [0,2]) or \
@@ -84,6 +87,8 @@ func start(save: String) -> bool:
     _buffer.clear()
     _error=""
     _active=true
+    _started_ms=Time.get_ticks_msec()
+    _kill_issued=false
     return true
 
 func poll() -> void:
@@ -112,6 +117,12 @@ func poll() -> void:
     # Do not admit the next writer merely because RFRAME appeared on stdout.
     # The SGDX parent and its OS-custodied child must BOTH have exited.
     if _pid>0 and OS.is_process_running(_pid):
+        if Time.get_ticks_msec()-_started_ms>MAX_PROBE_MS:
+            if not _kill_issued:
+                _error="Original recovery probe exceeded native timeout; writer remains locked until OS exit"
+                _kill_issued=true
+                recovery_blocked.emit(_error)
+            OS.kill(_pid) # kill SGDX guardian; no replacement writer yet
         return
     var valid := not _frame.is_empty() and _error.is_empty() and _buffer.is_empty()
     var decision := _frame.duplicate(true)
