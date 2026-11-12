@@ -123,6 +123,8 @@ try {
     CHECK(onfoot.surface_pose.y_mm==
           std::int64_t(source->landscape.region.elevation)*1000);
     CHECK(onfoot.surface_pose.last_move_receipt==82001);
+    CHECK(onfoot.surface_pose.surface_location==
+          world.world().planetary_sites().at(key).surface_location);
     const stage6::RenderTileAddress mesh_tile{
         static_cast<std::uint8_t>(std::min<unsigned>(selected.lat/7,4)),
         static_cast<std::uint8_t>(selected.lon/6),1};
