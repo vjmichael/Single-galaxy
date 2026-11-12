@@ -30,3 +30,14 @@ The Godot scene polls the operator-selected file every half-second. After valida
 After each complete accepted tile batch, the client captures 300 frame deltas and records client p50/p95/p99/max together with resident tile count, exact original body/generation/hash, the Godot-reported graphics adapter/vendor and rendering driver. Empty adapter fields in headless runs are not physical GPU acceptance. A physical **Radeon AI Pro R9700** test needs an actual Windows Godot run, saved evidence of those fields and observed camera/collision/LOD behavior; this source change alone cannot claim it.
 
 WO3-F historical SQLite migration remains a separately mandatory acceptance gate: no modern snapshot, simulated SQLite provenance or source-only CTest can replace the genuine v86 native archive and SHA-256 inputs.
+
+## S6-F original NPC landing and bounded inspection (source staged; not player arrival)
+
+The S6-F branch adds a **read-only** `--landed=LAT,LON,1` option to the original world exporter. It is accepted **only** while the existing original, owner-controlled, named-NPC-piloted shuttle has completed its physical descent to a constructed planetary spaceport and its one-use native descent receipt remains current. Without explicit tile addresses the exporter selects that original landing region's own mesh band. The original SQLite source is opened `SQLITE_OPEN_READONLY` through `PersistentWorld::recover_copy`; the restored working copy is temporary and any separate Godot polygon collision is not world authority.
+
+```text
+galaxy_stage6_godot_export EXISTING.sqlite OWNER_ID SCANNER_SHIP_ID BODY_ID stage6.json --landed=LAT,LON,1
+godot --path godot/stage6 -- --packet stage6.json
+```
+
+When this packet's original receipt, pilot NPC and original surface location are all valid and the referenced landing tile is actually present, `SurfaceInspector.gd` opens a Godot **local inspection character** with WASD/arrow movement, mouse look, Esc cursor release, spherical visual gravity and native-mesh-derived local collision. Its HUD explicitly identifies it as **NOT the original player**. On return/ascent, stale or mismatched native packets do not grant continued inspection. No packet can create world resources, approve a player landing, store native footsteps or cause an original ship or NPC to teleport. Full real player transport, source-authoritative terrain-walk receipts, live installed-game integration, latitude polar caps, Windows/Linux native and physical R9700 acceptance remain OPEN. See `docs/engineering/STAGE06F_PLANET_ARRIVAL_TERRAIN_20261111.md`.
