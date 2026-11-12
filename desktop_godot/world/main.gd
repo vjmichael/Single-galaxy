@@ -529,8 +529,13 @@ func _retry_original_station() -> void:
 		_on_native_player_status("Previous native recovery is still reconciling")
 		return
 	var save := _planet_current_save
-	if not save.is_empty() and FileAccess.file_exists(save):
-		_begin_native_planet_recovery(save)
+	if not save.is_empty():
+		if FileAccess.file_exists(save):
+			_begin_native_planet_recovery(save)
+		else:
+			_on_planet_recovery_blocked("The previously selected original save disappeared; select a verified source with F9")
+	elif _planet_recovery_blocked:
+		_on_native_player_status("Multiple or corrupt originals cannot be resolved by station Retry; choose the intended SQLite file with F9")
 	else:
 		_on_native_player_status("Retrying your saved station without resetting the world...")
 		_schedule_native_handoff("station",native_station_session.process_id())
