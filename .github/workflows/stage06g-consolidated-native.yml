@@ -1,0 +1,127 @@
+name: S6-G exact-head native consolidation and Godot source admission
+# This branch is the explicit S6-G functional closeout integration point.
+# The first push containing this workflow runs one Windows/Linux matrix.
+# No PR merge, release or automatic installation is authorized.
+on:
+  push:
+    branches: [sg/stage6f5e-installed-terrain-recovery-20261112]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: s6g-exact-head-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  native:
+    name: Original native + SQLite (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2022]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 115
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - name: Exact source HEAD, never synthetic merge
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test -z "$(git status --porcelain)"
+          git show -s --format='%H %s'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Linux native SQLite and Ninja
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libsqlite3-dev ninja-build
+      - name: Windows native SQLite SDK
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $root=$env:VCPKG_INSTALLATION_ROOT
+          if(-not $root){$root='C:\vcpkg'}
+          & (Join-Path $root 'vcpkg.exe') install sqlite3:x64-windows --classic
+          if($LASTEXITCODE -ne 0){throw 'Windows original SQLite SDK failed'}
+          "SG_TOOLCHAIN=$(Join-Path $root 'scripts\buildsystems\vcpkg.cmake')" >> $env:GITHUB_ENV
+          (Join-Path $root 'installed\x64-windows\bin') >> $env:GITHUB_PATH
+      - name: Configure exact Linux original world
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          cmake -S . -B build/stage06g -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON -DBUILD_BENCHMARKS=OFF
+      - name: Configure exact Windows original world
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          cmake -S . -B build/stage06g -G "Visual Studio 17 2022" -A x64 "-DCMAKE_TOOLCHAIN_FILE=$env:SG_TOOLCHAIN" -DBUILD_TESTING=ON -DBUILD_BENCHMARKS=OFF
+          if($LASTEXITCODE -ne 0){throw 'Windows original C++ configuration failed'}
+      - name: One consolidated native compile, CTest discovery and Stage 6/industry matrix
+        shell: bash
+        run: |
+          set -euo pipefail
+          python tests/Stage06GNativeAcceptanceBatch.py --source . --build build/stage06g --config Release --output stage06g-native-acceptance.json
+      - name: Retain original native receipt and failure logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage06g-native-${{ matrix.os }}-${{ github.sha }}
+          path: |
+            stage06g-native-acceptance.json
+            build/stage06g/Testing/Temporary/LastTest.log
+            build/stage06g/Testing/Temporary/LastTestsFailed.log
+          if-no-files-found: warn
+          retention-days: 14
+
+  godot-source:
+    name: Godot 4.7.2 script import and parse (not installed-human acceptance)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - name: Verify exact source and acquire pinned upstream Godot
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          mkdir -p "$RUNNER_TEMP/s6g-godot" stage06g-godot
+          curl --fail --location --retry 3 --retry-delay 5 --connect-timeout 20 --max-time 180 \
+            -o "$RUNNER_TEMP/s6g-godot/godot.zip" \
+            https://github.com/godotengine/godot-builds/releases/download/4.7.2-stable/Godot_v4.7.2-stable_linux.x86_64.zip
+          echo "cadd3204e728a35d3f13adb7fd0d7902636b79f6b95c40c265eb73b6c35329e4  $RUNNER_TEMP/s6g-godot/godot.zip" | sha256sum -c -
+          unzip -oq "$RUNNER_TEMP/s6g-godot/godot.zip" -d "$RUNNER_TEMP/s6g-godot"
+          chmod +x "$RUNNER_TEMP/s6g-godot/Godot_v4.7.2-stable_linux.x86_64"
+          "$RUNNER_TEMP/s6g-godot/Godot_v4.7.2-stable_linux.x86_64" --version
+      - name: Parse real original Godot on-foot scene and NPC source protocol
+        shell: bash
+        run: |
+          set -euo pipefail
+          G="$RUNNER_TEMP/s6g-godot/Godot_v4.7.2-stable_linux.x86_64"
+          timeout --signal=TERM --kill-after=8s 160s "$G" --headless --path desktop_godot --editor --quit >stage06g-godot/editor.log 2>&1
+          timeout --signal=TERM --kill-after=8s 100s "$G" --headless --path desktop_godot --quit-after 5 >stage06g-godot/scene.log 2>&1
+          if grep -E 'SCRIPT ERROR:|ERROR: Failed to load script|Parse Error:' stage06g-godot/*.log; then
+            echo "Actual Godot source parse failed; do NOT claim installed acceptance" >&2
+            exit 1
+          fi
+      - name: Preserve Godot script parser evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage06g-godot-source-${{ github.sha }}
+          path: stage06g-godot/*.log
+          if-no-files-found: warn
+          retention-days: 14
