@@ -2273,6 +2273,21 @@ endif()
 # No Python/browser/HTTP relay; client inputs are bounded and identity is not client-selected.
 add_executable(galaxy_desktop_player_host src/desktop_player_host.cpp)
 target_link_libraries(galaxy_desktop_player_host PRIVATE galaxy_fp3d02c_interior)
+# S6-F5-E: genuine landed ORIGINAL native host, autonomous SQLite ticks,
+# forced process death, no offline replay, fresh epoch, and journal readback.
+# This does not replace installed Godot/SGDX/physical Windows acceptance.
+if(BUILD_TESTING AND Python3_Interpreter_FOUND)
+  add_executable(galaxy_stage6f5e_planet_host_fixture
+    tests/STAGE6F5E_PlanetHostFixture.cpp)
+  target_link_libraries(galaxy_stage6f5e_planet_host_fixture PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_stage6f5e_planet_host_recovery
+    COMMAND ${Python3_EXECUTABLE}
+      ${CMAKE_CURRENT_SOURCE_DIR}/tests/STAGE6F5E_PlanetHostRecoveryTests.py
+      $<TARGET_FILE:galaxy_stage6f5e_planet_host_fixture>
+      $<TARGET_FILE:galaxy_desktop_player_host>)
+  set_tests_properties(galaxy_stage6f5e_planet_host_recovery
+    PROPERTIES TIMEOUT 300 LABELS "stage6;native;sqlite;host-crash-recovery")
+endif()
 if(BUILD_TESTING AND Python3_Interpreter_FOUND)
   add_test(NAME galaxy_stage6f5c_original_planet_host_refusal
     COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/STAGE6F5C_PlanetHostNoGenesisTests.py
