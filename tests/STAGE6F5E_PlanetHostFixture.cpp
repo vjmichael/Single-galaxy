@@ -45,7 +45,7 @@ static void act(PersistentWorld& w,EntityId ship,std::uint64_t id,
     REQUIRE(w.world().events().back().command_id==id &&
             w.world().events().back().result==Outcome::Applied);
 }
-static void create_landed_world(const std::string& file){
+static void create_landed_world(const std::string& file,bool land=true){
     REQUIRE(!fs::exists(fs::u8path(file)));
     const auto selected=choose();
     const PlanetarySiteKey key{selected.body,selected.lat,selected.lon,1};
@@ -83,6 +83,11 @@ static void create_landed_world(const std::string& file){
     REQUIRE(world.build_planetary_shuttle(7,ship,key));
     REQUIRE(world.assign_planetary_shuttle_pilot(7,ship,key,crew[2]));
     REQUIRE(world.load_planetary_shuttle(7,ship,key,ShuttleCargo::Water,10));
+    if(!land){
+        REQUIRE(world.world().player_people().at(7).state==
+                PlayerPersonState::AboardOwnShip);
+        return; // original real constructed site and orbit shuttle, NO landing
+    }
     REQUIRE(world.planetary_player_shuttle_action(
         7,ship,key,PlanetaryPlayerAction::Board,81101));
     REQUIRE(world.launch_planetary_shuttle(7,ship,key,81234,false));
@@ -107,16 +112,41 @@ static void inspect(const std::string& file){
              <<p.surface_pose.x_mm<<'|'<<p.surface_pose.y_mm<<'|'
              <<p.surface_pose.z_mm<<'|'<<original.state_hash()<<"\n";
 }
+static void inspect_transfer(const std::string& file) {
+    REQUIRE(fs::exists(fs::u8path(file)));
+    PersistentWorld world(file,Simulation(0xC021));
+    const auto& p=world.world().player_people().at(7);
+    REQUIRE(p.home_ship>0);
+    std::uint64_t phase=0,site_id=0;
+    for(const auto& [key,shuttle]:world.world().planetary_shuttles()){
+        if(shuttle.source_ship!=p.home_ship||shuttle.owner!=7)continue;
+        phase=shuttle.flight_phase;
+        const auto it=world.world().planetary_sites().find(key);
+        REQUIRE(it!=world.world().planetary_sites().end());
+        site_id=it->second.surface_location;
+        break;
+    }
+    REQUIRE(site_id>0);
+    std::cout<<"TRANSFER|"<<unsigned(p.state)<<'|'<<phase<<'|'
+        <<world.world().tick()<<'|'<<world.generation()<<'|'
+        <<p.home_ship<<'|'<<p.planet_body<<'|'
+        <<p.planet_descent_receipt<<'|'<<p.planet_ascent_receipt<<'|'
+        <<world.world().total_ore()<<'|'<<world.world().state_hash()<<"\n";
+}
 int main(int argc,char** argv){
     try{
-        if(argc!=3)throw std::invalid_argument("usage: fixture --seed|--inspect PATH");
+        if(argc!=3)throw std::invalid_argument("usage: fixture --seed|--seed-orbit|--inspect|--inspect-transfer PATH");
         const std::string mode=argv[1],file=argv[2];
         if(file.empty()||file.size()>1024)
             throw std::invalid_argument("invalid fixture SQLite path");
         if(mode=="--seed"){
             create_landed_world(file);
             inspect(file);
+        }else if(mode=="--seed-orbit"){
+            create_landed_world(file,false);
+            inspect_transfer(file);
         }else if(mode=="--inspect")inspect(file);
+        else if(mode=="--inspect-transfer")inspect_transfer(file);
         else throw std::invalid_argument("unknown fixture mode");
         return 0;
     }catch(const std::exception& e){
