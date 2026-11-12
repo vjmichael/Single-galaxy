@@ -16,7 +16,7 @@ static void clean(const std::string& path){
         std::error_code ec;fs::remove(path+extension,ec);
     }
 }
-static void dock(PersistentWorld& world,EntityId ship,
+static void dock_ship(PersistentWorld& world,EntityId ship,
                  EntityId station,std::uint64_t cmd){
     Command c{};
     c.id=cmd;c.sequence=cmd;c.issuer=7;
@@ -62,9 +62,9 @@ int main(int argc,char** argv){
             CHECK(employee && guest && employee!=guest);
             original_count=initial.npc_records().size();
             PersistentWorld world(db,std::move(initial));
-            dock(world,home,from,31501);
-            dock(world,ferry,from,31502);
-            dock(world,receiving,to,31503);
+            dock_ship(world,home,from,31501);
+            dock_ship(world,ferry,from,31502);
+            dock_ship(world,receiving,to,31503);
             dock::Ledger staff(db);
             dock04::Traffic boarding(db);
             dock05::Routes journeys(db);
