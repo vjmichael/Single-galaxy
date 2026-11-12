@@ -113,10 +113,11 @@ staging alone is not passing acceptance.
 1. Cross-region watershed runoff, groundwater connectivity, ocean exchange
    and sediment movement require independent physical region-to-region debit
    and credit under the same original world transaction.
-2. S6-E: ecology, actual crops, sustained environmental costs, worker duty
-   and broader facility/industry coupling. Non-water collected geology must
-   be moved through later actual shuttle/freight goods support, not by
-   teleporting site-local source inventories into a ship.
+2. S6-E core ecology/industry source integration now staged in v130:
+   crop soil/moisture and hazard constraints, actual utility power, worker
+   availability, extracted on-site soil and WO4 original shortage observation.
+   Full ecological succession and onward original non-water shuttle/freight
+   remain OPEN. See [S6-E ledger](STAGE06E_ECOLOGY_INDUSTRY_20261111.md).
 3. S6-G: consolidated exact-head Windows/Linux kernel, native-host, CTest,
    SQLite recovery/corruption, long-running performance, Godot installed,
    owner physical Radeon and human acceptance. All OPEN.
