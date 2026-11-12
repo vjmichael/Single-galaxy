@@ -1429,6 +1429,12 @@ if(BUILD_TESTING)
         --script res://tests/stage6f5e_terrain_renderer_smoke.gd)
     set_tests_properties(galaxy_stage6f5e_godot_tile_window
       PROPERTIES TIMEOUT 45 LABELS "stage6;godot;renderer-source-only")
+    add_test(NAME galaxy_stage6f5f_godot_shuttle_source
+      COMMAND ${SG_STAGE6F5E_GODOT} --headless
+        --path ${CMAKE_CURRENT_SOURCE_DIR}/desktop_godot
+        --script res://tests/stage6f5f_transfer_panel_smoke.gd)
+    set_tests_properties(galaxy_stage6f5f_godot_shuttle_source
+      PROPERTIES TIMEOUT 45 LABELS "stage6;godot;shuttle-source-only")
   endif()
   find_program(SG_STAGE6F5_NODE NAMES node node.exe)
   if(SG_STAGE6F5_NODE)
