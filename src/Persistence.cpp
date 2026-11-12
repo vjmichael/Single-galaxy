@@ -11258,6 +11258,47 @@ bool PersistentWorld::unload_planetary_shuttle(PlayerId owner,EntityId ship,cons
     return true;
 }
 
+// S6-D7: each original physical cargo leg is transactionally committed
+// with the same one-writer SQLite CAS, resource origin and rollback fence.
+bool PersistentWorld::load_planetary_geology_shuttle(
+    PlayerId owner,EntityId ship,const PlanetarySiteKey& key,
+    PlanetaryResource resource,std::int64_t kg,std::uint64_t request_id,
+    FailPoint fail) {
+    for(const auto& [id,p]:world_.pending_celestial_transits_){
+        (void)id;
+        if(p.ship==ship)return false;
+    }
+    auto next=world_;
+    if(!next.load_planetary_geology_shuttle(owner,ship,key,resource,kg,request_id))
+        return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("geological shuttle loading altered original mass");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);
+    ++generation_;
+    return true;
+}
+bool PersistentWorld::unload_planetary_geology_shuttle(
+    PlayerId owner,EntityId ship,const PlanetarySiteKey& key,
+    PlanetaryResource resource,std::int64_t kg,std::uint64_t request_id,
+    FailPoint fail) {
+    for(const auto& [id,p]:world_.pending_celestial_transits_){
+        (void)id;
+        if(p.ship==ship)return false;
+    }
+    auto next=world_;
+    if(!next.unload_planetary_geology_shuttle(owner,ship,key,resource,kg,request_id))
+        return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("geological shuttle unloading altered original mass");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);
+    ++generation_;
+    return true;
+}
+
 bool PersistentWorld::assign_planetary_shuttle_pilot(PlayerId owner,EntityId ship,const PlanetarySiteKey& key,std::uint64_t npc,FailPoint fail) {
     for(const auto& [id,p]:world_.pending_celestial_transits_) {
         (void)id;
