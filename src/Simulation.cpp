@@ -12137,7 +12137,8 @@ void Simulation::process_planetary_surface_operations() {
             const auto crop=snapshot_version_>=130?
                 planetary::cultivation_budget(phase,biosphere,
                     site.utility_phase==2 && site.farm &&
-                    site.equipment_condition>0,site.stored_electricity):
+                    site.equipment_condition>0,site.stored_electricity,
+                    site.regional_geology_kg[0]>=100):
                 planetary::CultivationBudget{planetary::CropMode::Field,
                     planetary::PhysicalHazard::None,10,5,12,3,0};
             if(site.workforce_policy==1 && site.farm &&
@@ -12325,7 +12326,8 @@ bool Simulation::cultivate_planetary_site(PlayerId owner,EntityId ship,
         const bool biosphere=gen!=planetary_genesis_.end() &&
             gen->second.envelope.biosphere_present;
         plan=planetary::cultivation_budget(phase,biosphere,
-            facility.utility_phase==2,facility.stored_electricity);
+            facility.utility_phase==2,facility.stored_electricity,
+            facility.regional_geology_kg[0]>=100);
         if(plan.mode==planetary::CropMode::Blocked)return false;
     }
     if(facility.water_kg<plan.water_kg*batches ||

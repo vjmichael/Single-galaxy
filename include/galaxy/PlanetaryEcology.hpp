@@ -31,7 +31,8 @@ inline bool can_harvest_open_field(const PhysicalEnvironment* state,
 }
 inline CultivationBudget cultivation_budget(
     const PhysicalEnvironment* state,bool native_biosphere,
-    bool controlled_facility_ready,std::int64_t stored_electricity) {
+    bool controlled_facility_ready,std::int64_t stored_electricity,
+    bool contained_original_soil=false) {
     const auto risk=site_physical_hazard(state);
     if(surface_work_hazard(risk))return {};
     if(can_harvest_open_field(state,native_biosphere))
@@ -39,13 +40,17 @@ inline CultivationBudget cultivation_budget(
     // Hydroponics is an explicitly POWERED original installed farm, not
     // a claim that an uninhabited world spontaneously grows plants.
     if(!controlled_facility_ready)return {};
-    const auto power=(risk==PhysicalHazard::Cold ||
-                      risk==PhysicalHazard::Heat ||
-                      risk==PhysicalHazard::Drought)?3:2;
+    const auto stressed=(risk==PhysicalHazard::Cold ||
+                         risk==PhysicalHazard::Heat ||
+                         risk==PhysicalHazard::Drought);
+    // The exact physically extracted site-local soil bed is a reusable
+    // medium for this installed farm; it is not consumed or minted as a crop.
+    const auto base_power=stressed?3:2;
+    const auto power=base_power-(contained_original_soil?1:0);
     if(stored_electricity<power)return {};
     // Stress converts LESS of the same original inputs into usable food.
     // The withheld mass remains in the site's existing wastewater inventory.
-    const auto food=power==3?10:11;
+    const auto food=(stressed?10:11)+(contained_original_soil?1:0);
     const CultivationBudget result{CropMode::Controlled,risk,10,5,food,
                                   15-food,power};
     if(result.water_kg+result.nutrients_kg!=

@@ -58,6 +58,14 @@ static void assessment(){
     CHECK(crop.mode==CropMode::Controlled && crop.food_kg==11 &&
           crop.wastewater_kg==4 && crop.electricity_units==2);
     CHECK(crop.food_kg+crop.wastewater_kg==15);
+    // The real site-local finite SOIL inventory becomes a physical growing
+    // medium. It reduces utility costs and improves recovery but creates
+    // neither additional site soil nor extra mass.
+    crop=cultivation_budget(nullptr,false,true,1,true);
+    CHECK(crop.mode==CropMode::Controlled && crop.electricity_units==1 &&
+          crop.food_kg==12 && crop.wastewater_kg==3);
+    CHECK(crop.water_kg+crop.nutrients_kg==
+          crop.food_kg+crop.wastewater_kg);
     // Unfunded local geological deposits do not become crops or water.
     CHECK(cultivation_budget(nullptr,true,false,120).mode==CropMode::Blocked);
     CHECK(cultivation_budget(nullptr,true,true,1).mode==CropMode::Blocked);
