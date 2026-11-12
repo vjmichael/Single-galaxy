@@ -1,6 +1,7 @@
 #include "galaxy/StationRefineryBatch.hpp"
 #include "galaxy/Industry01Catalog.hpp"
 #include "galaxy/Simulation.hpp"
+#include "galaxy/PlanetarySurfaceMovement.hpp"
 #include "galaxy/NativeStationWalkGeometry.hpp"
 #include "galaxy/GalacticCoordinates.hpp"
 #include "galaxy/NativeSweptCollision.hpp"
@@ -9667,7 +9668,9 @@ bool Simulation::station_player_action(PlayerId owner,EntityId station,
         EntityId ship,StationPlayerAction action,std::int64_t dx,
         std::int64_t dz,std::uint64_t receipt){
     if(!owner||owner==kServerAuthority||!station||!receipt||snapshot_version_<120||
-       receipt>=(std::uint64_t{1}<<60))return false;
+       receipt>=(std::uint64_t{1}<<60) ||
+       surface_move_receipts_.count(receipt) ||
+       player_planet_receipts_.count(receipt))return false;
     auto it=player_people_.find(owner);
     const auto* site=find(station);
     if(it==player_people_.end()||!site||site->type!=EntityType::Station)return false;
@@ -11543,6 +11546,10 @@ bool Simulation::transfer_planetary_shuttle_visitor(PlayerId owner,EntityId ship
         (void)child;
         if(dependent.guardian_id==npc)return false;
     }
+    if(reboard && person->second.surface_pose.last_move_receipt &&
+       !planetary::surface_motion::near_shuttle_hatch(
+           person->second.surface_pose.x_mm,
+           person->second.surface_pose.z_mm))return false;
     // Legal settlers cannot bypass the original consent-and-departure
     // receipt path by requesting an ordinary shuttle reboard.
     if(reboard && person->second.legal_residence()==transport::Endpoint{
@@ -11604,6 +11611,7 @@ bool Simulation::planetary_player_shuttle_action(PlayerId owner,EntityId ship,
        receipt>=(std::uint64_t{1}<<60) ||
        player_planet_receipts_.size()>=100000 ||
        player_planet_receipts_.count(receipt) ||
+       surface_move_receipts_.count(receipt) ||
        shuttle_flight_request_ids_.count(receipt) ||
        planetary_family_booking_ids_.count(receipt) ||
        submitted_ids_.count(receipt) || voyages_.count(receipt) ||
@@ -11673,12 +11681,16 @@ bool Simulation::planetary_player_shuttle_action(PlayerId owner,EntityId ship,
            person.planet_flight_receipt!=shuttle->second.descent_receipt)
             return false;
         person.state=PlayerPersonState::AtPlanetarySurface;
+        person.surface_pose={}; // Original shuttle hatch, contact settled by native motion
     }else if(action==PlanetaryPlayerAction::Reboard){
         if(!at_key || person.state!=PlayerPersonState::AtPlanetarySurface ||
            phase!=2 || !person.planet_descent_receipt ||
-           shuttle->second.descent_receipt!=person.planet_descent_receipt)
+           shuttle->second.descent_receipt!=person.planet_descent_receipt ||
+           !planetary::surface_motion::near_shuttle_hatch(
+               person.surface_pose.x_mm,person.surface_pose.z_mm))
             return false;
         person.state=PlayerPersonState::InPlanetaryShuttle;
+        person.surface_pose={};
     }else if(action==PlanetaryPlayerAction::Exit){
         // An original ascent is required after an actual descent. A player
         // may cancel a prelaunch boarding without claiming a surface visit.
@@ -11698,6 +11710,7 @@ bool Simulation::planetary_player_shuttle_action(PlayerId owner,EntityId ship,
         person.planet_flight_receipt=0;
         person.planet_descent_receipt=0;
         person.planet_ascent_receipt=0;
+        person.surface_pose={};
     }else return false;
     person.last_receipt=receipt;
     person.last_update_tick=tick_;
@@ -11833,7 +11846,20 @@ bool Simulation::launch_planetary_shuttle(PlayerId owner,EntityId ship,
             traveling_player=&p;
         }
     }
-    if(player_planet_receipts_.count(request_id))return false;
+    if(player_planet_receipts_.count(request_id) ||
+       surface_move_receipts_.count(request_id))return false;
+    if(ascend){
+        const auto& pilot_pose=pilot->second.surface_pose;
+        if(pilot_pose.last_move_receipt &&
+           !planetary::surface_motion::near_shuttle_hatch(
+               pilot_pose.x_mm,pilot_pose.z_mm))return false;
+        for(const auto id:sh->second.passenger_ids){
+            const auto& pos=npcs_.at(id).surface_pose;
+            if(pos.last_move_receipt &&
+               !planetary::surface_motion::near_shuttle_hatch(
+                   pos.x_mm,pos.z_mm))return false;
+        }
+    }
     // One kg of physically loaded water is the simplified water propellant
     // per trip; spent propellant remains wastewater at the departure endpoint.
     auto& residue=ascend?site->second.wastewater_kg:life->second.wastewater_kg;
@@ -11856,8 +11882,12 @@ bool Simulation::launch_planetary_shuttle(PlayerId owner,EntityId ship,
     if(ascend)sh->second.ascent_receipt=request_id;
     else sh->second.descent_receipt=request_id;
     pilot->second.location=transit;
-    for(const auto passenger_id:sh->second.passenger_ids)
-        npcs_.at(passenger_id).location=transit;
+    pilot->second.surface_pose={};
+    for(const auto passenger_id:sh->second.passenger_ids){
+        auto& person=npcs_.at(passenger_id);
+        person.location=transit;
+        person.surface_pose={};
+    }
     if(sh->second.family.stage) {
         for(const auto child:sh->second.family.child_ids)
             physical_dependents_.at(child).location=transit;
@@ -13221,7 +13251,7 @@ void Simulation::steps(std::uint64_t count) {
 
 std::string Simulation::canonical_state() const {
     std::ostringstream out;
-    out << ( snapshot_version_ >= 131 ? "galaxy-kernel-v131|" : snapshot_version_ >= 130 ? "galaxy-kernel-v130|" : snapshot_version_ >= 129 ? "galaxy-kernel-v129|" : snapshot_version_ >= 128 ? "galaxy-kernel-v128|" : snapshot_version_ >= 127 ? "galaxy-kernel-v127|" : snapshot_version_ >= 126 ? "galaxy-kernel-v126|" : snapshot_version_ >= 125 ? "galaxy-kernel-v125|" : snapshot_version_ >= 123 ? "galaxy-kernel-v123|" : snapshot_version_ >= 122 ? "galaxy-kernel-v122|" : snapshot_version_ >= 121 ? "galaxy-kernel-v121|" : snapshot_version_ >= 120 ? "galaxy-kernel-v120|" : snapshot_version_ >= 119 ? "galaxy-kernel-v119|" : snapshot_version_ >= 118 ? "galaxy-kernel-v118|" : snapshot_version_ >= 117 ? "galaxy-kernel-v117|" : snapshot_version_ >= 116 ? "galaxy-kernel-v116|" : snapshot_version_ >= 115 ? "galaxy-kernel-v115|" : snapshot_version_ >= 114 ? "galaxy-kernel-v114|" : snapshot_version_ >= 113 ? "galaxy-kernel-v113|" : snapshot_version_ >= 112 ? "galaxy-kernel-v112|" : snapshot_version_ >= 111 ? "galaxy-kernel-v111|" : snapshot_version_ >= 110 ? "galaxy-kernel-v110|" : snapshot_version_ >= 109 ? "galaxy-kernel-v109|" : snapshot_version_ >= 108 ? "galaxy-kernel-v108|" : snapshot_version_ >= 107 ? "galaxy-kernel-v107|" : snapshot_version_ >= 106 ? "galaxy-kernel-v106|" : snapshot_version_ >= 105 ? "galaxy-kernel-v105|" : snapshot_version_ >= 104 ? "galaxy-kernel-v104|" : snapshot_version_ >= 103 ? "galaxy-kernel-v103|" : snapshot_version_ >= 102 ? "galaxy-kernel-v102|" : snapshot_version_ >= 101 ? "galaxy-kernel-v101|" : snapshot_version_ >= 100 ? "galaxy-kernel-v100|" : snapshot_version_ >= 99 ? "galaxy-kernel-v99|" : snapshot_version_ >= 98 ? "galaxy-kernel-v98|" : snapshot_version_ >= 97 ? "galaxy-kernel-v97|" : snapshot_version_ >= 96 ? "galaxy-kernel-v96|" : snapshot_version_ >= 95 ? "galaxy-kernel-v95|" : snapshot_version_ >= 94 ? "galaxy-kernel-v94|" : snapshot_version_ >= 93 ? "galaxy-kernel-v93|" : snapshot_version_ >= 92 ? "galaxy-kernel-v92|" : snapshot_version_ >= 91 ? "galaxy-kernel-v91|" : snapshot_version_ >= 90 ? "galaxy-kernel-v90|" : snapshot_version_ >= 89 ? "galaxy-kernel-v89|" : snapshot_version_ >= 88 ? "galaxy-kernel-v88|" : snapshot_version_ >= 87 ? "galaxy-kernel-v87|" : snapshot_version_ >= 86 ? "galaxy-kernel-v86|" : snapshot_version_ >= 85 ? "galaxy-kernel-v85|" : snapshot_version_ >= 84 ? "galaxy-kernel-v84|" : snapshot_version_ >= 83 ? "galaxy-kernel-v83|" : snapshot_version_ >= 82 ? "galaxy-kernel-v82|" : snapshot_version_ >= 81 ? "galaxy-kernel-v81|" : snapshot_version_ >= 80 ? "galaxy-kernel-v80|" : snapshot_version_ >= 79 ? "galaxy-kernel-v79|" : snapshot_version_ >= 78 ? "galaxy-kernel-v78|" : snapshot_version_ >= 77 ? "galaxy-kernel-v77|" : snapshot_version_ >= 76 ? "galaxy-kernel-v76|" : snapshot_version_ >= 75 ? "galaxy-kernel-v75|" : snapshot_version_ >= 74 ? "galaxy-kernel-v74|" : snapshot_version_ >= 73 ? "galaxy-kernel-v73|" : snapshot_version_ >= 72 ? "galaxy-kernel-v72|" : snapshot_version_ >= 71 ? "galaxy-kernel-v71|" : snapshot_version_ >= 70 ? "galaxy-kernel-v70|" : snapshot_version_ >= 69 ? "galaxy-kernel-v69|" : snapshot_version_ >= 68 ? "galaxy-kernel-v68|" : snapshot_version_ >= 67 ? "galaxy-kernel-v67|" : snapshot_version_ >= 66 ? "galaxy-kernel-v66|" : snapshot_version_ >= 65 ? "galaxy-kernel-v65|" : snapshot_version_ >= 64 ? "galaxy-kernel-v64|" : snapshot_version_ >= 63 ? "galaxy-kernel-v63|" : snapshot_version_ >= 62 ? "galaxy-kernel-v62|" : snapshot_version_ >= 61 ? "galaxy-kernel-v61|" : snapshot_version_ >= 60 ? "galaxy-kernel-v60|" : snapshot_version_ >= 59 ? "galaxy-kernel-v59|" : snapshot_version_ >= 58 ? "galaxy-kernel-v58|" : snapshot_version_ >= 57 ? "galaxy-kernel-v57|" : snapshot_version_ >= 56 ? "galaxy-kernel-v56|" : snapshot_version_ >= 53 ? "galaxy-kernel-v53|" : snapshot_version_ >= 52 ? "galaxy-kernel-v52|" : snapshot_version_ >= 49 ? "galaxy-kernel-v49|" : snapshot_version_ >= 48 ? "galaxy-kernel-v48|" : snapshot_version_ >= 44 ? "galaxy-kernel-v44|" : snapshot_version_ >= 41 ? "galaxy-kernel-v41|" : snapshot_version_ >= 40 ? "galaxy-kernel-v40|" : snapshot_version_ >= 39 ? "galaxy-kernel-v39|" : snapshot_version_ >= 38 ? "galaxy-kernel-v38|" : snapshot_version_ >= 37 ? "galaxy-kernel-v37|" : snapshot_version_ >= 36 ? "galaxy-kernel-v36|" : snapshot_version_ >= 35 ? "galaxy-kernel-v35|" : snapshot_version_ >= 34 ? "galaxy-kernel-v34|" : snapshot_version_ >= 33 ? "galaxy-kernel-v33|" : snapshot_version_ >= 32 ? "galaxy-kernel-v32|" : snapshot_version_ >= 31 ? "galaxy-kernel-v31|" : snapshot_version_ >= 30 ? "galaxy-kernel-v30|" : snapshot_version_ >= 29 ? "galaxy-kernel-v29|" : snapshot_version_ >= 28 ? "galaxy-kernel-v28|" : snapshot_version_ >= 27 ? "galaxy-kernel-v27|" : snapshot_version_ >= 26 ? "galaxy-kernel-v26|" : snapshot_version_ >= 25 ? "galaxy-kernel-v25|" : snapshot_version_ >= 24 ? "galaxy-kernel-v24|" : snapshot_version_ >= 23 ? "galaxy-kernel-v23|" : snapshot_version_ >= 22 ? "galaxy-kernel-v22|" : snapshot_version_ >= 21 ? "galaxy-kernel-v21|" : snapshot_version_ >= 20 ? "galaxy-kernel-v20|" : snapshot_version_ >= 19 ? "galaxy-kernel-v19|" : snapshot_version_ >= 18 ? "galaxy-kernel-v18|" : snapshot_version_ >= 17 ? "galaxy-kernel-v17|" : snapshot_version_ >= 16 ? "galaxy-kernel-v16|" : snapshot_version_ >= 15 ? "galaxy-kernel-v15|" : snapshot_version_ >= 14 ? "galaxy-kernel-v14|" : snapshot_version_ >= 13 ? "galaxy-kernel-v13|" : snapshot_version_ >= 12 ? "galaxy-kernel-v12|" : snapshot_version_ >= 11 ? "galaxy-kernel-v11|" : snapshot_version_ >= 10 ? "galaxy-kernel-v10|" : snapshot_version_ >= 9 ? "galaxy-kernel-v9|" : snapshot_version_ >= 8 ? "galaxy-kernel-v8|" : snapshot_version_ >= 7 ? "galaxy-kernel-v7|" : snapshot_version_ >= 6 ? "galaxy-kernel-v6|" : snapshot_version_ >= 5 ? "galaxy-kernel-v5|" : snapshot_version_ >= 4 ? "galaxy-kernel-v4|" : snapshot_version_ == 3 ? "galaxy-kernel-v3|" : snapshot_version_ == 2 ? "galaxy-kernel-v2|" : "galaxy-kernel-v1|") << system_id_ << '|' << tick_ << '|' << next_entity_id_
+    out << ( snapshot_version_ >= 132 ? "galaxy-kernel-v132|" : snapshot_version_ >= 131 ? "galaxy-kernel-v131|" : snapshot_version_ >= 130 ? "galaxy-kernel-v130|" : snapshot_version_ >= 129 ? "galaxy-kernel-v129|" : snapshot_version_ >= 128 ? "galaxy-kernel-v128|" : snapshot_version_ >= 127 ? "galaxy-kernel-v127|" : snapshot_version_ >= 126 ? "galaxy-kernel-v126|" : snapshot_version_ >= 125 ? "galaxy-kernel-v125|" : snapshot_version_ >= 123 ? "galaxy-kernel-v123|" : snapshot_version_ >= 122 ? "galaxy-kernel-v122|" : snapshot_version_ >= 121 ? "galaxy-kernel-v121|" : snapshot_version_ >= 120 ? "galaxy-kernel-v120|" : snapshot_version_ >= 119 ? "galaxy-kernel-v119|" : snapshot_version_ >= 118 ? "galaxy-kernel-v118|" : snapshot_version_ >= 117 ? "galaxy-kernel-v117|" : snapshot_version_ >= 116 ? "galaxy-kernel-v116|" : snapshot_version_ >= 115 ? "galaxy-kernel-v115|" : snapshot_version_ >= 114 ? "galaxy-kernel-v114|" : snapshot_version_ >= 113 ? "galaxy-kernel-v113|" : snapshot_version_ >= 112 ? "galaxy-kernel-v112|" : snapshot_version_ >= 111 ? "galaxy-kernel-v111|" : snapshot_version_ >= 110 ? "galaxy-kernel-v110|" : snapshot_version_ >= 109 ? "galaxy-kernel-v109|" : snapshot_version_ >= 108 ? "galaxy-kernel-v108|" : snapshot_version_ >= 107 ? "galaxy-kernel-v107|" : snapshot_version_ >= 106 ? "galaxy-kernel-v106|" : snapshot_version_ >= 105 ? "galaxy-kernel-v105|" : snapshot_version_ >= 104 ? "galaxy-kernel-v104|" : snapshot_version_ >= 103 ? "galaxy-kernel-v103|" : snapshot_version_ >= 102 ? "galaxy-kernel-v102|" : snapshot_version_ >= 101 ? "galaxy-kernel-v101|" : snapshot_version_ >= 100 ? "galaxy-kernel-v100|" : snapshot_version_ >= 99 ? "galaxy-kernel-v99|" : snapshot_version_ >= 98 ? "galaxy-kernel-v98|" : snapshot_version_ >= 97 ? "galaxy-kernel-v97|" : snapshot_version_ >= 96 ? "galaxy-kernel-v96|" : snapshot_version_ >= 95 ? "galaxy-kernel-v95|" : snapshot_version_ >= 94 ? "galaxy-kernel-v94|" : snapshot_version_ >= 93 ? "galaxy-kernel-v93|" : snapshot_version_ >= 92 ? "galaxy-kernel-v92|" : snapshot_version_ >= 91 ? "galaxy-kernel-v91|" : snapshot_version_ >= 90 ? "galaxy-kernel-v90|" : snapshot_version_ >= 89 ? "galaxy-kernel-v89|" : snapshot_version_ >= 88 ? "galaxy-kernel-v88|" : snapshot_version_ >= 87 ? "galaxy-kernel-v87|" : snapshot_version_ >= 86 ? "galaxy-kernel-v86|" : snapshot_version_ >= 85 ? "galaxy-kernel-v85|" : snapshot_version_ >= 84 ? "galaxy-kernel-v84|" : snapshot_version_ >= 83 ? "galaxy-kernel-v83|" : snapshot_version_ >= 82 ? "galaxy-kernel-v82|" : snapshot_version_ >= 81 ? "galaxy-kernel-v81|" : snapshot_version_ >= 80 ? "galaxy-kernel-v80|" : snapshot_version_ >= 79 ? "galaxy-kernel-v79|" : snapshot_version_ >= 78 ? "galaxy-kernel-v78|" : snapshot_version_ >= 77 ? "galaxy-kernel-v77|" : snapshot_version_ >= 76 ? "galaxy-kernel-v76|" : snapshot_version_ >= 75 ? "galaxy-kernel-v75|" : snapshot_version_ >= 74 ? "galaxy-kernel-v74|" : snapshot_version_ >= 73 ? "galaxy-kernel-v73|" : snapshot_version_ >= 72 ? "galaxy-kernel-v72|" : snapshot_version_ >= 71 ? "galaxy-kernel-v71|" : snapshot_version_ >= 70 ? "galaxy-kernel-v70|" : snapshot_version_ >= 69 ? "galaxy-kernel-v69|" : snapshot_version_ >= 68 ? "galaxy-kernel-v68|" : snapshot_version_ >= 67 ? "galaxy-kernel-v67|" : snapshot_version_ >= 66 ? "galaxy-kernel-v66|" : snapshot_version_ >= 65 ? "galaxy-kernel-v65|" : snapshot_version_ >= 64 ? "galaxy-kernel-v64|" : snapshot_version_ >= 63 ? "galaxy-kernel-v63|" : snapshot_version_ >= 62 ? "galaxy-kernel-v62|" : snapshot_version_ >= 61 ? "galaxy-kernel-v61|" : snapshot_version_ >= 60 ? "galaxy-kernel-v60|" : snapshot_version_ >= 59 ? "galaxy-kernel-v59|" : snapshot_version_ >= 58 ? "galaxy-kernel-v58|" : snapshot_version_ >= 57 ? "galaxy-kernel-v57|" : snapshot_version_ >= 56 ? "galaxy-kernel-v56|" : snapshot_version_ >= 53 ? "galaxy-kernel-v53|" : snapshot_version_ >= 52 ? "galaxy-kernel-v52|" : snapshot_version_ >= 49 ? "galaxy-kernel-v49|" : snapshot_version_ >= 48 ? "galaxy-kernel-v48|" : snapshot_version_ >= 44 ? "galaxy-kernel-v44|" : snapshot_version_ >= 41 ? "galaxy-kernel-v41|" : snapshot_version_ >= 40 ? "galaxy-kernel-v40|" : snapshot_version_ >= 39 ? "galaxy-kernel-v39|" : snapshot_version_ >= 38 ? "galaxy-kernel-v38|" : snapshot_version_ >= 37 ? "galaxy-kernel-v37|" : snapshot_version_ >= 36 ? "galaxy-kernel-v36|" : snapshot_version_ >= 35 ? "galaxy-kernel-v35|" : snapshot_version_ >= 34 ? "galaxy-kernel-v34|" : snapshot_version_ >= 33 ? "galaxy-kernel-v33|" : snapshot_version_ >= 32 ? "galaxy-kernel-v32|" : snapshot_version_ >= 31 ? "galaxy-kernel-v31|" : snapshot_version_ >= 30 ? "galaxy-kernel-v30|" : snapshot_version_ >= 29 ? "galaxy-kernel-v29|" : snapshot_version_ >= 28 ? "galaxy-kernel-v28|" : snapshot_version_ >= 27 ? "galaxy-kernel-v27|" : snapshot_version_ >= 26 ? "galaxy-kernel-v26|" : snapshot_version_ >= 25 ? "galaxy-kernel-v25|" : snapshot_version_ >= 24 ? "galaxy-kernel-v24|" : snapshot_version_ >= 23 ? "galaxy-kernel-v23|" : snapshot_version_ >= 22 ? "galaxy-kernel-v22|" : snapshot_version_ >= 21 ? "galaxy-kernel-v21|" : snapshot_version_ >= 20 ? "galaxy-kernel-v20|" : snapshot_version_ >= 19 ? "galaxy-kernel-v19|" : snapshot_version_ >= 18 ? "galaxy-kernel-v18|" : snapshot_version_ >= 17 ? "galaxy-kernel-v17|" : snapshot_version_ >= 16 ? "galaxy-kernel-v16|" : snapshot_version_ >= 15 ? "galaxy-kernel-v15|" : snapshot_version_ >= 14 ? "galaxy-kernel-v14|" : snapshot_version_ >= 13 ? "galaxy-kernel-v13|" : snapshot_version_ >= 12 ? "galaxy-kernel-v12|" : snapshot_version_ >= 11 ? "galaxy-kernel-v11|" : snapshot_version_ >= 10 ? "galaxy-kernel-v10|" : snapshot_version_ >= 9 ? "galaxy-kernel-v9|" : snapshot_version_ >= 8 ? "galaxy-kernel-v8|" : snapshot_version_ >= 7 ? "galaxy-kernel-v7|" : snapshot_version_ >= 6 ? "galaxy-kernel-v6|" : snapshot_version_ >= 5 ? "galaxy-kernel-v5|" : snapshot_version_ >= 4 ? "galaxy-kernel-v4|" : snapshot_version_ == 3 ? "galaxy-kernel-v3|" : snapshot_version_ == 2 ? "galaxy-kernel-v2|" : "galaxy-kernel-v1|") << system_id_ << '|' << tick_ << '|' << next_entity_id_
         << '|' << rng_state_ << '\n';
     if (snapshot_version_>=5) for(const auto system:systems_)out<<"system|"<<system<<'\n';
     if(snapshot_version_>=120)for(const auto& [system,origin]:galactic_system_origins_)
@@ -13553,6 +13583,11 @@ std::string Simulation::canonical_state() const {
                    <<p.planet_longitude<<'|'<<p.planet_revision<<'|'
                    <<p.planet_flight_receipt<<'|'<<p.planet_descent_receipt
                    <<'|'<<p.planet_ascent_receipt;
+            if(snapshot_version_>=132)
+                out<<'|'<<p.surface_pose.x_mm<<'|'<<p.surface_pose.y_mm
+                   <<'|'<<p.surface_pose.z_mm<<'|'
+                   <<p.surface_pose.last_move_tick<<'|'
+                   <<p.surface_pose.last_move_receipt;
             out<<'\n';
         }
     if(snapshot_version_>=81)
@@ -13561,6 +13596,9 @@ std::string Simulation::canonical_state() const {
     if(snapshot_version_>=131)
         for(const auto id:player_planet_receipts_)
             out<<"playerplanetreceipt|"<<id<<'\n';
+    if(snapshot_version_>=132)
+        for(const auto id:surface_move_receipts_)
+            out<<"surfacemovereceipt|"<<id<<'\n';
     if(snapshot_version_>=116)
         for(const auto id:planetary_family_booking_ids_)
             out<<"planetfamilyreceipt|"<<id<<'\n';
@@ -13823,6 +13861,11 @@ std::string Simulation::canonical_state() const {
                 const auto residence=n.legal_residence();
                 out<<'|'<<unsigned(residence.kind)<<'|'<<residence.id;
             }
+            if(snapshot_version_>=132)
+                out<<'|'<<n.surface_pose.x_mm<<'|'<<n.surface_pose.y_mm
+                   <<'|'<<n.surface_pose.z_mm<<'|'
+                   <<n.surface_pose.last_move_tick<<'|'
+                   <<n.surface_pose.last_move_receipt;
             out<<'\n';
         }
         for(const auto& [site,xp]:farm_team_xp_)
@@ -14124,12 +14167,12 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
     if (!std::getline(in, line)) throw std::runtime_error("snapshot: missing header");
     auto h = fields(line);
     require_fields(h, 5);
-    if (h[0] != "galaxy-kernel-v131" && h[0] != "galaxy-kernel-v130" && h[0] != "galaxy-kernel-v129" && h[0] != "galaxy-kernel-v128" && h[0] != "galaxy-kernel-v127" && h[0] != "galaxy-kernel-v126" && h[0] != "galaxy-kernel-v125" && h[0] != "galaxy-kernel-v123" && h[0] != "galaxy-kernel-v122" && h[0] != "galaxy-kernel-v121" && h[0] != "galaxy-kernel-v120" && h[0] != "galaxy-kernel-v119" && h[0] != "galaxy-kernel-v118" && h[0] != "galaxy-kernel-v117" && h[0] != "galaxy-kernel-v116" && h[0] != "galaxy-kernel-v115" && h[0] != "galaxy-kernel-v114" && h[0] != "galaxy-kernel-v113" && h[0] != "galaxy-kernel-v112" && h[0] != "galaxy-kernel-v111" && h[0] != "galaxy-kernel-v110" && h[0] != "galaxy-kernel-v109" && h[0] != "galaxy-kernel-v108" && h[0] != "galaxy-kernel-v107" && h[0] != "galaxy-kernel-v106" && h[0] != "galaxy-kernel-v105" && h[0] != "galaxy-kernel-v1" && h[0] != "galaxy-kernel-v2" && h[0] != "galaxy-kernel-v3" && h[0] != "galaxy-kernel-v4" && h[0] != "galaxy-kernel-v5" && h[0] != "galaxy-kernel-v6" && h[0] != "galaxy-kernel-v7" && h[0] != "galaxy-kernel-v8" && h[0] != "galaxy-kernel-v9" && h[0] != "galaxy-kernel-v10" && h[0] != "galaxy-kernel-v11" && h[0] != "galaxy-kernel-v12" && h[0] != "galaxy-kernel-v13" && h[0] != "galaxy-kernel-v14" && h[0] != "galaxy-kernel-v15" && h[0] != "galaxy-kernel-v16" && h[0] != "galaxy-kernel-v17" && h[0] != "galaxy-kernel-v18" && h[0] != "galaxy-kernel-v19" && h[0] != "galaxy-kernel-v20" && h[0] != "galaxy-kernel-v21" && h[0] != "galaxy-kernel-v22" && h[0] != "galaxy-kernel-v23" && h[0] != "galaxy-kernel-v24" && h[0] != "galaxy-kernel-v25" && h[0] != "galaxy-kernel-v26" && h[0] != "galaxy-kernel-v27" && h[0] != "galaxy-kernel-v28" && h[0] != "galaxy-kernel-v29" && h[0] != "galaxy-kernel-v30" && h[0] != "galaxy-kernel-v31" && h[0] != "galaxy-kernel-v32" && h[0] != "galaxy-kernel-v33" && h[0] != "galaxy-kernel-v34" && h[0] != "galaxy-kernel-v35" && h[0] != "galaxy-kernel-v36" && h[0] != "galaxy-kernel-v37" && h[0] != "galaxy-kernel-v38" && h[0] != "galaxy-kernel-v39" && h[0] != "galaxy-kernel-v40" && h[0] != "galaxy-kernel-v41" && h[0] != "galaxy-kernel-v44" && h[0] != "galaxy-kernel-v48" && h[0] != "galaxy-kernel-v49" && h[0] != "galaxy-kernel-v52" && h[0] != "galaxy-kernel-v53" && h[0] != "galaxy-kernel-v56" && h[0] != "galaxy-kernel-v57" && h[0] != "galaxy-kernel-v58" && h[0] != "galaxy-kernel-v59" && h[0] != "galaxy-kernel-v60" && h[0] != "galaxy-kernel-v61" && h[0] != "galaxy-kernel-v62" && h[0] != "galaxy-kernel-v63" && h[0] != "galaxy-kernel-v64" && h[0] != "galaxy-kernel-v65" && h[0] != "galaxy-kernel-v66" && h[0] != "galaxy-kernel-v67" && h[0] != "galaxy-kernel-v68" && h[0] != "galaxy-kernel-v69" && h[0] != "galaxy-kernel-v70" && h[0] != "galaxy-kernel-v71" && h[0] != "galaxy-kernel-v72" && h[0] != "galaxy-kernel-v73" && h[0] != "galaxy-kernel-v74" && h[0] != "galaxy-kernel-v75" && h[0] != "galaxy-kernel-v76" && h[0] != "galaxy-kernel-v77" && h[0] != "galaxy-kernel-v78" && h[0] != "galaxy-kernel-v79" && h[0] != "galaxy-kernel-v80" && h[0] != "galaxy-kernel-v81" && h[0] != "galaxy-kernel-v82" && h[0] != "galaxy-kernel-v83" && h[0] != "galaxy-kernel-v84" && h[0] != "galaxy-kernel-v85" && h[0] != "galaxy-kernel-v86" && h[0] != "galaxy-kernel-v87" && h[0] != "galaxy-kernel-v88" && h[0] != "galaxy-kernel-v89" && h[0] != "galaxy-kernel-v90" && h[0] != "galaxy-kernel-v91" && h[0] != "galaxy-kernel-v92" && h[0] != "galaxy-kernel-v93" && h[0] != "galaxy-kernel-v94" && h[0] != "galaxy-kernel-v95" && h[0] != "galaxy-kernel-v96" && h[0] != "galaxy-kernel-v97" && h[0] != "galaxy-kernel-v98" && h[0] != "galaxy-kernel-v99" && h[0] != "galaxy-kernel-v100" && h[0] != "galaxy-kernel-v101" && h[0] != "galaxy-kernel-v102" && h[0] != "galaxy-kernel-v103" && h[0] != "galaxy-kernel-v104") throw std::runtime_error("snapshot: unsupported version");
+    if (h[0] != "galaxy-kernel-v132" && h[0] != "galaxy-kernel-v131" && h[0] != "galaxy-kernel-v130" && h[0] != "galaxy-kernel-v129" && h[0] != "galaxy-kernel-v128" && h[0] != "galaxy-kernel-v127" && h[0] != "galaxy-kernel-v126" && h[0] != "galaxy-kernel-v125" && h[0] != "galaxy-kernel-v123" && h[0] != "galaxy-kernel-v122" && h[0] != "galaxy-kernel-v121" && h[0] != "galaxy-kernel-v120" && h[0] != "galaxy-kernel-v119" && h[0] != "galaxy-kernel-v118" && h[0] != "galaxy-kernel-v117" && h[0] != "galaxy-kernel-v116" && h[0] != "galaxy-kernel-v115" && h[0] != "galaxy-kernel-v114" && h[0] != "galaxy-kernel-v113" && h[0] != "galaxy-kernel-v112" && h[0] != "galaxy-kernel-v111" && h[0] != "galaxy-kernel-v110" && h[0] != "galaxy-kernel-v109" && h[0] != "galaxy-kernel-v108" && h[0] != "galaxy-kernel-v107" && h[0] != "galaxy-kernel-v106" && h[0] != "galaxy-kernel-v105" && h[0] != "galaxy-kernel-v1" && h[0] != "galaxy-kernel-v2" && h[0] != "galaxy-kernel-v3" && h[0] != "galaxy-kernel-v4" && h[0] != "galaxy-kernel-v5" && h[0] != "galaxy-kernel-v6" && h[0] != "galaxy-kernel-v7" && h[0] != "galaxy-kernel-v8" && h[0] != "galaxy-kernel-v9" && h[0] != "galaxy-kernel-v10" && h[0] != "galaxy-kernel-v11" && h[0] != "galaxy-kernel-v12" && h[0] != "galaxy-kernel-v13" && h[0] != "galaxy-kernel-v14" && h[0] != "galaxy-kernel-v15" && h[0] != "galaxy-kernel-v16" && h[0] != "galaxy-kernel-v17" && h[0] != "galaxy-kernel-v18" && h[0] != "galaxy-kernel-v19" && h[0] != "galaxy-kernel-v20" && h[0] != "galaxy-kernel-v21" && h[0] != "galaxy-kernel-v22" && h[0] != "galaxy-kernel-v23" && h[0] != "galaxy-kernel-v24" && h[0] != "galaxy-kernel-v25" && h[0] != "galaxy-kernel-v26" && h[0] != "galaxy-kernel-v27" && h[0] != "galaxy-kernel-v28" && h[0] != "galaxy-kernel-v29" && h[0] != "galaxy-kernel-v30" && h[0] != "galaxy-kernel-v31" && h[0] != "galaxy-kernel-v32" && h[0] != "galaxy-kernel-v33" && h[0] != "galaxy-kernel-v34" && h[0] != "galaxy-kernel-v35" && h[0] != "galaxy-kernel-v36" && h[0] != "galaxy-kernel-v37" && h[0] != "galaxy-kernel-v38" && h[0] != "galaxy-kernel-v39" && h[0] != "galaxy-kernel-v40" && h[0] != "galaxy-kernel-v41" && h[0] != "galaxy-kernel-v44" && h[0] != "galaxy-kernel-v48" && h[0] != "galaxy-kernel-v49" && h[0] != "galaxy-kernel-v52" && h[0] != "galaxy-kernel-v53" && h[0] != "galaxy-kernel-v56" && h[0] != "galaxy-kernel-v57" && h[0] != "galaxy-kernel-v58" && h[0] != "galaxy-kernel-v59" && h[0] != "galaxy-kernel-v60" && h[0] != "galaxy-kernel-v61" && h[0] != "galaxy-kernel-v62" && h[0] != "galaxy-kernel-v63" && h[0] != "galaxy-kernel-v64" && h[0] != "galaxy-kernel-v65" && h[0] != "galaxy-kernel-v66" && h[0] != "galaxy-kernel-v67" && h[0] != "galaxy-kernel-v68" && h[0] != "galaxy-kernel-v69" && h[0] != "galaxy-kernel-v70" && h[0] != "galaxy-kernel-v71" && h[0] != "galaxy-kernel-v72" && h[0] != "galaxy-kernel-v73" && h[0] != "galaxy-kernel-v74" && h[0] != "galaxy-kernel-v75" && h[0] != "galaxy-kernel-v76" && h[0] != "galaxy-kernel-v77" && h[0] != "galaxy-kernel-v78" && h[0] != "galaxy-kernel-v79" && h[0] != "galaxy-kernel-v80" && h[0] != "galaxy-kernel-v81" && h[0] != "galaxy-kernel-v82" && h[0] != "galaxy-kernel-v83" && h[0] != "galaxy-kernel-v84" && h[0] != "galaxy-kernel-v85" && h[0] != "galaxy-kernel-v86" && h[0] != "galaxy-kernel-v87" && h[0] != "galaxy-kernel-v88" && h[0] != "galaxy-kernel-v89" && h[0] != "galaxy-kernel-v90" && h[0] != "galaxy-kernel-v91" && h[0] != "galaxy-kernel-v92" && h[0] != "galaxy-kernel-v93" && h[0] != "galaxy-kernel-v94" && h[0] != "galaxy-kernel-v95" && h[0] != "galaxy-kernel-v96" && h[0] != "galaxy-kernel-v97" && h[0] != "galaxy-kernel-v98" && h[0] != "galaxy-kernel-v99" && h[0] != "galaxy-kernel-v100" && h[0] != "galaxy-kernel-v101" && h[0] != "galaxy-kernel-v102" && h[0] != "galaxy-kernel-v103" && h[0] != "galaxy-kernel-v104") throw std::runtime_error("snapshot: unsupported version");
     const auto sys = u64(h[1]);
     if (sys == 0 || sys > std::numeric_limits<std::uint32_t>::max())
         throw std::runtime_error("snapshot: invalid system");
     Simulation result(u64(h[4]), static_cast<std::uint32_t>(sys));
-    result.snapshot_version_ = h[0] == "galaxy-kernel-v131" ? 131 : h[0] == "galaxy-kernel-v130" ? 130 : h[0] == "galaxy-kernel-v129" ? 129 : h[0] == "galaxy-kernel-v128" ? 128 : h[0] == "galaxy-kernel-v127" ? 127 : h[0] == "galaxy-kernel-v126" ? 126 : h[0] == "galaxy-kernel-v125" ? 125 : h[0] == "galaxy-kernel-v123" ? 123 : h[0] == "galaxy-kernel-v122" ? 122 : h[0] == "galaxy-kernel-v121" ? 121 : h[0] == "galaxy-kernel-v120" ? 120 : h[0] == "galaxy-kernel-v119" ? 119 : h[0] == "galaxy-kernel-v118" ? 118 : h[0] == "galaxy-kernel-v117" ? 117 : h[0] == "galaxy-kernel-v116" ? 116 : h[0] == "galaxy-kernel-v115" ? 115 : h[0] == "galaxy-kernel-v114" ? 114 : h[0] == "galaxy-kernel-v113" ? 113 : h[0] == "galaxy-kernel-v112" ? 112 : h[0] == "galaxy-kernel-v111" ? 111 : h[0] == "galaxy-kernel-v110" ? 110 : h[0] == "galaxy-kernel-v109" ? 109 : h[0] == "galaxy-kernel-v108" ? 108 : h[0] == "galaxy-kernel-v107" ? 107 : h[0] == "galaxy-kernel-v106" ? 106 : h[0] == "galaxy-kernel-v105" ? 105 : h[0] == "galaxy-kernel-v104" ? 104 : h[0] == "galaxy-kernel-v103" ? 103 : h[0] == "galaxy-kernel-v102" ? 102 : h[0] == "galaxy-kernel-v101" ? 101 : h[0] == "galaxy-kernel-v100" ? 100 : h[0] == "galaxy-kernel-v99" ? 99 : h[0] == "galaxy-kernel-v98" ? 98 : h[0] == "galaxy-kernel-v97" ? 97 : h[0] == "galaxy-kernel-v96" ? 96 : h[0] == "galaxy-kernel-v95" ? 95 : h[0] == "galaxy-kernel-v94" ? 94 : h[0] == "galaxy-kernel-v93" ? 93 : h[0] == "galaxy-kernel-v92" ? 92 : h[0] == "galaxy-kernel-v91" ? 91 : h[0] == "galaxy-kernel-v90" ? 90 : h[0] == "galaxy-kernel-v89" ? 89 : h[0] == "galaxy-kernel-v88" ? 88 : h[0] == "galaxy-kernel-v87" ? 87 : h[0] == "galaxy-kernel-v86" ? 86 : h[0] == "galaxy-kernel-v85" ? 85 : h[0] == "galaxy-kernel-v84" ? 84 : h[0] == "galaxy-kernel-v83" ? 83 : h[0] == "galaxy-kernel-v82" ? 82 : h[0] == "galaxy-kernel-v81" ? 81 : h[0] == "galaxy-kernel-v80" ? 80 : h[0] == "galaxy-kernel-v79" ? 79 : h[0] == "galaxy-kernel-v78" ? 78 : h[0] == "galaxy-kernel-v77" ? 77 : h[0] == "galaxy-kernel-v76" ? 76 : h[0] == "galaxy-kernel-v75" ? 75 : h[0] == "galaxy-kernel-v74" ? 74 : h[0] == "galaxy-kernel-v73" ? 73 : h[0] == "galaxy-kernel-v72" ? 72 : h[0] == "galaxy-kernel-v71" ? 71 : h[0] == "galaxy-kernel-v70" ? 70 : h[0] == "galaxy-kernel-v69" ? 69 : h[0] == "galaxy-kernel-v68" ? 68 : h[0] == "galaxy-kernel-v67" ? 67 : h[0] == "galaxy-kernel-v66" ? 66 : h[0] == "galaxy-kernel-v65" ? 65 : h[0] == "galaxy-kernel-v64" ? 64 : h[0] == "galaxy-kernel-v63" ? 63 : h[0] == "galaxy-kernel-v62" ? 62 : h[0] == "galaxy-kernel-v61" ? 61 : h[0] == "galaxy-kernel-v60" ? 60 : h[0] == "galaxy-kernel-v59" ? 59 : h[0] == "galaxy-kernel-v58" ? 58 : h[0] == "galaxy-kernel-v57" ? 57 : h[0] == "galaxy-kernel-v56" ? 56 : h[0] == "galaxy-kernel-v53" ? 53 : h[0] == "galaxy-kernel-v52" ? 52 : h[0] == "galaxy-kernel-v49" ? 49 : h[0] == "galaxy-kernel-v48" ? 48 : h[0] == "galaxy-kernel-v44" ? 44 : h[0] == "galaxy-kernel-v41" ? 41 : h[0] == "galaxy-kernel-v40" ? 40 : h[0] == "galaxy-kernel-v39" ? 39 : h[0] == "galaxy-kernel-v38" ? 38 : h[0] == "galaxy-kernel-v37" ? 37 : h[0] == "galaxy-kernel-v36" ? 36 : h[0] == "galaxy-kernel-v35" ? 35 : h[0] == "galaxy-kernel-v34" ? 34 : h[0] == "galaxy-kernel-v33" ? 33 : h[0] == "galaxy-kernel-v32" ? 32 : h[0] == "galaxy-kernel-v31" ? 31 : h[0] == "galaxy-kernel-v30" ? 30 : h[0] == "galaxy-kernel-v29" ? 29 : h[0] == "galaxy-kernel-v28" ? 28 : h[0] == "galaxy-kernel-v27" ? 27 : h[0] == "galaxy-kernel-v26" ? 26 : h[0] == "galaxy-kernel-v25" ? 25 : h[0] == "galaxy-kernel-v24" ? 24 : h[0] == "galaxy-kernel-v23" ? 23 : h[0] == "galaxy-kernel-v22" ? 22 : h[0] == "galaxy-kernel-v21" ? 21 : h[0] == "galaxy-kernel-v20" ? 20 : h[0] == "galaxy-kernel-v19" ? 19 : h[0] == "galaxy-kernel-v18" ? 18 : h[0] == "galaxy-kernel-v17" ? 17 : h[0] == "galaxy-kernel-v16" ? 16 : h[0] == "galaxy-kernel-v15" ? 15 : h[0] == "galaxy-kernel-v14" ? 14 : h[0] == "galaxy-kernel-v13" ? 13 : h[0] == "galaxy-kernel-v12" ? 12 : h[0] == "galaxy-kernel-v11" ? 11 : h[0] == "galaxy-kernel-v10" ? 10 : h[0] == "galaxy-kernel-v9" ? 9 : h[0] == "galaxy-kernel-v8" ? 8 : h[0] == "galaxy-kernel-v7" ? 7 : h[0] == "galaxy-kernel-v6" ? 6 : h[0] == "galaxy-kernel-v5" ? 5 : h[0] == "galaxy-kernel-v4" ? 4 : h[0] == "galaxy-kernel-v3" ? 3 : h[0] == "galaxy-kernel-v2" ? 2 : 1;
+    result.snapshot_version_ = h[0] == "galaxy-kernel-v132" ? 132 : h[0] == "galaxy-kernel-v131" ? 131 : h[0] == "galaxy-kernel-v130" ? 130 : h[0] == "galaxy-kernel-v129" ? 129 : h[0] == "galaxy-kernel-v128" ? 128 : h[0] == "galaxy-kernel-v127" ? 127 : h[0] == "galaxy-kernel-v126" ? 126 : h[0] == "galaxy-kernel-v125" ? 125 : h[0] == "galaxy-kernel-v123" ? 123 : h[0] == "galaxy-kernel-v122" ? 122 : h[0] == "galaxy-kernel-v121" ? 121 : h[0] == "galaxy-kernel-v120" ? 120 : h[0] == "galaxy-kernel-v119" ? 119 : h[0] == "galaxy-kernel-v118" ? 118 : h[0] == "galaxy-kernel-v117" ? 117 : h[0] == "galaxy-kernel-v116" ? 116 : h[0] == "galaxy-kernel-v115" ? 115 : h[0] == "galaxy-kernel-v114" ? 114 : h[0] == "galaxy-kernel-v113" ? 113 : h[0] == "galaxy-kernel-v112" ? 112 : h[0] == "galaxy-kernel-v111" ? 111 : h[0] == "galaxy-kernel-v110" ? 110 : h[0] == "galaxy-kernel-v109" ? 109 : h[0] == "galaxy-kernel-v108" ? 108 : h[0] == "galaxy-kernel-v107" ? 107 : h[0] == "galaxy-kernel-v106" ? 106 : h[0] == "galaxy-kernel-v105" ? 105 : h[0] == "galaxy-kernel-v104" ? 104 : h[0] == "galaxy-kernel-v103" ? 103 : h[0] == "galaxy-kernel-v102" ? 102 : h[0] == "galaxy-kernel-v101" ? 101 : h[0] == "galaxy-kernel-v100" ? 100 : h[0] == "galaxy-kernel-v99" ? 99 : h[0] == "galaxy-kernel-v98" ? 98 : h[0] == "galaxy-kernel-v97" ? 97 : h[0] == "galaxy-kernel-v96" ? 96 : h[0] == "galaxy-kernel-v95" ? 95 : h[0] == "galaxy-kernel-v94" ? 94 : h[0] == "galaxy-kernel-v93" ? 93 : h[0] == "galaxy-kernel-v92" ? 92 : h[0] == "galaxy-kernel-v91" ? 91 : h[0] == "galaxy-kernel-v90" ? 90 : h[0] == "galaxy-kernel-v89" ? 89 : h[0] == "galaxy-kernel-v88" ? 88 : h[0] == "galaxy-kernel-v87" ? 87 : h[0] == "galaxy-kernel-v86" ? 86 : h[0] == "galaxy-kernel-v85" ? 85 : h[0] == "galaxy-kernel-v84" ? 84 : h[0] == "galaxy-kernel-v83" ? 83 : h[0] == "galaxy-kernel-v82" ? 82 : h[0] == "galaxy-kernel-v81" ? 81 : h[0] == "galaxy-kernel-v80" ? 80 : h[0] == "galaxy-kernel-v79" ? 79 : h[0] == "galaxy-kernel-v78" ? 78 : h[0] == "galaxy-kernel-v77" ? 77 : h[0] == "galaxy-kernel-v76" ? 76 : h[0] == "galaxy-kernel-v75" ? 75 : h[0] == "galaxy-kernel-v74" ? 74 : h[0] == "galaxy-kernel-v73" ? 73 : h[0] == "galaxy-kernel-v72" ? 72 : h[0] == "galaxy-kernel-v71" ? 71 : h[0] == "galaxy-kernel-v70" ? 70 : h[0] == "galaxy-kernel-v69" ? 69 : h[0] == "galaxy-kernel-v68" ? 68 : h[0] == "galaxy-kernel-v67" ? 67 : h[0] == "galaxy-kernel-v66" ? 66 : h[0] == "galaxy-kernel-v65" ? 65 : h[0] == "galaxy-kernel-v64" ? 64 : h[0] == "galaxy-kernel-v63" ? 63 : h[0] == "galaxy-kernel-v62" ? 62 : h[0] == "galaxy-kernel-v61" ? 61 : h[0] == "galaxy-kernel-v60" ? 60 : h[0] == "galaxy-kernel-v59" ? 59 : h[0] == "galaxy-kernel-v58" ? 58 : h[0] == "galaxy-kernel-v57" ? 57 : h[0] == "galaxy-kernel-v56" ? 56 : h[0] == "galaxy-kernel-v53" ? 53 : h[0] == "galaxy-kernel-v52" ? 52 : h[0] == "galaxy-kernel-v49" ? 49 : h[0] == "galaxy-kernel-v48" ? 48 : h[0] == "galaxy-kernel-v44" ? 44 : h[0] == "galaxy-kernel-v41" ? 41 : h[0] == "galaxy-kernel-v40" ? 40 : h[0] == "galaxy-kernel-v39" ? 39 : h[0] == "galaxy-kernel-v38" ? 38 : h[0] == "galaxy-kernel-v37" ? 37 : h[0] == "galaxy-kernel-v36" ? 36 : h[0] == "galaxy-kernel-v35" ? 35 : h[0] == "galaxy-kernel-v34" ? 34 : h[0] == "galaxy-kernel-v33" ? 33 : h[0] == "galaxy-kernel-v32" ? 32 : h[0] == "galaxy-kernel-v31" ? 31 : h[0] == "galaxy-kernel-v30" ? 30 : h[0] == "galaxy-kernel-v29" ? 29 : h[0] == "galaxy-kernel-v28" ? 28 : h[0] == "galaxy-kernel-v27" ? 27 : h[0] == "galaxy-kernel-v26" ? 26 : h[0] == "galaxy-kernel-v25" ? 25 : h[0] == "galaxy-kernel-v24" ? 24 : h[0] == "galaxy-kernel-v23" ? 23 : h[0] == "galaxy-kernel-v22" ? 22 : h[0] == "galaxy-kernel-v21" ? 21 : h[0] == "galaxy-kernel-v20" ? 20 : h[0] == "galaxy-kernel-v19" ? 19 : h[0] == "galaxy-kernel-v18" ? 18 : h[0] == "galaxy-kernel-v17" ? 17 : h[0] == "galaxy-kernel-v16" ? 16 : h[0] == "galaxy-kernel-v15" ? 15 : h[0] == "galaxy-kernel-v14" ? 14 : h[0] == "galaxy-kernel-v13" ? 13 : h[0] == "galaxy-kernel-v12" ? 12 : h[0] == "galaxy-kernel-v11" ? 11 : h[0] == "galaxy-kernel-v10" ? 10 : h[0] == "galaxy-kernel-v9" ? 9 : h[0] == "galaxy-kernel-v8" ? 8 : h[0] == "galaxy-kernel-v7" ? 7 : h[0] == "galaxy-kernel-v6" ? 6 : h[0] == "galaxy-kernel-v5" ? 5 : h[0] == "galaxy-kernel-v4" ? 4 : h[0] == "galaxy-kernel-v3" ? 3 : h[0] == "galaxy-kernel-v2" ? 2 : 1;
     result.tick_ = u64(h[2]);
     result.next_entity_id_ = u64(h[3]);
     if (result.next_entity_id_ == 0) throw std::runtime_error("snapshot: invalid next entity ID");
@@ -14422,7 +14465,8 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                     static_cast<LocalDeliveryStage>(stage),created}).second)
                 throw std::runtime_error("snapshot: invalid local delivery order");
         } else if(f[0]=="playerperson" && result.snapshot_version_>=98) {
-            require_fields(f,result.snapshot_version_>=131?22:
+            require_fields(f,result.snapshot_version_>=132?27:
+                result.snapshot_version_>=131?22:
                 result.snapshot_version_>=122?15:result.snapshot_version_>=99?12:9);
             const auto owner=u64(f[1]),home=u64(f[2]),physical=u64(f[3]),
                 state=u64(f[4]),custodian=u64(f[5]),registered=u64(f[6]),
@@ -14440,6 +14484,11 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
             const auto voyage=result.snapshot_version_>=131?u64(f[19]):0;
             const auto descent=result.snapshot_version_>=131?u64(f[20]):0;
             const auto ascent=result.snapshot_version_>=131?u64(f[21]):0;
+            const auto sx=result.snapshot_version_>=132?i64(f[22]):0;
+            const auto sy=result.snapshot_version_>=132?i64(f[23]):0;
+            const auto sz=result.snapshot_version_>=132?i64(f[24]):0;
+            const auto motion_tick=result.snapshot_version_>=132?u64(f[25]):0;
+            const auto motion_receipt=result.snapshot_version_>=132?u64(f[26]):0;
             const bool planetary_state=state>=unsigned(PlayerPersonState::InPlanetaryShuttle);
             if(!owner || owner==kServerAuthority ||
                (state==unsigned(PlayerPersonState::AtStation) ?
@@ -14462,6 +14511,16 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                      (state==unsigned(PlayerPersonState::AtPlanetarySurface) &&
                       (!descent || ascent))) :
                     (body || lat || lon || rev || voyage || descent || ascent)) ||
+               (motion_receipt ?
+                  (!planetary_state || !motion_tick ||
+                   motion_tick>result.tick_ ||
+                   motion_receipt>=(std::uint64_t{1}<<60) ||
+                   sx< -planetary::surface_motion::kPadExtentMm ||
+                   sx>planetary::surface_motion::kPadExtentMm ||
+                   sz< -planetary::surface_motion::kPadExtentMm ||
+                   sz>planetary::surface_motion::kPadExtentMm ||
+                   sy< -32768000 || sy>32767000) :
+                  (sx || sy || sz || motion_tick)) ||
                (result.snapshot_version_<99 && state!=0) ||
                registered>result.tick_ || updated<registered ||
                updated>result.tick_ ||
@@ -14480,7 +14539,9 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                    body,static_cast<std::uint16_t>(lat),
                    static_cast<std::uint16_t>(lon),
                    static_cast<std::uint32_t>(rev),
-                   voyage,descent,ascent}).second)
+                   voyage,descent,ascent,
+                   NativePlanetarySurfacePose{sx,sy,sz,motion_tick,
+                                             motion_receipt}}).second)
                 throw std::runtime_error("snapshot: invalid player persona");
         } else if(f[0]=="npcflight" && result.snapshot_version_>=95) {
             require_fields(f,result.snapshot_version_>=96?16:12);
@@ -14662,6 +14723,13 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                    kg,origin,loaded,receipt,
                    static_cast<IntercolonyFreightStage>(stage)}).second)
                 throw std::runtime_error("snapshot: invalid intercolony freight record");
+        } else if(f[0]=="surfacemovereceipt" && result.snapshot_version_>=132) {
+            require_fields(f,2);
+            const auto id=u64(f[1]);
+            if(!id || id>=(std::uint64_t{1}<<60) ||
+               result.surface_move_receipts_.size()>=100000 ||
+               !result.surface_move_receipts_.insert(id).second)
+                throw std::runtime_error("snapshot: repeated original surface motion receipt");
         } else if(f[0]=="playerplanetreceipt" && result.snapshot_version_>=131) {
             require_fields(f,2);
             const auto id=u64(f[1]);
@@ -16040,7 +16108,8 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                     (result.snapshot_version_<63 && !result.colony_ships_.empty()))))
                 throw std::runtime_error("snapshot: invalid NPC counter");
         } else if(f[0]=="npc" && result.snapshot_version_>=20){
-            require_fields(f,result.snapshot_version_>=86 ? 11 :
+            require_fields(f,result.snapshot_version_>=132 ? 16 :
+                result.snapshot_version_>=86 ? 11 :
                 result.snapshot_version_>=32 ? 9 : result.snapshot_version_>=31 ? 8 : 7);
             NpcRecord n{};n.id=u64(f[1]);n.home_ship=u64(f[2]);n.location=u64(f[3]);
             const auto role=u64(f[4]);n.farm_xp=u64(f[5]);n.mentor_id=u64(f[6]);
@@ -16054,11 +16123,26 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                     throw std::runtime_error("snapshot: invalid legal residence");
                 n.residence_kind=static_cast<transport::LocationKind>(kind);
             }
+            n.role=static_cast<NpcRole>(role);
+            if(result.snapshot_version_>=132) {
+                n.surface_pose={
+                    i64(f[11]),i64(f[12]),i64(f[13]),u64(f[14]),u64(f[15])};
+                const auto& pos=n.surface_pose;
+                if(pos.last_move_receipt ?
+                   (!pos.last_move_tick || pos.last_move_tick>result.tick_ ||
+                    pos.last_move_receipt>=(std::uint64_t{1}<<60) ||
+                    pos.x_mm< -planetary::surface_motion::kPadExtentMm ||
+                    pos.x_mm>planetary::surface_motion::kPadExtentMm ||
+                    pos.z_mm< -planetary::surface_motion::kPadExtentMm ||
+                    pos.z_mm>planetary::surface_motion::kPadExtentMm ||
+                    pos.y_mm< -32768000 || pos.y_mm>32767000) :
+                   (pos.x_mm || pos.y_mm || pos.z_mm ||
+                    pos.last_move_tick))
+                    throw std::runtime_error("snapshot: forged original named NPC ground pose");
+            }
             if(!n.id || role>(result.snapshot_version_>=78?3ULL:2ULL) || n.farm_xp>1000000 || n.mentor_id==n.id ||
                !result.npc_next_seen_ || n.id>=result.next_npc_id_ ||
-               !result.npcs_.emplace(n.id,NpcRecord{n.id,n.home_ship,n.location,
-                                            static_cast<NpcRole>(role),n.farm_xp,n.mentor_id,n.transport_id,n.assigned_site,
-                                            n.residence_kind,n.residence_id}).second)
+               !result.npcs_.emplace(n.id,std::move(n)).second)
                 throw std::runtime_error("snapshot: invalid NPC identity");
         } else if(f[0]=="npctraining" && result.snapshot_version_>=105){
             require_fields(f,result.snapshot_version_>=108?8:6);
@@ -18209,6 +18293,31 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                 throw std::runtime_error("snapshot: invalid courier flight phase");
         }
     }
+    if(result.snapshot_version_>=132){
+        for(const auto id:result.surface_move_receipts_)
+            if(result.shuttle_flight_request_ids_.count(id) ||
+               result.player_planet_receipts_.count(id) ||
+               result.submitted_ids_.count(id) ||
+               result.planetary_family_booking_ids_.count(id) ||
+               result.pending_celestial_transits_.count(id) ||
+               result.completed_celestial_transits_.count(id))
+                throw std::runtime_error("snapshot: reused original surface motion receipt");
+        for(const auto& [owner,person]:result.player_people_){
+            (void)owner;
+            const auto& pose=person.surface_pose;
+            if(pose.last_move_receipt &&
+               (person.state!=PlayerPersonState::AtPlanetarySurface ||
+                !result.surface_move_receipts_.count(pose.last_move_receipt)))
+                throw std::runtime_error("snapshot: player cannot have fabricated surface pose");
+        }
+        for(const auto& [id,person]:result.npcs_){
+            (void)id;
+            if(person.surface_pose.last_move_receipt &&
+               !result.surface_move_receipts_.count(
+                    person.surface_pose.last_move_receipt))
+                throw std::runtime_error("snapshot: NPC pose missing original motion receipt");
+        }
+    }
     if(result.snapshot_version_>=131){
         for(const auto id:result.player_planet_receipts_)
             if(result.shuttle_flight_request_ids_.count(id) ||
@@ -19328,6 +19437,7 @@ void Simulation::swap(Simulation& other) noexcept {
     player_people_.swap(other.player_people_); // preserve v98 person identity across atomic commit
     shuttle_flight_request_ids_.swap(other.shuttle_flight_request_ids_);
     player_planet_receipts_.swap(other.player_planet_receipts_);
+    surface_move_receipts_.swap(other.surface_move_receipts_);
     planetary_family_booking_ids_.swap(other.planetary_family_booking_ids_);
     pending_celestial_transits_.swap(other.pending_celestial_transits_);
     completed_celestial_transits_.swap(other.completed_celestial_transits_);
