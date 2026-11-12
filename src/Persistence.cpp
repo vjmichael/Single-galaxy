@@ -9993,6 +9993,71 @@ bool PersistentWorld::book_planetary_shuttle_passenger(PlayerId owner,EntityId s
 }
 // S6-F5: only the original SQLite generation/writer can authorize a real
 // player or named NPC footstep. Failed writes leave receipts and poses intact.
+// S6-F5-C: one v134 source-verified game tick and a one-use jump/wait
+// decision are committed together in the ORIGINAL SQLite journal. A failed
+// authority or snapshot attempt cannot publish a partial radial motion.
+bool PersistentWorld::planetary_surface_vertical_action(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,bool jump,std::uint64_t receipt,
+        FailPoint fail) {
+    if(!receipt || receipt>=(std::uint64_t{1}<<60) ||
+       store_->station_receipt_used(receipt))return false;
+    for(const auto& [id,transit]:world_.pending_celestial_transits_){
+        (void)id;if(transit.ship==ship)return false;
+    }
+    auto next=world_;
+    next.step(); // same original transaction, never a Godot client delta
+    if(!next.planetary_surface_vertical_action(owner,ship,key,jump,receipt))
+        return false;
+    if(next.total_ore()!=resource_origin_ ||
+       next.total_credits()!=credit_origin_ ||
+       next.total_material_kg()!=world_.total_material_kg())
+        throw std::logic_error("vertical action changed original source material");
+    if(Simulation::from_snapshot(next.canonical_state()).state_hash()!=
+       next.state_hash())
+        throw std::logic_error("original v134 vertical state cannot recover");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);++generation_;
+    return true;
+}
+
+// S6-F5-C: exactly one source site's originally recorded oxygen mass is
+// transferred between that site and its physically present owner-person.
+// Spent gas stays with the person until it is returned at the SAME hatch.
+bool PersistentWorld::planetary_surface_oxygen_action(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,bool return_to_site,std::uint64_t receipt,
+        FailPoint fail) {
+    if(!receipt || receipt>=(std::uint64_t{1}<<60) ||
+       store_->station_receipt_used(receipt))return false;
+    for(const auto& [id,transit]:world_.pending_celestial_transits_){
+        (void)id;if(transit.ship==ship)return false;
+    }
+    auto next=world_;
+    if(!next.planetary_surface_oxygen_action(owner,ship,key,return_to_site,receipt))
+        return false;
+    if(next.total_ore()!=resource_origin_ ||
+       next.total_credits()!=credit_origin_ ||
+       next.total_material_kg()!=world_.total_material_kg())
+        throw std::logic_error("personal oxygen allocation changed conserved ore");
+    const auto& old_site=world_.planetary_sites().at(key);
+    const auto& new_site=next.planetary_sites().at(key);
+    const auto& old_person=world_.player_people().at(owner).surface_survival;
+    const auto& new_person=next.player_people().at(owner).surface_survival;
+    const auto old_mass=old_site.oxygen_kg+old_site.co2_kg+
+                       old_person.oxygen_kg+old_person.exhaled_co2_kg;
+    const auto new_mass=new_site.oxygen_kg+new_site.co2_kg+
+                       new_person.oxygen_kg+new_person.exhaled_co2_kg;
+    if(old_mass!=new_mass)
+        throw std::logic_error("original person oxygen source mass not conserved");
+    if(Simulation::from_snapshot(next.canonical_state()).state_hash()!=
+       next.state_hash())
+        throw std::logic_error("original oxygen custody cannot recover");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);++generation_;
+    return true;
+}
+
 bool PersistentWorld::planetary_surface_move(PlayerId owner,EntityId ship,
         const PlanetarySiteKey& key,std::uint64_t npc_id,
         std::int64_t dx_mm,std::int64_t dz_mm,std::uint64_t receipt,
