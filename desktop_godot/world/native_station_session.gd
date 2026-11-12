@@ -980,6 +980,7 @@ func _accept_industry_line(f: PackedStringArray) -> void:
 				(_pending_industry_kind=="VIEW" and result!=0) or \
 				(_pending_industry_kind=="APPROVE" and result not in [1,2]) or \
 				(_pending_industry_kind=="STEP" and result!=3) or \
+				(_pending_industry_kind=="RUN" and result not in [6,7]) or \
 				(_pending_industry_kind=="MOVE" and result not in [4,5]):
 			stop("Industrial inventory locality, generation or receipt mismatch")
 			return
@@ -1077,6 +1078,8 @@ func _accept_industry_line(f: PackedStringArray) -> void:
 			"Original colony manufacturing advanced one native tick" if int(snapshot["result"])==3 else
 			"Local industrial goods moved by original journal" if int(snapshot["result"])==4 else
 			"Original world refused local goods movement" if int(snapshot["result"])==5 else
+			"Original world manufactured at least one approved source batch" if int(snapshot["result"])==6 else
+			"Sixteen real world ticks elapsed but no physical batch completed" if int(snapshot["result"])==7 else
 			"Local industrial inventory and production refreshed")
 		return
 	stop("Unknown original industrial frame")
@@ -1097,7 +1100,7 @@ func _send_colony_industry(kind: String, selector: int) -> bool:
 		_status("Local industry console busy or not inside original colony")
 		return false
 	var opcode := {"VIEW":"INDVIEW","APPROVE":"INDAPPROVE",
-		"STEP":"INDSTEP","MOVE":"INDMOVE"}.get(kind,"")
+		"STEP":"INDSTEP","MOVE":"INDMOVE","RUN":"INDRUN"}.get(kind,"")
 	if opcode.is_empty():
 		return false
 	var request := _next_request
@@ -1118,6 +1121,11 @@ func approve_local_workshop_batch(trade: int) -> bool:
 
 func advance_local_manufacturing() -> bool:
 	return _send_colony_industry("STEP",int(_person.get("station",0)))
+
+func run_local_manufacturing_window() -> bool:
+	# Human-selected finite 16 original simulation steps: no optimistic
+	# completed batches; the next IHEAD/IJOB/ISTOCK is source readback.
+	return _send_colony_industry("RUN",int(_person.get("station",0)))
 
 func transfer_local_industrial_goods(selector: int) -> bool:
 	if selector<1 or selector>5:
