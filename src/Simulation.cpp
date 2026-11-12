@@ -7678,6 +7678,19 @@ void Simulation::ensure_physical_celestial_systems() {
 // body mass may be inferred from a client supplied elevation or surface ID.
 bool Simulation::establish_original_surface_gravity() {
     if(snapshot_version_>=134)return true;
+    // v132 local-pad footstep coordinates MUST be converted through the
+    // existing v133 native_move path first. Otherwise a jump/oxygen charge
+    // would promote a player while retaining invented zero geocoordinates.
+    if(snapshot_version_<133){
+        for(const auto& [id,p]:player_people_){
+            (void)id;
+            if(p.surface_pose.last_move_receipt)return false;
+        }
+        for(const auto& [id,n]:npcs_){
+            (void)id;
+            if(n.surface_pose.last_move_receipt)return false;
+        }
+    }
     if(physical_celestial_systems_.empty())return false;
     for(const auto& [sys,bodies]:physical_celestial_systems_){
         const auto expected=physical_bodies_for_system(sys);
@@ -11741,9 +11754,11 @@ bool Simulation::planetary_player_shuttle_action(PlayerId owner,EntityId ship,
             return false;
         person.state=PlayerPersonState::InPlanetaryShuttle;
         person.surface_pose={};
-        const auto injury=person.surface_survival.injury_points;
+        const auto prior=person.surface_survival;
         person.surface_survival={};
-        person.surface_survival.injury_points=injury; // durable medical state
+        person.surface_survival.injury_points=prior.injury_points;
+        person.surface_survival.thermal_exposure_ms=prior.thermal_exposure_ms;
+        person.surface_survival.unverified_air_exposure_ms=prior.unverified_air_exposure_ms;
     }else if(action==PlanetaryPlayerAction::Exit){
         // An original ascent is required after an actual descent. A player
         // may cancel a prelaunch boarding without claiming a surface visit.
@@ -11764,9 +11779,11 @@ bool Simulation::planetary_player_shuttle_action(PlayerId owner,EntityId ship,
         person.planet_descent_receipt=0;
         person.planet_ascent_receipt=0;
         person.surface_pose={};
-        const auto injury=person.surface_survival.injury_points;
+        const auto prior=person.surface_survival;
         person.surface_survival={};
-        person.surface_survival.injury_points=injury; // medical history survives travel
+        person.surface_survival.injury_points=prior.injury_points;
+        person.surface_survival.thermal_exposure_ms=prior.thermal_exposure_ms;
+        person.surface_survival.unverified_air_exposure_ms=prior.unverified_air_exposure_ms;
     }else return false;
     person.last_receipt=receipt;
     person.last_update_tick=tick_;

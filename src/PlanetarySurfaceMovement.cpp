@@ -319,11 +319,14 @@ bool Simulation::planetary_surface_vertical_action(PlayerId owner,EntityId ship,
     namespace grid=planetary::continuous_surface;
     if(!owner || owner==kServerAuthority || !ship || !receipt ||
        receipt>=(std::uint64_t{1}<<60) ||
+       surface_move_receipts_.size()>=100000 ||
        surface_move_receipts_.count(receipt) ||
        player_planet_receipts_.count(receipt) ||
        shuttle_flight_request_ids_.count(receipt) ||
        planetary_family_booking_ids_.count(receipt) ||
-       submitted_ids_.count(receipt) || voyages_.count(receipt))
+       submitted_ids_.count(receipt) || voyages_.count(receipt) ||
+       pending_celestial_transits_.count(receipt) ||
+       completed_celestial_transits_.count(receipt))
         return false;
     auto p=player_people_.find(owner);
     auto f=planetary_sites_.find(key);
@@ -336,6 +339,7 @@ bool Simulation::planetary_surface_vertical_action(PlayerId owner,EntityId ship,
        sh==planetary_shuttles_.end() || !vessel || !radius ||
        vessel->type!=EntityType::Ship || vessel->owner_id!=owner ||
        vessel->hull<=0 || vessel->dock_state!=DockState::InSpace ||
+       vessel->jump_state!=ShipJumpState::Ready ||
        frame==ship_frames_.end() || frame->second.anchor_body!=body ||
        p->second.state!=PlayerPersonState::AtPlanetarySurface ||
        p->second.home_ship!=ship || p->second.physical_ship ||
@@ -420,18 +424,28 @@ bool Simulation::planetary_surface_vertical_action(PlayerId owner,EntityId ship,
 // Each use must be an explicit, same-site host-authorized source transaction.
 bool Simulation::planetary_surface_oxygen_action(PlayerId owner,EntityId ship,
         const PlanetarySiteKey& key,bool return_to_site,std::uint64_t receipt) {
-    if(!receipt || receipt>=(std::uint64_t{1}<<60) ||
+    if(!owner || owner==kServerAuthority || !ship || !receipt ||
+       receipt>=(std::uint64_t{1}<<60) ||
+       surface_move_receipts_.size()>=100000 ||
        surface_move_receipts_.count(receipt) ||
        player_planet_receipts_.count(receipt) ||
        shuttle_flight_request_ids_.count(receipt) ||
-       planetary_family_booking_ids_.count(receipt))return false;
+       planetary_family_booking_ids_.count(receipt) ||
+       submitted_ids_.count(receipt) || voyages_.count(receipt) ||
+       pending_celestial_transits_.count(receipt) ||
+       completed_celestial_transits_.count(receipt))return false;
     const auto it=player_people_.find(owner);
     const auto site=planetary_sites_.find(key);
     const auto shuttle=planetary_shuttles_.find(key);
     const auto* hull=find(ship);
+    const auto frame=ship_frames_.find(ship);
     if(it==player_people_.end() || site==planetary_sites_.end() ||
        shuttle==planetary_shuttles_.end() || !hull ||
        hull->type!=EntityType::Ship || hull->owner_id!=owner ||
+       hull->hull<=0 || hull->jump_state!=ShipJumpState::Ready ||
+       hull->dock_state!=DockState::InSpace ||
+       frame==ship_frames_.end() ||
+       frame->second.anchor_body!=std::get<0>(key) ||
        it->second.state!=PlayerPersonState::AtPlanetarySurface ||
        it->second.home_ship!=ship || it->second.planet_body!=std::get<0>(key) ||
        it->second.planet_latitude!=std::get<1>(key) ||
@@ -443,7 +457,9 @@ bool Simulation::planetary_surface_oxygen_action(PlayerId owner,EntityId ship,
        site->second.owner!=owner || site->second.source_ship!=ship ||
        site->second.spaceport_phase!=3 ||
        !near_original_shuttle_hatch(it->second.surface_pose,key) ||
-       it->second.surface_survival.injury_points>=100)
+       (it->second.surface_survival.initialized &&
+        !it->second.surface_survival.grounded) ||
+       (!return_to_site && it->second.surface_survival.injury_points>=100))
         return false;
     auto& p=it->second;
     auto& sv=p.surface_survival;
