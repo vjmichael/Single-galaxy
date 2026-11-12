@@ -39,6 +39,17 @@ struct Need {
     std::int64_t buffer_above_target_kg=0; // NOT approved transferable surplus
     std::uint64_t complete_windows_covered=0;
 };
+// S6-E owner-only readout. This never grants inventory, demand, work or
+// hypothetical shipment. Consumer reserves still use current REAL stock.
+struct EcologyProductionSignal {
+    bool has_original_site=false,locally_funded_soil=false;
+    planetary::PhysicalHazard hazard=planetary::PhysicalHazard::None;
+    planetary::CropMode current_mode=planetary::CropMode::Blocked;
+    std::int64_t required_water_kg=0,required_nutrients_kg=0;
+    std::int64_t currently_possible_food_kg=0,required_power=0;
+    std::int64_t present_site_power=0;
+    std::uint64_t historically_blocked_cycles=0;
+};
 struct Compartment {
     CompartmentKind kind=CompartmentKind::ColonyShip;
     PlayerId owner=0;
@@ -47,6 +58,7 @@ struct Compartment {
     PlanetarySiteKey planetary_key{}; // meaningful only for a surface site
     std::uint64_t current_consumers=0;
     std::array<Need,3> needs{};
+    std::optional<EcologyProductionSignal> ecology; // v130 planetary surface only
 };
 struct Snapshot {
     PlayerId owner=0;
@@ -180,6 +192,39 @@ inline std::optional<Snapshot> observe_owner_world(
                 static_cast<std::uint64_t>(census->current_surface_consumers),
                 site.food_kg,site.water_kg,site.oxygen_kg))
             return std::nullopt;
+        // Overlay original-source production pressure on WO4 read-only
+        // vital bins; no change to reserve-deficit calculation or WO5 cargo.
+        if(world.planetary_ecology_enabled()) {
+            const auto phase_it=world.planetary_physical_environment().find(key);
+            const auto* phase=phase_it==world.planetary_physical_environment().end()?
+                nullptr:&phase_it->second;
+            const auto gen=world.planetary_genesis().find(std::get<0>(key));
+            const bool biosphere=gen!=world.planetary_genesis().end() &&
+                gen->second.envelope.biosphere_present;
+            const auto crop=site.farm?
+                planetary::cultivation_budget(phase,biosphere,
+                    site.utility_phase==2 && site.equipment_condition>0,
+                    site.stored_electricity,site.regional_geology_kg[0]>=100):
+                planetary::CultivationBudget{};
+            EcologyProductionSignal signal{};
+            signal.has_original_site=true;
+            signal.locally_funded_soil=site.regional_geology_kg[0]>=100;
+            signal.hazard=planetary::site_physical_hazard(phase);
+            signal.current_mode=crop.mode;
+            signal.required_water_kg=crop.water_kg;
+            signal.required_nutrients_kg=crop.nutrients_kg;
+            signal.currently_possible_food_kg=
+                crop.mode!=planetary::CropMode::Blocked &&
+                site.water_kg>=crop.water_kg &&
+                site.nutrients_kg>=crop.nutrients_kg &&
+                site.food_kg<=1000000-crop.food_kg &&
+                site.wastewater_kg<=1000000-crop.wastewater_kg?
+                    crop.food_kg:0;
+            signal.required_power=crop.electricity_units;
+            signal.present_site_power=site.stored_electricity;
+            signal.historically_blocked_cycles=site.ecology_blocked_cycles;
+            snapshot.compartments.back().ecology=signal;
+        }
     }
     return snapshot; // read-only; no hidden pending stock, movement, or receipts
 }
