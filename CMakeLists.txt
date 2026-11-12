@@ -2288,6 +2288,15 @@ if(BUILD_TESTING AND Python3_Interpreter_FOUND)
       $<TARGET_FILE:galaxy_desktop_player_host>)
   set_tests_properties(galaxy_stage6f5e_planet_host_recovery
     PROPERTIES TIMEOUT 300 LABELS "stage6;native;sqlite;host-crash-recovery")
+  # S6-F5-F: one ORIGINAL constructed site and shuttle, process crash and
+  # new epoch, physical descent/surface reboard/ascent/return, journal parity.
+  add_test(NAME galaxy_stage6f5f_original_shuttle_roundtrip
+    COMMAND ${Python3_EXECUTABLE}
+      ${CMAKE_CURRENT_SOURCE_DIR}/tests/STAGE6F5F_InstalledShuttleRecoveryTests.py
+      $<TARGET_FILE:galaxy_stage6f5e_planet_host_fixture>
+      $<TARGET_FILE:galaxy_desktop_player_host>)
+  set_tests_properties(galaxy_stage6f5f_original_shuttle_roundtrip
+    PROPERTIES TIMEOUT 420 LABELS "stage6;native;sqlite;shuttle;crash-recovery")
 endif()
 if(BUILD_TESTING AND Python3_Interpreter_FOUND)
   add_test(NAME galaxy_stage6f5c_original_planet_host_refusal
