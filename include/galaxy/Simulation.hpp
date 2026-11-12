@@ -103,6 +103,13 @@ enum class PlayerPersonState : std::uint8_t {
 enum class PlanetaryPlayerAction : std::uint8_t {
     Board=1, Disembark=2, Reboard=3, Exit=4
 };
+// S6-F5/v132: feet-relative native local landing-pad coordinates in mm.
+// Not an absolute galactic position, not Godot visual/camera coordinates.
+// A zero receipt represents an unpositioned legacy NPC, not consent to move.
+struct NativePlanetarySurfacePose {
+    std::int64_t x_mm=0,y_mm=0,z_mm=0;
+    std::uint64_t last_move_tick=0,last_move_receipt=0;
+};
 // PLAY-STATION-02: host-validated finite station traversal and ship transfer.
 enum class StationPlayerAction : std::uint8_t { Walk=1, Board=2, Disembark=3 };
 struct PlayerPerson {
@@ -125,6 +132,7 @@ struct PlayerPerson {
     std::uint32_t planet_revision=0;
     std::uint64_t planet_flight_receipt=0;
     std::uint64_t planet_descent_receipt=0,planet_ascent_receipt=0;
+    NativePlanetarySurfacePose surface_pose{}; // v132, owner-person movement
 };
 enum class CelestialKind {Star=0,Planet=1,Moon=2,DebrisRegion=3};
 struct PhysicalCelestialBody {
@@ -328,6 +336,7 @@ struct NpcRecord {
     // Maximum three receipt-backed credits per installed native trade.
     // Transfer, relocation and death preserve the identity's training history.
     std::vector<NpcTradeTraining> industrial_training{};
+    NativePlanetarySurfacePose surface_pose{}; // v132 named ORIGINAL NPC pose
     constexpr transport::Endpoint legal_residence() const noexcept {
         return {residence_kind,residence_id?residence_id:home_ship};
     }
@@ -1527,6 +1536,12 @@ public:
     bool planetary_player_shuttle_action(PlayerId owner,EntityId ship,
         const PlanetarySiteKey& key,PlanetaryPlayerAction action,
         std::uint64_t receipt);
+    // S6-F5 native fixed-point ground movement. Actor 0 = the original
+    // PlayerPerson; nonzero = an existing owner-controlled original NPC.
+    // No client-chosen height, tile ID, world location or collision outcome.
+    bool planetary_surface_move(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,std::uint64_t npc_id,
+        std::int64_t dx_mm,std::int64_t dz_mm,std::uint64_t receipt);
     // DOCK-03A: trusted host-only, same-owner temporary ship-to-berth
     // shore duty. Moves one ORIGINAL named NPC physical location; neither
     // creates a new resident nor alters its legal home/crew contract.
@@ -2008,6 +2023,7 @@ private:
     std::map<std::uint64_t,WorkDirective> work_directives_; // v94
     std::set<std::uint64_t> shuttle_flight_request_ids_; // v81 replay rejection
     std::set<std::uint64_t> player_planet_receipts_; // v131 original action replay rejection
+    std::set<std::uint64_t> surface_move_receipts_; // v132 exact native movement replay
     std::set<std::uint64_t> planetary_family_booking_ids_; // v116 immutable roster approvals
     std::map<std::uint64_t,PendingCelestialTransit> pending_celestial_transits_;
     std::map<std::uint64_t,CompletedCelestialTransit> completed_celestial_transits_;
