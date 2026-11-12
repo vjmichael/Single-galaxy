@@ -130,10 +130,10 @@ func _accept(line: String) -> void:
             _pending = 0
         status_changed.emit("Original C++ refused planetary step #%d: %s" % [id, p[3]])
         return
-    if p.size() != 18 or p[0]!="PFRAME" or p[1]!="1":
+    if p.size() != 28 or p[0]!="PFRAME" or p[1]!="1":
         stop("Unexpected original planetary host frame")
         return
-    for i in range(2,18):
+    for i in range(2,28):
         if not _integer(p[i]):
             stop("Non-numeric original planetary pose")
             return
@@ -153,18 +153,35 @@ func _accept(line: String) -> void:
     var tick := int(p[15])
     var gen := int(p[16])
     var site := int(p[17])
-    if sess<=0 or ship<=0 or body<=0 or site<=0 or lat<0 or lat>=36 or lon<0 or lon>=72 or        abs(x)>1000000000000 or abs(z)>1000000000000 or abs(y)>100000000 or        abs(lat_pdeg)>90000000000000 or abs(lon_pdeg)>180000000000000 or        move_tick<0 or move_tick>tick or receipt<0 or tick<0 or gen<=0:
+    var gravity := int(p[18])
+    var radial_speed := int(p[19])
+    var grounded := int(p[20])
+    var oxygen_kg := int(p[21])
+    var co2_kg := int(p[22])
+    var thermal_ms := int(p[23])
+    var air_unknown_ms := int(p[24])
+    var injury := int(p[25])
+    var vertical_tick := int(p[26])
+    var command_receipt := int(p[27])
+    if sess<=0 or ship<=0 or body<=0 or site<=0 or lat<0 or lat>=36 or lon<0 or lon>=72 or        abs(x)>1000000000000 or abs(z)>1000000000000 or abs(y)>100000000 or        abs(lat_pdeg)>90000000000000 or abs(lon_pdeg)>180000000000000 or        move_tick<0 or move_tick>tick or receipt<0 or tick<0 or gen<=0 or \
+       gravity<0 or gravity>50000 or abs(radial_speed)>60000 or \
+       grounded not in [0,1] or oxygen_kg<0 or oxygen_kg>4 or co2_kg<0 or co2_kg>4 or \
+       oxygen_kg+co2_kg>4 or thermal_ms<0 or thermal_ms>1000000000000 or \
+       air_unknown_ms<0 or air_unknown_ms>1000000000000 or injury<0 or injury>100 or \
+       vertical_tick<0 or vertical_tick>tick or command_receipt<0:
         stop("Native planetary source/pose out of bounds")
         return
     var identity := "%d:%d:%d:%d:%d" % [ship,body,lat,lon,site]
     if _session == 0:
-        if req!=0:
+        if req!=0 or command_receipt!=0:
             stop("Unsolicited planetary movement acknowledgement")
             return
         _session=sess
         _identity=identity
     else:
-        if sess!=_session or identity!=_identity or req!=_pending or            tick<=_tick or gen<=_generation or receipt<=int(_last_pose.get("receipt",0)):
+        if sess!=_session or identity!=_identity or req!=_pending or            tick<_tick or gen<=_generation or command_receipt<=0 or \
+           vertical_tick<int(_last_pose.get("last_vertical_tick",0)) or \
+           (receipt!=int(_last_pose.get("receipt",0)) and receipt<=0):
             stop("Replayed or mismatched original planetary receipt")
             return
         _pending=0
@@ -173,7 +190,12 @@ func _accept(line: String) -> void:
     _last_pose={"ship":ship,"body":body,"lat":lat,"lon":lon,"site":site,
         "x_mm":x,"y_mm":y,"z_mm":z,"latitude_pdeg":lat_pdeg,
         "longitude_pdeg":lon_pdeg,"last_move_tick":move_tick,
-        "receipt":receipt,"tick":tick,"gen":gen}
+        "receipt":receipt,"tick":tick,"gen":gen,
+        "gravity_mm_s2":gravity,"radial_speed_mm_s":radial_speed,
+        "grounded":grounded==1,"oxygen_kg":oxygen_kg,"co2_kg":co2_kg,
+        "thermal_ms":thermal_ms,"air_uncertain_ms":air_unknown_ms,
+        "injury_points":injury,"last_vertical_tick":vertical_tick,
+        "command_receipt":command_receipt}
     pose_received.emit(_last_pose.duplicate(true))
 
 func submit_walk(heading: Vector3, running: bool=false) -> void:
@@ -192,4 +214,23 @@ func submit_walk(heading: Vector3, running: bool=false) -> void:
     _pending=req
     _last_send_ms=now
     _stdout.store_line("PMOVE|%d|%d|%d|%d" % [_session,req,dx,dz])
+    _stdout.flush()
+
+func submit_vertical(jump: bool) -> void:
+    _send_player_action("PSTEP", "JUMP" if jump else "WAIT")
+
+func submit_oxygen(return_to_site: bool) -> void:
+    _send_player_action("POXY", "RETURN" if return_to_site else "CHARGE")
+
+func _send_player_action(verb: String, mode: String) -> void:
+    if not has_verified_pose() or _pending!=0:
+        return
+    var now := Time.get_ticks_msec()
+    if now-_last_send_ms<100:
+        return
+    var req := _request
+    _request += 1
+    _pending=req
+    _last_send_ms=now
+    _stdout.store_line("%s|%d|%d|%s" % [verb,_session,req,mode])
     _stdout.flush()

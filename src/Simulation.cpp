@@ -11728,6 +11728,12 @@ bool Simulation::planetary_player_shuttle_action(PlayerId owner,EntityId ship,
         person.state=PlayerPersonState::AtPlanetarySurface;
         person.surface_pose={}; // Original shuttle hatch, contact settled by native motion
     }else if(action==PlanetaryPlayerAction::Reboard){
+        // Portable original-site oxygen/CO2 must first return to its original
+        // source at this hatch. Neither boarding nor logout can mint stock.
+        if(person.surface_survival.oxygen_kg ||
+           person.surface_survival.exhaled_co2_kg ||
+           (person.surface_survival.initialized &&
+            !person.surface_survival.grounded))return false;
         if(!at_key || person.state!=PlayerPersonState::AtPlanetarySurface ||
            phase!=2 || !person.planet_descent_receipt ||
            shuttle->second.descent_receipt!=person.planet_descent_receipt ||
@@ -11735,6 +11741,9 @@ bool Simulation::planetary_player_shuttle_action(PlayerId owner,EntityId ship,
             return false;
         person.state=PlayerPersonState::InPlanetaryShuttle;
         person.surface_pose={};
+        const auto injury=person.surface_survival.injury_points;
+        person.surface_survival={};
+        person.surface_survival.injury_points=injury; // durable medical state
     }else if(action==PlanetaryPlayerAction::Exit){
         // An original ascent is required after an actual descent. A player
         // may cancel a prelaunch boarding without claiming a surface visit.
@@ -11755,6 +11764,9 @@ bool Simulation::planetary_player_shuttle_action(PlayerId owner,EntityId ship,
         person.planet_descent_receipt=0;
         person.planet_ascent_receipt=0;
         person.surface_pose={};
+        const auto injury=person.surface_survival.injury_points;
+        person.surface_survival={};
+        person.surface_survival.injury_points=injury; // medical history survives travel
     }else return false;
     person.last_receipt=receipt;
     person.last_update_tick=tick_;
@@ -14621,7 +14633,8 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                    motion_receipt>=(std::uint64_t{1}<<60) ||
                    sx< -motion_limit || sx>motion_limit ||
                    sz< -motion_limit || sz>motion_limit ||
-                   sy< -32768000 || sy>32767000 ||
+                   sy< (result.snapshot_version_>=134? -100000000:-32768000) ||
+                   sy> (result.snapshot_version_>=134?100000000:32767000) ||
                    (result.snapshot_version_>=133 &&
                     !planetary::continuous_surface::canonical(
                         {native_lat,native_lon}))) :

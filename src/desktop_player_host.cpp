@@ -10,6 +10,7 @@
 #include "galaxy/ColonyOnboarding.hpp"
 #include "galaxy/PlanetaryContinuousSurface.hpp"
 #include "galaxy/PlanetarySurfaceMovement.hpp"
+#include "galaxy/PlanetaryBodyGravity.hpp"
 #include <charconv>
 #include <chrono>
 #include <cstdint>
@@ -240,7 +241,7 @@ static int run_planet_host(const std::string& save_utf8){
               & ~((std::uint64_t{1}<<20)-1);
         std::uint64_t last_request=0,attempts=0;
         auto last_step=std::chrono::steady_clock::now()-std::chrono::milliseconds(100);
-        const auto emit=[&](std::uint64_t request){
+        const auto emit=[&](std::uint64_t request,std::uint64_t command_receipt){
             const auto* p=landed();
             if(!p)throw std::runtime_error("planetary player custody lost");
             const auto& pose=p->surface_pose;
@@ -252,6 +253,15 @@ static int run_planet_host(const std::string& save_utf8){
                 latitude=center->latitude_pdeg;
                 longitude=center->longitude_pdeg;
             }
+            const auto& survival=p->surface_survival;
+            std::int64_t body_g=0;
+            const auto body=world.world().celestial_navigation_anchor(
+                kLocalOwner,p->home_ship,p->planet_body);
+            if(body){
+                const auto value=planetary::gravity::surface_gravity_mm_s2(
+                    body->physical_radius_mm,body->physical_mass_1e18_kg);
+                if(value)body_g=*value;
+            }
             std::cout<<"PFRAME|1|"<<session<<'|'<<request<<'|'<<p->home_ship
                      <<'|'<<p->planet_body<<'|'<<p->planet_latitude
                      <<'|'<<p->planet_longitude<<'|'<<pose.x_mm
@@ -262,10 +272,18 @@ static int run_planet_host(const std::string& save_utf8){
                      <<'|'<<world.world().planetary_sites().at(
                         PlanetarySiteKey{p->planet_body,p->planet_latitude,
                            p->planet_longitude,p->planet_revision}).surface_location
+                     <<'|'<<body_g<<'|'<<survival.radial_speed_mm_s
+                     <<'|'<<unsigned(survival.grounded)
+                     <<'|'<<survival.oxygen_kg<<'|'<<survival.exhaled_co2_kg
+                     <<'|'<<survival.thermal_exposure_ms
+                     <<'|'<<survival.unverified_air_exposure_ms
+                     <<'|'<<survival.injury_points
+                     <<'|'<<survival.last_vertical_tick
+                     <<'|'<<command_receipt
                      <<'\n'<<std::flush;
             if(!std::cout)throw std::runtime_error("Godot planet pipe closed");
         };
-        emit(0);
+        emit(0,0);
         std::string line;
         while(std::getline(std::cin,line)){
             if(line=="QUIT")return 0;
@@ -274,9 +292,14 @@ static int run_planet_host(const std::string& save_utf8){
             const auto f=split(line);
             std::uint64_t supplied=0,req=0;
             std::int64_t dx=0,dz=0;
-            if(f.size()!=5 || f[0]!="PMOVE" ||
-               !number(f[1],supplied)||!number(f[2],req)||
-               !number(f[3],dx)||!number(f[4],dz)){
+            const bool walking=f.size()==5 && f[0]=="PMOVE";
+            const bool vertical=f.size()==4 && f[0]=="PSTEP" &&
+                (f[3]=="JUMP" || f[3]=="WAIT");
+            const bool oxygen=f.size()==4 && f[0]=="POXY" &&
+                (f[3]=="CHARGE" || f[3]=="RETURN");
+            if((!walking&&!vertical&&!oxygen) ||
+               !number(f[1],supplied) || !number(f[2],req) ||
+               (walking&&(!number(f[3],dx)||!number(f[4],dz)))){
                 deny(0,"planet-command-malformed");continue;
             }
             if(supplied!=session){deny(req,"planet-session-mismatch");continue;}
@@ -284,7 +307,7 @@ static int run_planet_host(const std::string& save_utf8){
                 deny(req,"planet-request-replayed");continue;
             }
             last_request=req;
-            if(!surface::within_step(dx,dz,true)){
+            if(walking && !surface::within_step(dx,dz,true)){
                 deny(req,"planet-step-limit");continue;
             }
             // Native timing is separate from Godot frame rate. A fast or
@@ -302,12 +325,25 @@ static int run_planet_host(const std::string& save_utf8){
             const auto ship=before->home_ship;
             // An original world tick is required between ground steps.
             // No host-side local interpolation or physics may advance the person.
-            world.steps(1);
-            if(!world.planetary_surface_move(kLocalOwner,ship,key,0,dx,dz,
-                      receipt_base+req)){
-                deny(req,"planet-native-movement-refused");continue;
+            const auto proof=receipt_base+req;
+            bool accepted=false;
+            if(walking){
+                world.steps(1); // existing F5-B command/tick contract
+                accepted=world.planetary_surface_move(
+                    kLocalOwner,ship,key,0,dx,dz,proof);
+            }else if(vertical){
+                // One original STEP, vertical update and authorization receipt
+                // in the same transaction, no Godot-supplied impulse.
+                accepted=world.planetary_surface_vertical_action(
+                    kLocalOwner,ship,key,f[3]=="JUMP",proof);
+            }else if(oxygen){
+                accepted=world.planetary_surface_oxygen_action(
+                    kLocalOwner,ship,key,f[3]=="RETURN",proof);
             }
-            emit(req); // only AFTER the original SQLite atomic commit
+            if(!accepted){
+                deny(req,"planet-native-action-refused");continue;
+            }
+            emit(req,proof); // only AFTER the verified SQLite atomic commit
         }
         return 0;
     }catch(const std::exception& e){
