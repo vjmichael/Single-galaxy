@@ -355,7 +355,8 @@ static void cross_system_ship_destruction_custody(){
     CHECK(separation && std::llabs(separation->x_mm)<12000 &&
           std::llabs(separation->y_mm)<12000 &&
           std::llabs(separation->z_mm)<12000);
-    const auto ore=world.total_ore(),entities=world.entities().size();
+    const auto ore=world.total_ore();
+    const auto entities=world.entities().size();
     const auto npcs=world.npc_records().size();
     const auto id_before=world.find(near_drone)->id;
     CHECK(world.find(near_drone)->cargo==6 &&
