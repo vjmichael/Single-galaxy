@@ -12660,10 +12660,11 @@ void Simulation::process_planetary_surface_operations() {
             const bool biosphere=gen!=planetary_genesis_.end() &&
                 gen->second.envelope.biosphere_present;
             const auto crop=snapshot_version_>=130?
-                planetary::cultivation_budget(phase,biosphere,
+                planetary::seasonal_ecology_budget(phase,biosphere,
                     site.utility_phase==2 && site.farm &&
                     site.equipment_condition>0,site.stored_electricity,
-                    site.regional_geology_kg[0]>=100):
+                    site.regional_geology_kg[0]>=100,tick_,
+                    site.ecology_last_tick,site.ecology_blocked_cycles):
                 planetary::CultivationBudget{planetary::CropMode::Field,
                     planetary::PhysicalHazard::None,10,5,12,3,0};
             if(site.workforce_policy==1 && site.farm &&
@@ -12850,9 +12851,10 @@ bool Simulation::cultivate_planetary_site(PlayerId owner,EntityId ship,
         const auto gen=planetary_genesis_.find(body);
         const bool biosphere=gen!=planetary_genesis_.end() &&
             gen->second.envelope.biosphere_present;
-        plan=planetary::cultivation_budget(phase,biosphere,
+        plan=planetary::seasonal_ecology_budget(phase,biosphere,
             facility.utility_phase==2,facility.stored_electricity,
-            facility.regional_geology_kg[0]>=100);
+            facility.regional_geology_kg[0]>=100,tick_,
+            facility.ecology_last_tick,facility.ecology_blocked_cycles);
         if(plan.mode==planetary::CropMode::Blocked)return false;
     }
     if(facility.water_kg<plan.water_kg*batches ||
