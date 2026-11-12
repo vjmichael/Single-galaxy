@@ -50,6 +50,15 @@ def receive(output, predicate, seconds=35):
             f = line.split("|")
             assert len(f) == 40 and f[1] == "1", line
             assert all(x.lstrip("-").isdigit() for x in f[2:]), line
+        elif line.startswith("NROSTER|1|"):
+            fields=line.split("|")
+            assert len(fields)>=5 and int(fields[4])<=16, line
+            assert len(fields)==5+int(fields[4]), line
+            assert all(x.isdigit() for x in fields[2:]), line
+        elif line.startswith("NACK|1|"):
+            fields=line.split("|")
+            assert len(fields)==10 and all(x.lstrip("-").isdigit()
+                                           for x in fields[2:]), line
         elif not line.startswith("DENY|1|"):
             raise AssertionError("Unexpected native planet frame: " + line)
         if predicate(line):
