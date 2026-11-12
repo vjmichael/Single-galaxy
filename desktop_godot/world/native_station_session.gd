@@ -4,6 +4,7 @@ const SGDX_LAUNCH := preload("res://world/sgdx_process_launch.gd")
 ## This bridge never sets person/ship location in SQLite from Godot.
 signal person_received(person: Dictionary)
 signal refinery_received(snapshot: Dictionary)
+signal industry_received(snapshot: Dictionary)
 signal colony_population_received(snapshot: Dictionary)
 signal dock_received(snapshot: Dictionary)
 signal dock_pedestrians_received(frame: Dictionary)
@@ -50,6 +51,11 @@ const DOCK_AUTO_INTERVAL_MS := 900
 var _refinery_header := {}
 var _refinery_lots: Array[Dictionary] = []
 var _refinery_minerals := {}
+var _pending_industry_kind := ""
+var _industry_receiving := false
+var _industry_head := {}
+var _industry_stocks: Array[Dictionary] = []
+var _industry_jobs: Array[Dictionary] = []
 var _last_startup_diagnostic := ""
 
 func _write_station_diagnostic(reason: String, detail: String) -> void:
@@ -207,6 +213,9 @@ func _integer(value: String) -> bool:
 
 func _accept_line(line: String) -> void:
 	var f := line.split("|", false)
+	if f.size() > 0 and f[0] in ["IHEAD", "ISTOCK", "IJOB", "IEND"]:
+		_accept_industry_line(f)
+		return
 	if f.size() > 0 and f[0] == "DPED":
 		_accept_native_dock_pedestrians(f)
 		return
@@ -238,6 +247,11 @@ func _accept_line(line: String) -> void:
 				_queued_hangar_ready_msec = 0
 				_status("Native WALK rejected; press E again after reaching the hatch")
 			_pending_refinery_kind = ""
+			_pending_industry_kind = ""
+			_industry_receiving = false
+			_industry_head.clear()
+			_industry_stocks.clear()
+			_industry_jobs.clear()
 			_pending_population = false
 			_pending_dock_kind = ""
 			_refinery_receiving = false
@@ -753,6 +767,165 @@ func _accept_refinery_line(f: PackedStringArray) -> void:
 		return
 	stop("Unknown refinery source frame")
 
+func _industrial_item_code(code: String) -> bool:
+	if code.is_empty() or code.length()>60:
+		return false
+	for character in code:
+		if not character in "abcdefghijklmnopqrstuvwxyz0123456789/_":
+			return false
+	return true
+
+func _accept_industry_line(f: PackedStringArray) -> void:
+	var kind := f[0]
+	if kind=="IHEAD":
+		if f.size()!=16 or f[1]!="1" or _industry_receiving or \
+				_pending<=0 or _pending_industry_kind.is_empty():
+			stop("Unexpected native colony industry header")
+			return
+		for i in range(2,16):
+			if not _integer(f[i]):
+				stop("Invalid original industrial header field")
+				return
+		var station := int(f[6])
+		var rows := int(f[11])
+		var result := int(f[15])
+		if int(f[2])!=_session or int(f[3])!=_pending or \
+				int(f[4])<_tick or int(f[5])<_generation or \
+				int(_person.get("state",-1))!=4 or \
+				station!=int(_person.get("station",0)) or \
+				rows<0 or rows>64 or int(f[12]) not in [0,1] or \
+				int(f[7]) not in [0,1] or int(f[8]) not in [0,1] or \
+				int(f[9]) not in [0,1] or int(f[10]) not in [0,1] or \
+				int(f[13])<0 or int(f[14])<0 or \
+				(_pending_industry_kind=="VIEW" and result!=0) or \
+				(_pending_industry_kind=="APPROVE" and result not in [1,2]) or \
+				(_pending_industry_kind=="STEP" and result!=3):
+			stop("Industrial inventory locality, generation or receipt mismatch")
+			return
+		_industry_head = {"station":station,"tick":int(f[4]),
+			"generation":int(f[5]),"constructed":int(f[7])==1,
+			"refinery":int(f[8])==1,"workshop":int(f[9])==1,
+			"storage":int(f[10])==1,"rows":rows,
+			"truncated":int(f[12])==1,"escrow_kg":int(f[13]),
+			"hangar_ore_t":int(f[14]),"result":result}
+		_industry_stocks.clear()
+		_industry_jobs.clear()
+		_industry_receiving=true
+		return
+	if not _industry_receiving or f.size()<4 or f[1]!="1" or \
+			not _integer(f[2]) or not _integer(f[3]) or \
+			int(f[2])!=_session or int(f[3])!=_pending:
+		stop("Unsolicited original industrial source row")
+		return
+	if kind=="ISTOCK":
+		if f.size()!=8 or _industry_stocks.size()>=int(_industry_head["rows"]) or \
+				f[4] not in ["R","W","S"] or not _integer(f[5]) or \
+				not _industrial_item_code(f[6]) or not _integer(f[7]) or \
+				int(f[5])<0 or int(f[7])<=0 or int(f[7])>1000000000000 or \
+				(f[4]=="R" and not _industry_head["refinery"]) or \
+				(f[4]=="W" and not _industry_head["workshop"]) or \
+				(f[4]=="S" and not _industry_head["storage"]) or \
+				(f[4]!="S" and int(f[5])!=0):
+			stop("Invalid physical industrial stock entry")
+			return
+		for row in _industry_stocks:
+			if row["kind"]==f[4] and row["bin"]==int(f[5]) and row["code"]==f[6]:
+				stop("Duplicated native physical stock entry")
+				return
+		_industry_stocks.append({"kind":f[4],"bin":int(f[5]),
+			"code":f[6],"kg":int(f[7])})
+		return
+	if kind=="IJOB":
+		if f.size()!=16 or not _industry_head["workshop"] or \
+				_industry_jobs.size()>=2:
+			stop("Invalid original manufacturing job board")
+			return
+		for i in range(4,16):
+			if not _integer(f[i]) or int(f[i])<0:
+				stop("Negative or malformed original manufacturing job")
+				return
+		var trade := int(f[4])
+		if trade not in [1,2] or int(f[5]) not in [0,1] or \
+				int(f[14]) not in [0,1] or int(f[15]) not in [0,1]:
+			stop("Unsupported original native workshop job")
+			return
+		for job in _industry_jobs:
+			if int(job["trade"])==trade:
+				stop("Duplicate native trade")
+				return
+		_industry_jobs.append({"trade":trade,"approved":int(f[5])==1,
+			"target":int(f[6]),"completed":int(f[7]),"worker":int(f[8]),
+			"supervisor":int(f[9]),"input":int(f[10]),
+			"reserved":int(f[11]),"output":int(f[12]),
+			"scrap":int(f[13]),"powered":int(f[14])==1,
+			"on_shift":int(f[15])==1})
+		return
+	if kind=="IEND":
+		if f.size()!=9:
+			stop("Invalid original industry completion receipt")
+			return
+		for i in range(4,9):
+			if not _integer(f[i]):
+				stop("Malformed original industrial completion")
+				return
+		if int(f[4])!=int(_industry_head["tick"]) or \
+				int(f[5])!=int(_industry_head["generation"]) or \
+				int(f[6])!=_industry_stocks.size() or \
+				int(f[7])!=_industry_jobs.size() or \
+				int(f[8])!=int(_industry_head["result"]) or \
+				_industry_stocks.size()!=int(_industry_head["rows"]) or \
+				_industry_jobs.size()!=(2 if _industry_head["workshop"] else 0):
+			stop("Industrial stock and job count contradict original receipt")
+			return
+		_tick=int(f[4])
+		_generation=int(f[5])
+		_pending=0
+		_pending_industry_kind=""
+		_industry_receiving=false
+		var snapshot := _industry_head.duplicate(true)
+		snapshot["stocks"]=_industry_stocks.duplicate(true)
+		snapshot["jobs"]=_industry_jobs.duplicate(true)
+		_industry_head.clear()
+		_industry_stocks.clear()
+		_industry_jobs.clear()
+		industry_received.emit(snapshot)
+		_status("Original workshop batch approved" if int(snapshot["result"])==1 else
+			"Original workshop declined batch" if int(snapshot["result"])==2 else
+			"Original colony manufacturing advanced one native tick" if int(snapshot["result"])==3 else
+			"Local industrial inventory and production refreshed")
+		return
+	stop("Unknown original industrial frame")
+
+func _send_colony_industry(kind: String, selector: int) -> bool:
+	if not _active or _session<=0 or _pending!=0 or \
+			int(_person.get("state",-1))!=4 or \
+			int(_person.get("station",0))<=0 or \
+			Time.get_ticks_msec()-_last_send<NATIVE_HANGAR_COMMAND_GAP_MS:
+		_status("Local industry console busy or not inside original colony")
+		return false
+	var opcode := {"VIEW":"INDVIEW","APPROVE":"INDAPPROVE",
+		"STEP":"INDSTEP"}.get(kind,"")
+	if opcode.is_empty():
+		return false
+	var request := _next_request
+	_next_request+=1
+	_pending=request
+	_pending_industry_kind=kind
+	_last_send=Time.get_ticks_msec()
+	_send("%s|%d|%d|%d|%d" % [opcode,_session,request,_generation,selector])
+	return true
+
+func request_colony_industry() -> bool:
+	return _send_colony_industry("VIEW",int(_person.get("station",0)))
+
+func approve_local_workshop_batch(trade: int) -> bool:
+	if trade not in [1,2]:
+		return false
+	return _send_colony_industry("APPROVE",trade)
+
+func advance_local_manufacturing() -> bool:
+	return _send_colony_industry("STEP",int(_person.get("station",0)))
+
 func request_colony_inventory() -> void:
 	# Colony-local operations panel: user must be physically at THIS native
 	# station, but need not walk to a separate refinery building.
@@ -954,6 +1127,11 @@ func stop(message: String = "Station session closed", graceful: bool = false) ->
 	_queued_hangar_intent = false
 	_queued_hangar_ready_msec = 0
 	_pending_refinery_kind = ""
+	_pending_industry_kind = ""
+	_industry_receiving = false
+	_industry_head.clear()
+	_industry_stocks.clear()
+	_industry_jobs.clear()
 	_pending_dock_kind = ""
 	_dock_initial_read_done = false
 	_dock_auto_remaining = 0
