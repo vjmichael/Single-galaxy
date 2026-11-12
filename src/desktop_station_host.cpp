@@ -84,8 +84,8 @@ static int run_host(int argc,char** argv){
   // exists to construct (not gift) the first original outpost and machines.
   // The original mining, fabrication, ore lots and cargo limits still apply.
   // Compact rock radii avoid a 900-metre swept-collision sphere at the dock.
-  (void)seed.add_geological_asteroid({25000,0},AsteroidClass::Metallic,64,2);
-  (void)seed.add_geological_asteroid({42000,0},AsteroidClass::Silicate,24,2);
+  (void)seed.add_geological_asteroid({25000,0},AsteroidClass::Metallic,2,3000);
+  (void)seed.add_geological_asteroid({42000,0},AsteroidClass::Silicate,2,1000);
   seed.enable_native_galactic_physics({{1,galactic::Point{{0,100000},{0,100000},{0,100000}}}});
   // Opt in ONLY the genesis of this explicit test station. Existing
   // SQLite worlds must load their own original rules and resources.
