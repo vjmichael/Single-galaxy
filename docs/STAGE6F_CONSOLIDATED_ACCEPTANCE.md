@@ -18,13 +18,16 @@ host/journal evidence, not just a headless renderer screenshot.
 | **S6-F5-E terrain renderer** | Authenticated host emits a bounded 3x3 window of original 17x17 patches; immutable survey/geometry and numeric bounds; Godot merges source tiles into one non-colliding mesh and follows the signed-mm odometer through floating-origin rebases | Source integrated; optional headless Godot smoke registered but NOT executed |
 | **S6-F5-E character** | Actual Godot player controller displays original XYZ, suit and injury; optional F1 third-person; native planet mode disables Godot capsule collision/raycast and does not call local physics | Source integrated; windowed visual/control acceptance NOT executed |
 | **S6-F5-E background recovery** | Existing 100ms original-world journaled ticker independent of input; added multi-tick SQLite recover-copy and process-kill/restart acceptance fixtures; new host epoch rejects stale commands; initial reentry MUST be exact persisted state with no offline catch-up; Godot's 3s PFRAME heartbeat watchdog invalidates a stalled display and locks native movement pending recovery | Fixtures staged; subprocess run and OS/kernel restart verification outstanding |
+| **S6-F5-F installed shuttle transfer** | Same desktop native executable gains `--planet-transfer` mode under the original SQLite OS writer lease, bounded original shuttle-site enumeration, explicit human BOARD/DESCEND/DISEMBARK/ASCEND/EXIT with native commits, source-validated TSITE/TFRAME/TLAND/TRETURN; Godot transfer panel and role handoff; original-hatch E reboard with committed PLEAVE | Source implemented; exact-head compilation, transport subprocess test, Godot panel, SGDX supervision and installed human game **NOT RUN** |
 
 ## New tests, by their exact registration names
 
 1. `galaxy_stage6_native_surface_movement`: extended with 3x3 host atlas identity/bounds/denied-owner and consecutive native-tick SQLite copy checks.
 2. `galaxy_stage6f5e_planet_host_recovery`: creates a genuinely landed original person, starts the original `galaxy_desktop_player_host --planet`, observes autonomous frames, kills the host, inspects original SQLite, restarts, rejects an old-session movement and applies one fresh native command. **Not yet run.**
 3. `galaxy_stage6f5e_godot_tile_window` (when a Godot 4 binary is present): loads the actual renderer and checks nine tiles, floating-origin rebase, wrong-session denial, and mixed-body denial. This is a **synthetic renderer input fixture**, not evidence of native ownership. **Not yet run.**
-4. Existing S6-F native-math, original landing and Godot/SGDX tests retain their separate admission criteria.
+4. `galaxy_stage6f5f_original_shuttle_roundtrip` exercises a real source-built orbital site, committed person boarding, native descent, forced process death, fresh epoch denial, disembark, source-hatch reboard, ascent, exit and original SQLite mass conservation. **Authored, NOT RUN.**
+5. `galaxy_stage6f5f_godot_shuttle_source` checks strict Godot source-shuttle packets and operator controls with synthetic packets. **Authored, NOT RUN; not native gameplay evidence.**
+6. Existing S6-F native-math, original landing and Godot/SGDX tests retain their separate admission criteria.
 
 ## Required consolidated verification sequence
 
@@ -44,10 +47,10 @@ host/journal evidence, not just a headless renderer screenshot.
 - Exercise F1 camera, jump, suit charging/equip, life support, original medical recovery and re-embarkation with durable receipts.
 - Test missing/unknown atmosphere WITHOUT fabricated hypoxia, water/ocean and hazardous regions without fake walkable floor, and valid refusal for missing surveys.
 - Verify package contains the native host, SGDX supervisor, Godot scripts, source assets and all required SQLite migration paths. Run installed Windows human and Radeon/GPU sustained playtest.
-- **Open interaction gap:** original transport and shuttle/re-embarkation are implemented in the native world, but a complete installed-Godot landing/reboarding command UI/handoff has not been proven end-to-end. F9 remains an explicit existing-world picker, not a substitute for an integrated arrival flow.
+- **S6-F5-F source addition:** real live-cockpit F9 can hand off its *actual* original SQLite world to a source-verified shuttle site selector and the existing native transport actions; a completed DISEMBARK opens the genuine surface host, and hatch-only E reboard later opens the native ascent/EXIT path. **This is only staged source, not an installed accepted flow.** Shift+F9 offers manual in-shuttle recovery, but automatic startup role reconciliation remains open. See [F5-F ledger](engineering/STAGE06F5F_INSTALLED_SHUTTLE_TRANSIT_20261112.md).
 
 **D. Release gate (blocked):**
-- No PR, CI acceptance, merge, release or installed-app acceptance claimed on this branch.
+- No new PR, CI acceptance, merge, release or installed-app acceptance claimed on this branch. F5-F source does not close F5-E acceptance.
 - Mark S6-F consolidated acceptance complete only after A+B+C pass on a single exact source head, with failure evidence retained. Otherwise source work is provisional, and Stage 6 G remains separate.
 
 ## Reproduction / branch boundary
