@@ -805,6 +805,23 @@ struct WorkDirective {
     WorkBlock blocked=WorkBlock::None;
     std::uint64_t posted_tick=0,last_update_tick=0,resolved_tick=0;
 };
+// S6-C / v127: immutable original astronomical body and generator envelope,
+// with finite explicitly genesis-funded resource stocks. Four physical
+// categories are separate from legacy oasis reserves and ore asteroids.
+// The resource arrays remain in kg, never noise-generated collectibles.
+enum class PlanetaryResource : std::uint8_t {
+    Water=0, Soil=1, Mineral=2, Volatile=3
+};
+struct PlanetaryGenesisBody {
+    planetary::PlanetaryWorldKey key{};
+    planetary::PlanetaryEnvelope envelope{};
+    std::array<std::int64_t,4> original_kg{};
+    std::array<std::int64_t,4> unallocated_kg{};
+};
+struct PlanetaryRegionalSource {
+    planetary::PlanetaryRegionKey region{};
+    std::array<std::int64_t,4> stock_kg{}; // uncollected reserved physical matter
+};
 struct PhysicalOasisReserve {
     std::int64_t water_kg=0,nutrients_kg=0;
     std::int64_t initial_water_kg=0,initial_nutrients_kg=0;
@@ -1374,6 +1391,22 @@ public:
     // v70: deterministic physical celestial bodies with stable world IDs.
     // Init never consumes ship resources, and cannot run twice with new geometry.
     void ensure_physical_celestial_systems();
+    // S6-C: idempotent world-snapshot migration pins existing astronomical
+    // envelopes with ZERO material grants. Old v126 sources stay untouched.
+    void ensure_planetary_genesis_manifest();
+    // Explicit world-creation-only finite resource provisioning and placement.
+    // Both refuse after the first original STEP or pending command.
+    void provision_planetary_body_genesis(
+        std::uint64_t body,const std::array<std::int64_t,4>& kilograms);
+    void place_planetary_region_genesis(
+        std::uint64_t body,std::uint16_t latitude,std::uint16_t longitude,
+        const std::array<std::int64_t,4>& kilograms);
+    const std::map<std::uint64_t,PlanetaryGenesisBody>& planetary_genesis() const {
+        return planetary_genesis_;
+    }
+    const std::map<PlanetarySiteKey,PlanetaryRegionalSource>& planetary_region_sources() const {
+        return planetary_region_sources_;
+    }
     // Explicit atomic migration, NOT a travel command.
     void ensure_ship_frame_registry();
     // SPACE-04B: explicit versioned migration; older saves retain v118
@@ -1772,6 +1805,12 @@ public:
         std::uint16_t latitude,std::uint16_t longitude,bool water,std::int64_t kilograms);
     bool retrieve_planetary_site(PlayerId owner,EntityId ship,std::uint64_t body,
         std::uint16_t latitude,std::uint16_t longitude,bool food,std::int64_t kilograms);
+    // Exact original owner / installed scanner / celestial authorization.
+    // A source row is prospective geology: not a mining right or accessible
+    // inventory. Unallocated body stocks are never reported as local deposits.
+    std::optional<PlanetaryRegionalSource> scan_planetary_region_source(
+        PlayerId owner, EntityId ship, std::uint64_t body_id,
+        std::uint16_t latitude, std::uint16_t longitude) const;
     std::optional<planetary::GeographicSite> scan_planetary_geography(
         PlayerId owner, EntityId ship, std::uint64_t body_id,
         std::uint16_t latitude, std::uint16_t longitude) const;
@@ -1888,6 +1927,8 @@ private:
     std::map<std::uint64_t,std::array<EntityId,2>> generated_local_regions_; // v73 immutable site manifest
     std::map<EntityId,std::uint64_t> local_entity_anchors_; // v73 nonship frame custody
     std::map<std::uint64_t,LocalCelestialEnvironment> local_environments_; // v74
+    std::map<std::uint64_t,PlanetaryGenesisBody> planetary_genesis_; // v127 source envelope + finite stocks
+    std::map<PlanetarySiteKey,PlanetaryRegionalSource> planetary_region_sources_; // v127 exact physical cell
     std::map<std::uint64_t,PhysicalOasisReserve> oasis_reserves_; // v75 explicit finite sources
     std::map<EntityId,OasisExtractor> oasis_extractors_;
     std::map<PlanetarySiteKey,PlanetarySiteFacility> planetary_sites_; // v76 real installed machinery
