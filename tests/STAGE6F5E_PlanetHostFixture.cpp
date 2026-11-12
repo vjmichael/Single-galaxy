@@ -57,6 +57,7 @@ static void create_landed_world(const std::string& file,unsigned stage=4){
     const auto rock=seed.add_asteroid({2000,0},60);
     seed.ensure_physical_celestial_systems();
     seed.ensure_ship_frame_registry();
+    seed.enable_native_galactic_physics({{selected.system,galactic::Point{{0,100000},{0,100000},{0,100000}}}});
     PersistentWorld world(file,std::move(seed));
     REQUIRE(world.register_player_person(7,ship));
     act(world,ship,1001,Action::Mine,rock,30);
