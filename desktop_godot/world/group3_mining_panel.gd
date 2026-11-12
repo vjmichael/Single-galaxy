@@ -8,6 +8,7 @@ signal fabricate_requested()
 signal fit_requested()
 signal unfit_requested()
 signal power_requested(on: bool)
+signal colony_ship_work_requested(operation: int)
 
 var _status: Label
 var _cargo: Label
@@ -15,13 +16,18 @@ var _survey: Label
 var _mine: Button
 var _survey_button: Button
 var _buttons: Array[Button] = []
+var _build_buttons: Array[Button] = []
+var _build_status: Label
+var _source_snapshot := {}
+var _last_ship := {}
+var _last_seated := false
 
 func _ready() -> void:
 	name = "NativeMiningAndFittingPanel"
 	set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_RIGHT)
 	offset_left = -382
 	offset_right = -14
-	offset_top = -284
+	offset_top = -425
 	offset_bottom = -16
 	visible = false
 	var style := StyleBoxFlat.new()
@@ -51,8 +57,32 @@ func _ready() -> void:
 		"Read up to 50 metres only with original powered PLAY-11 scanner")
 	_mine = _action(actions,"Mine 1t (M)", func():mine_requested.emit(),
 		"Collect one finite tonne only from the exact original rock in reach")
-	# Ship modules and manufacturing are intentionally deferred until their
-	# design is approved. Only finite original-world resource actions appear.
+	# Every industrial step below is an original ship action and committed
+	# original-world event. This panel cannot award ore/modules/colonies.
+	var build_title := Label.new()
+	build_title.text = "COLONY FOUNDING | PHYSICAL ORE TO WORKSHOP"
+	build_title.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	column.add_child(build_title)
+	_build_status = Label.new()
+	_build_status.text = "Awaiting original source stock, position and constructed-site receipt"
+	_build_status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	column.add_child(_build_status)
+	var build_actions := GridContainer.new()
+	build_actions.columns = 2
+	column.add_child(build_actions)
+	for item in [
+		{"label":"Refine ≤4 t source ore","selector":1,
+		 "hint":"Consumes up to four mined original cargo tonnes, producing real refined ore"},
+		{"label":"Form ≤2 construction modules","selector":2,
+		 "hint":"Consumes 2 tonnes original refined ore per real construction module"},
+		{"label":"Build outpost · 4 modules","selector":3,
+		 "hint":"Requires stationary ship in space, 4 original modules, original empty site and 3 crew"},
+		{"label":"Separate plagioclase → aluminum","selector":4,
+		 "hint":"Only if actual geological plagioclase stock exists; consumes that mineral into native aluminum and glass"}]:
+		var b := _action(build_actions,str(item["label"]),
+			func(): colony_ship_work_requested.emit(int(item["selector"])),
+			str(item["hint"]))
+		_build_buttons.append(b)
 	_survey = Label.new()
 	_survey.text = "Survey: requires fitted powered scanner (J)"
 	_survey.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -77,8 +107,14 @@ func disconnect_native() -> void:
 	_status.text = "Original native player disconnected"
 	_survey.text = "Survey unavailable"
 	_cargo.text = "Cargo unavailable"
+	_source_snapshot.clear()
+	_last_ship.clear()
+	if is_instance_valid(_build_status):
+		_build_status.text="Original colony ship disconnected"
 
 func show_original_ship(ship: Dictionary, contact: Dictionary, seated: bool) -> void:
+	_last_ship=ship.duplicate(true)
+	_last_seated=seated
 	var valid := not ship.is_empty() and ship.has("gen") and ship.has("tick")
 	visible = valid
 	var flying := valid and int(ship.get("dock",-1)) == 0
@@ -103,6 +139,40 @@ func show_original_ship(ship: Dictionary, contact: Dictionary, seated: bool) -> 
 	else:
 		_cargo.text = "Cargo: %d / %d physical tonnes" % [
 			int(contact.get("cargo_tonnes",0)),int(contact.get("cargo_capacity",0))]
+	_apply_native_build_options()
+
+func set_original_colony_source(snapshot: Dictionary) -> void:
+	# No optimistic local stock updates. Source is always an exact committed
+	# ship/tick/generation pair supplied by native single-writer readback.
+	_source_snapshot = snapshot.duplicate(true)
+	_apply_native_build_options()
+
+func _apply_native_build_options() -> void:
+	if not is_instance_valid(_build_status):
+		return
+	var source_ok := not _source_snapshot.is_empty() and \
+		int(_source_snapshot.get("ship",-1))==int(_last_ship.get("ship",-2)) and \
+		int(_source_snapshot.get("tick",-1))==int(_last_ship.get("tick",-2)) and \
+		int(_source_snapshot.get("gen",-1))==int(_last_ship.get("gen",-2))
+	var names := ["can_refine","can_modules","can_outpost","can_aluminum"]
+	for i in range(_build_buttons.size()):
+		_build_buttons[i].disabled=not (source_ok and _last_seated and \
+			bool(_source_snapshot.get(names[i],false)))
+	if not source_ok:
+		_build_status.text="Waiting for exact original ship + manufacturing source receipt"
+		return
+	var built := int(_source_snapshot.get("constructed_site",0))
+	var line := "Physical stock: %dt raw | %dt refined | %d modules | %dkg plagioclase | %dkg aluminum" % [
+		int(_source_snapshot.get("cargo_tonnes",0)),
+		int(_source_snapshot.get("refined_tonnes",0)),
+		int(_source_snapshot.get("modules",0)),
+		int(_source_snapshot.get("plagioclase_kg",0)),
+		int(_source_snapshot.get("aluminum_kg",0))]
+	if built>0:
+		line+="\nORIGINAL CONSTRUCTED COLONY #%d: dock there, leave ship, press I for real facilities, storage, training and 1-batch manufacturing." % built
+	else:
+		line+="\nHarvest finite rock, refine original ore and make 4 modules. In space, stop at least 2.5m clear of any station, then found an outpost."
+	_build_status.text=line
 
 func show_original_survey(result: Dictionary) -> void:
 	var sources: Array = result.get("sources",[])
