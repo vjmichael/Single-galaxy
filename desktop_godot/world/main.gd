@@ -183,6 +183,7 @@ func _ready() -> void:
 	native_player_session.asteroid_survey_received.connect(_on_group3_asteroid_survey)
 	player.native_motion_intent.connect(_on_native_player_intent)
 	player.native_planet_surface_intent.connect(_on_native_planet_intent)
+	player.native_planet_vertical_intent.connect(_on_native_planet_vertical_intent)
 	player.native_seat_intent.connect(_on_native_player_seat_intent)
 	player.native_ship_intents.connect(_on_native_ship_intents)
 	native_station_session = NATIVE_STATION_SESSION.new()
@@ -1115,6 +1116,15 @@ func _advance_native_handoff() -> void:
 		player.use_native_authority(_player_session_autoconnect)
 
 func _unhandled_input(event: InputEvent) -> void:
+	if event is InputEventKey and event.pressed and not event.echo and event.keycode in [KEY_F8,KEY_F10]:
+		if native_planet_surface_session != null and native_planet_surface_session.has_verified_pose():
+			# F8: allocate ONE original site oxygen kg; F10: return that
+			# unused gas and exhaled CO2 at the same original shuttle hatch.
+			native_planet_surface_session.submit_oxygen(event.keycode == KEY_F10)
+		else:
+			_on_native_player_status("Original planetary custody must be verified before oxygen allocation")
+		get_viewport().set_input_as_handled()
+		return
 	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_F9:
 		# Explicit original-world surface inspection/movement. Every other
 		# SGDX writer must exit before this same-SQLite original host starts.
@@ -1872,6 +1882,10 @@ func _on_native_player_seat_intent() -> void:
 		else:
 			_on_native_player_status("Pilot-only ship: U to depart; after returning and docking, E to disembark")
 
+func _on_native_planet_vertical_intent(jump: bool) -> void:
+	if native_planet_surface_session != null and native_planet_surface_session.has_verified_pose():
+		native_planet_surface_session.submit_vertical(jump)
+
 func _on_native_planet_intent(heading: Vector3) -> void:
 	if native_planet_surface_session != null and native_planet_surface_session.has_verified_pose():
 		native_planet_surface_session.submit_walk(heading, is_instance_valid(player) and player.run_toggled)
@@ -1900,7 +1914,14 @@ func _on_original_planet_pose(pose: Dictionary) -> void:
 	if is_instance_valid(scope_label): scope_label.text="ORIGINAL PLANETARY SURFACE — NATIVE SQLITE RECEIPT"
 	if is_instance_valid(ship_label): ship_label.text="Body %d / source %d / ground %.2fm / generation %d" % [
 		int(pose["body"]),int(pose["site"]),float(pose["y_mm"])/1000.0,int(pose["gen"])]
-	if is_instance_valid(status_label): status_label.text="F9 original surface | WASD requests approved steps | terrain mesh and survival not yet integrated"
+	if is_instance_valid(status_label):
+		status_label.text="F9 source surface | WASD native steps | Space native jump | F8 oxygen charge | F10 return"
+	if is_instance_valid(native_label):
+		native_label.text="ORIGINAL BODY g=%d mm/s² | %s | O2 %dkg | CO2 %dkg | injury %d/100 | heat %dms" % [
+			int(pose.get("gravity_mm_s2",0)),
+			"grounded" if bool(pose.get("grounded",true)) else "airborne",
+			int(pose.get("oxygen_kg",0)),int(pose.get("co2_kg",0)),
+			int(pose.get("injury_points",0)),int(pose.get("thermal_ms",0))]
 
 func _on_native_player_intent(heading: Vector3) -> void:
 	if native_station_session != null and native_station_session.is_active():

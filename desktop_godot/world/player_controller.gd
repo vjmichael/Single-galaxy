@@ -5,6 +5,7 @@ extends CharacterBody3D
 signal inspected(display_name: String)
 signal native_motion_intent(heading: Vector3)
 signal native_planet_surface_intent(heading: Vector3)
+signal native_planet_vertical_intent(jump: bool)
 signal native_seat_intent()
 signal native_ship_intents(actions: PackedStringArray)
 var native_seated := false
@@ -230,10 +231,19 @@ func _physics_process(delta: float) -> void:
 				if not pilot_actions.is_empty():
 					native_ship_intents.emit(pilot_actions)
 			elif native_on_planet and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
-				# Actual Godot input, no client motion: original planet host must ACK.
-				var axis := Input.get_vector("fps_left", "fps_right", "fps_forward", "fps_backward")
-				var direction := (global_transform.basis * Vector3(axis.x, 0.0, axis.y)).normalized()
-				native_planet_surface_intent.emit(direction)
+				# Actual Godot input is an intent only; even jump cannot call
+				# move_and_slide or turn Godot collision into source authority.
+				if Input.is_action_just_pressed("fps_jump"):
+					native_planet_vertical_intent.emit(true)
+				else:
+					var axis := Input.get_vector("fps_left", "fps_right", "fps_forward", "fps_backward")
+					var direction := (global_transform.basis * Vector3(axis.x, 0.0, axis.y)).normalized()
+					if direction.length_squared() >= 0.01:
+						native_planet_surface_intent.emit(direction)
+					else:
+						# Explicit idle tick for gravity/exposure, still original
+						# world admission and rate-limit; no client timer authority.
+						native_planet_vertical_intent.emit(false)
 			elif not native_in_ship and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
 				# Walking still requires captured mouse and original PERSON custody.
 				var axis := Input.get_vector("fps_left", "fps_right", "fps_forward", "fps_backward")
