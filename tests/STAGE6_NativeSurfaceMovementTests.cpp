@@ -123,6 +123,15 @@ try {
     CHECK(onfoot.surface_pose.y_mm==
           std::int64_t(source->landscape.region.elevation)*1000);
     CHECK(onfoot.surface_pose.last_move_receipt==82001);
+    const stage6::RenderTileAddress mesh_tile{
+        static_cast<std::uint8_t>(std::min<unsigned>(selected.lat/7,4)),
+        static_cast<std::uint8_t>(selected.lon/6),1};
+    const auto observed_packet=stage6::original_godot_mesh_packet(
+        world,7,ship,selected.body,{mesh_tile},key);
+    CHECK(observed_packet &&
+          observed_packet->find(R"("native_surface_pose_verified":true)")!=std::string::npos &&
+          observed_packet->find(R"("native_surface_x_mm":"300")")!=std::string::npos &&
+          observed_packet->find(R"("native_surface_move_receipt":"82001")")!=std::string::npos);
     CHECK(!world.planetary_surface_move(7,ship,key,0,300,0,82002));
     CHECK(!world.planetary_surface_move(7,ship,key,crew[2],300,0,82002));
     CHECK(!world.planetary_surface_move(7,ship,key,0,300,0,82001));
@@ -185,6 +194,13 @@ try {
             7,ship,key,crew[2],250,0,83000+i));
     }
     CHECK(world.world().npc_records().at(crew[2]).surface_pose.x_mm==2000);
+    const auto npc_copy=(dir/"pilot-walking.sqlite").string();
+    PersistentWorld::recover_copy(db,npc_copy);
+    {
+        PersistentWorld restored(npc_copy,Simulation(613));
+        CHECK(restored.world().npc_records().at(crew[2]).surface_pose.x_mm==2000);
+        CHECK(!restored.launch_planetary_shuttle(7,ship,key,81235,true));
+    }
     CHECK(!world.launch_planetary_shuttle(7,ship,key,81235,true));
     for(int i=0;i<8;++i){
         world.step();
