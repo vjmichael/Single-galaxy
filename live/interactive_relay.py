@@ -145,10 +145,10 @@ class SharedRuntime:
                 # numeric frames remain strictly bounded; arbitrary text
                 # and larger unrelated events never enter the SSE queue.
                 expanded=bool(re.fullmatch(
-                    r'COLONY\\|1\\|[0-9]{1,20}\\|'
+                    r'COLONY\|1\|[0-9]{1,20}\|'
                     r'(?:PLANET_PLAYER_STATUS|PLANET_PLAYER_COMMITTED|'
                     r'PLANET_SURFACE_POSE|PLANET_SURFACE_COMMITTED)'
-                    r'\\|[A-Za-z0-9_|-]+',line))
+                    r'\|[A-Za-z0-9_|-]+',line))
                 if len(line)<=(260 if expanded else 180) and re.fullmatch(r'[a-zA-Z0-9_|-]+',line):
                     with self.cv:
                         if len(self.colony_events)<4096:
