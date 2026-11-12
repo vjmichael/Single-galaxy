@@ -18,6 +18,10 @@
 #include <iostream>
 #include <limits>
 #include <random>
+#include <atomic>
+#include <mutex>
+#include <thread>
+#include "galaxy/PlanetaryAtmosphere.hpp"
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -262,10 +266,20 @@ static int run_planet_host(const std::string& save_utf8){
                     body->physical_radius_mm,body->physical_mass_1e18_kg);
                 if(value)body_g=*value;
             }
+            const auto projected_y=(!pose.last_move_receipt && survival.initialized)?
+                survival.radial_height_mm:pose.y_mm;
+            const auto body_air=body?planetary::air::State{
+                body->atmosphere_pressure_pa,
+                body->atmosphere_oxygen_permille,
+                body->atmosphere_toxic}:planetary::air::State{};
+            const bool atmosphere_known=world.world().canonical_state().rfind(
+                "galaxy-kernel-v135|",0)==0 && body!=nullptr;
+            const bool breathable=atmosphere_known &&
+                planetary::air::breathable(body_air);
             std::cout<<"PFRAME|1|"<<session<<'|'<<request<<'|'<<p->home_ship
                      <<'|'<<p->planet_body<<'|'<<p->planet_latitude
                      <<'|'<<p->planet_longitude<<'|'<<pose.x_mm
-                     <<'|'<<pose.y_mm<<'|'<<pose.z_mm
+                     <<'|'<<projected_y<<'|'<<pose.z_mm
                      <<'|'<<latitude<<'|'<<longitude
                      <<'|'<<pose.last_move_tick<<'|'<<pose.last_move_receipt
                      <<'|'<<world.world().tick()<<'|'<<world.generation()
@@ -280,13 +294,59 @@ static int run_planet_host(const std::string& save_utf8){
                      <<'|'<<survival.injury_points
                      <<'|'<<survival.last_vertical_tick
                      <<'|'<<command_receipt
+                     <<'|'<<(atmosphere_known?body_air.pressure_pa:0)
+                     <<'|'<<(atmosphere_known?body_air.oxygen_permille:0)
+                     <<'|'<<unsigned(atmosphere_known && body_air.toxic)
+                     <<'|'<<unsigned(atmosphere_known)
+                     <<'|'<<unsigned(breathable)
+                     <<'|'<<survival.suit_embodied_kg
+                     <<'|'<<survival.suit_integrity
+                     <<'|'<<survival.suit_charge
+                     <<'|'<<unsigned(survival.suit_equipped)
+                     <<'|'<<survival.hypoxia_exposure_ms
+                     <<'|'<<survival.medical_treatments
+                     <<'|'<<survival.last_medical_tick
                      <<'\n'<<std::flush;
             if(!std::cout)throw std::runtime_error("Godot planet pipe closed");
         };
         emit(0,0);
+        // Native host has one mutex-protected original PersistentWorld.
+        // Autonomous world ticks continue independently of blocked stdin
+        // and of Godot FPS/input; no detached second SQLite writer exists.
+        std::mutex original_writer;
+        std::atomic<bool> running{true};
+        std::thread ticker([&](){
+            auto deadline=std::chrono::steady_clock::now()+
+                std::chrono::milliseconds(100);
+            while(running.load()){
+                std::this_thread::sleep_until(deadline);
+                if(!running.load())break;
+                try{
+                    std::lock_guard<std::mutex> guarded(original_writer);
+                    if(!landed())throw std::runtime_error(
+                        "original owner left landed custody");
+                    world.step(); // one canonical journaled tick
+                    emit(0,0); // read-only unsolicited host observation
+                }catch(const std::exception& e){
+                    std::cerr<<"Original surface ticker stopped: "
+                             <<e.what()<<'\n';
+                    running.store(false);
+                    break;
+                }
+                deadline+=std::chrono::milliseconds(100);
+                const auto now=std::chrono::steady_clock::now();
+                if(deadline<now)deadline=now+std::chrono::milliseconds(100);
+            }
+        });
+        struct JoinTicker {
+            std::atomic<bool>& running;
+            std::thread& worker;
+            ~JoinTicker(){running.store(false);if(worker.joinable())worker.join();}
+        } joiner{running,ticker};
         std::string line;
-        while(std::getline(std::cin,line)){
-            if(line=="QUIT")return 0;
+        while(running.load() && std::getline(std::cin,line)){
+            if(line=="QUIT")break;
+            std::lock_guard<std::mutex> guarded(original_writer);
             if(++attempts>100000){deny(0,"planet-session-budget");return 3;}
             if(line.size()>kMaxLine){deny(0,"planet-command-oversize");continue;}
             const auto f=split(line);
@@ -297,7 +357,11 @@ static int run_planet_host(const std::string& save_utf8){
                 (f[3]=="JUMP" || f[3]=="WAIT");
             const bool oxygen=f.size()==4 && f[0]=="POXY" &&
                 (f[3]=="CHARGE" || f[3]=="RETURN");
-            if((!walking&&!vertical&&!oxygen) ||
+            const bool suit=f.size()==4 && f[0]=="PSUIT" &&
+                (f[3]=="EQUIP" || f[3]=="UNEQUIP" || f[3]=="CHARGE");
+            const bool care=f.size()==4 && f[0]=="PMED" &&
+                f[3]=="TREAT";
+            if((!walking&&!vertical&&!oxygen&&!suit&&!care) ||
                !number(f[1],supplied) || !number(f[2],req) ||
                (walking&&(!number(f[3],dx)||!number(f[4],dz)))){
                 deny(0,"planet-command-malformed");continue;
@@ -328,7 +392,9 @@ static int run_planet_host(const std::string& save_utf8){
             const auto proof=receipt_base+req;
             bool accepted=false;
             if(walking){
-                world.steps(1); // existing F5-B command/tick contract
+                // The supervised autonomous ticker, not user key repetition,
+                // advances native time. A same-tick second move is denied
+                // by the existing original surface rule.
                 accepted=world.planetary_surface_move(
                     kLocalOwner,ship,key,0,dx,dz,proof);
             }else if(vertical){
@@ -339,6 +405,17 @@ static int run_planet_host(const std::string& save_utf8){
             }else if(oxygen){
                 accepted=world.planetary_surface_oxygen_action(
                     kLocalOwner,ship,key,f[3]=="RETURN",proof);
+            }else if(suit){
+                const auto action=f[3]=="EQUIP"?
+                    Simulation::OriginalSuitAction::Equip:
+                    f[3]=="UNEQUIP"?
+                    Simulation::OriginalSuitAction::Unequip:
+                    Simulation::OriginalSuitAction::Charge;
+                accepted=world.planetary_surface_suit_action(
+                    kLocalOwner,ship,key,action,proof);
+            }else if(care){
+                accepted=world.planetary_surface_treatment(
+                    kLocalOwner,ship,key,proof);
             }
             if(!accepted){
                 deny(req,"planet-native-action-refused");continue;
