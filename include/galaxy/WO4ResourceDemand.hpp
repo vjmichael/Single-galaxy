@@ -213,7 +213,23 @@ inline std::optional<Snapshot> observe_owner_world(
             signal.current_mode=crop.mode;
             signal.required_water_kg=crop.water_kg;
             signal.required_nutrients_kg=crop.nutrients_kg;
+            std::uint32_t deployed=0;
+            for(const auto id:site.delegated_npcs) {
+                const auto p=world.npc_records().find(id);
+                if(p!=world.npc_records().end() &&
+                   p->second.home_ship==source_ship &&
+                   p->second.location==site.surface_location &&
+                   p->second.assigned_site==site.surface_location &&
+                   p->second.role==NpcRole::PlanetarySurface &&
+                   world.npc_available_for_duty(id))++deployed;
+            }
+            // Conservative original-worker evidence; a visitor-dependent
+            // or pending operation is NOT treated as confirmed production.
             signal.currently_possible_food_kg=
+                site.farm && site.spaceport_phase==3 &&
+                site.equipment_condition>0 && deployed==2 &&
+                (site.workforce_policy==0 || site.workforce_policy==1) &&
+                site.food_kg>=2 && site.oxygen_kg>=2 &&
                 crop.mode!=planetary::CropMode::Blocked &&
                 site.water_kg>=crop.water_kg &&
                 site.nutrients_kg>=crop.nutrients_kg &&
