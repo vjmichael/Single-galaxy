@@ -5,6 +5,8 @@
 #include "galaxy/Stage6ConsolidatedAdmission.hpp"
 #include "galaxy/PlanetaryGenesisBootstrap.hpp"
 #include <algorithm>
+#include <array>
+#include <chrono>
 #include <cstdint>
 #include <filesystem>
 #include <functional>
@@ -97,8 +99,38 @@ void finite_scale(const std::string& db) {
         conserved_kg=state.total_material_kg;
         conserved_credits=state.total_credits;
         const auto first_tick=state.tick,first_generation=state.generation;
+        // Four adjacent ORIGINAL regions, viewed through the same owner's
+        // physical scanner, must share the same immutable body source.
+        // These are not four fake workers or extra material inventories.
+        const auto body=original.world().planetary_genesis().begin()->first;
+        const std::array<std::pair<std::uint16_t,std::uint16_t>,4> cells{{
+            {17,35},{17,36},{18,35},{18,36}
+        }};
+        std::array<std::int32_t,4> season_before{};
+        const auto read_four=[&](bool first) {
+            const auto original_hash=original.world().state_hash();
+            for(std::size_t i=0;i<cells.size();++i) {
+                const auto [latitude,longitude]=cells[i];
+                const auto geo=original.world().scan_planetary_geography(
+                    7,ship,body,latitude,longitude);
+                const auto climate=original.world().scan_planetary_seasons(
+                    7,ship,body,latitude,longitude);
+                CHECK(geo.has_value() && climate.has_value());
+                CHECK(geo->key.body==body && climate->key.body==body);
+                CHECK(geo->key.latitude==latitude &&
+                      geo->key.longitude==longitude);
+                CHECK(climate->key.latitude==latitude &&
+                      climate->key.longitude==longitude);
+                if(first)season_before[i]=climate->quarters[0].temperature_c;
+                else CHECK(season_before[i]==climate->quarters[0].temperature_c);
+            }
+            CHECK(original.world().state_hash()==original_hash);
+            CHECK(original.world().total_ore()==conserved_ore);
+        };
+        read_four(true);
         // The original world advances, including S6-C/D/E time, not a
         // synthetic mass-conserving timer or Godot callback.
+        const auto begun=std::chrono::steady_clock::now();
         for(int block=0;block<16;++block) {
             original.steps(64);
             const auto next=stage6::consolidated::observe(original);
@@ -113,6 +145,12 @@ void finite_scale(const std::string& db) {
             CHECK(next.atmosphere_v135 && next.ecology_v130);
             state=next;
         }
+        read_four(false);
+        const auto duration_ms=std::chrono::duration_cast<
+            std::chrono::milliseconds>(std::chrono::steady_clock::now()-begun).count();
+        // Observational timing, not a pretend 60FPS/Radeon acceptance gate.
+        std::cout<<"S6G_SCALE|1024|4|"<<duration_ms<<'|'
+                 <<state.tick<<'|'<<state.generation<<'|'<<state.state_hash<<"\n";
         completed_tick=state.tick;
         completed_generation=state.generation;
     }
