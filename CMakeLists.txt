@@ -1447,6 +1447,12 @@ if(BUILD_TESTING)
         --script res://tests/stage6f6_uint64_source_identity_smoke.gd)
     set_tests_properties(galaxy_stage6f6_godot_unsigned_source_id
       PROPERTIES TIMEOUT 45 LABELS "stage6;godot;uint64-identity")
+    add_test(NAME galaxy_stage6f6_godot_selected_world_hint
+      COMMAND ${SG_STAGE6F5E_GODOT} --headless
+        --path ${CMAKE_CURRENT_SOURCE_DIR}/desktop_godot
+        --script res://tests/stage6f6_saved_world_choice_smoke.gd)
+    set_tests_properties(galaxy_stage6f6_godot_selected_world_hint
+      PROPERTIES TIMEOUT 45 LABELS "stage6;godot;recovery-selection")
   endif()
   find_program(SG_STAGE6F5_NODE NAMES node node.exe)
   if(SG_STAGE6F5_NODE)
