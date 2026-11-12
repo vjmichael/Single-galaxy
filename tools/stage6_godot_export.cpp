@@ -121,7 +121,7 @@ int main(int argc,char** argv) {
                 // regional band. This is NOT a player-spawn authorization.
                 const auto lat=std::get<1>(*landed);
                 const auto lon=std::get<2>(*landed);
-                selected.push_back({std::uint8_t(lat/7),
+                selected.push_back({std::uint8_t(std::min<unsigned>(lat/7,galaxy::stage6::kLatitudeBands-1)),
                                     std::uint8_t(lon/6),1});
             }else selected={{0,0,1},{0,1,1},{0,2,2},{0,3,2}};
         }
