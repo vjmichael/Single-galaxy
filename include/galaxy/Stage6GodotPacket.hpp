@@ -44,6 +44,12 @@ inline std::optional<std::string> original_godot_mesh_packet(
        <<"\"landing_verified\":"<<(landed?"true":"false")<<","
        <<"\"original_descent_receipt\":\""
        <<(landed?landed->original_descent_receipt:0)<<"\","
+       <<"\"landing_lat\":"<<(landed?std::get<1>(landed->key):0)<<","
+       <<"\"landing_lon\":"<<(landed?std::get<2>(landed->key):0)<<","
+       <<"\"surface_location\":\""
+       <<(landed?landed->original_surface_location:0)<<"\","
+       <<"\"shuttle_pilot_npc\":\""
+       <<(landed?landed->pilot_npc:0)<<"\","
        <<"\"tiles\":[";
     for(std::size_t t=0;t<tiles->size();++t) {
         const auto& tile=tiles->at(t);
