@@ -269,9 +269,21 @@ func _show_verified_surface_inspection(data: Dictionary, tiles: Array) -> void:
     add_child(_inspector)
     _inspector.global_position = outward * (VISUAL_RADIUS + 1.8)
     _inspector_receipt = stamp
-    _status_hint.text = "SURFACE INSPECTION ONLY (WASD / mouse / Esc) — original NPC shuttle receipt " + receipt + " | NOT player descent"
-    print("Original NPC-piloted shuttle landed at native surface ", surface_id,
-        "; Godot inspection avatar is NOT the original player")
+    # The original player's separate disembark receipt is read-only.
+    # Even when true, this inspection avatar is not a movable canonical
+    # PlayerPerson. Original surface walking belongs to S6-F5.
+    var real_player_here := data.get("player_surface_verified", false) == true
+    var player_receipt := str(data.get("player_disembark_receipt", "0"))
+    if real_player_here and (not player_receipt.is_valid_int() or int(player_receipt) <= 0):
+        _clear_surface_inspection()
+        push_error("Unverifiable original player disembark receipt")
+        return
+    if real_player_here:
+        _status_hint.text = "ORIGINAL PLAYER LANDED (receipt " + player_receipt + ") | local camera inspection only — NOT native walking"
+    else:
+        _status_hint.text = "NPC SHUTTLE LANDED (receipt " + receipt + ") | local camera inspection only — original player not yet ashore"
+    print("Original shuttle at native surface ", surface_id,
+        "; local terrain inspector is NOT a movable original PlayerPerson")
 
 func _append_native_tile(tile: Dictionary) -> void:
     var positions: Variant = tile.get("vertices", [])
