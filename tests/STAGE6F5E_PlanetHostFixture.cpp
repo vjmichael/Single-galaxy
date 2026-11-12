@@ -138,13 +138,16 @@ static void inspect_transfer(const std::string& file) {
 }
 int main(int argc,char** argv){
     try{
-        if(argc!=3)throw std::invalid_argument("usage: fixture --seed|--seed-orbit|--seed-boarded|--seed-transit|--seed-shuttle|--inspect|--inspect-transfer PATH");
+        if(argc!=3)throw std::invalid_argument("usage: fixture --seed|--seed-surface|--seed-orbit|--seed-boarded|--seed-transit|--seed-shuttle|--inspect|--inspect-transfer PATH");
         const std::string mode=argv[1],file=argv[2];
         if(file.empty()||file.size()>1024)
             throw std::invalid_argument("invalid fixture SQLite path");
         if(mode=="--seed"){
             create_landed_world(file);
             inspect(file);
+        }else if(mode=="--seed-surface"){
+            create_landed_world(file);
+            inspect_transfer(file);
         }else if(mode=="--seed-orbit"){
             create_landed_world(file,0);
             inspect_transfer(file);
