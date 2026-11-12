@@ -352,6 +352,28 @@ static int run_planet_host(const std::string& save_utf8){
             if(!std::cout)throw std::runtime_error("Godot planet pipe closed");
         };
         emit(0,0);
+        // S6-F5-D: source-owned named NPC list, not a client-provided cast.
+        // The installed player can select only an actual person currently
+        // standing at this original owned site. Native movement still
+        // rechecks authority and physical custody on every request.
+        const auto* roster_owner=landed();
+        if(!roster_owner)throw std::runtime_error("original site roster lost");
+        const PlanetarySiteKey roster_key{
+            roster_owner->planet_body,roster_owner->planet_latitude,
+            roster_owner->planet_longitude,roster_owner->planet_revision};
+        const auto& roster_site=world.world().planetary_sites().at(roster_key);
+        std::vector<std::uint64_t> roster;
+        for(const auto& [id,n]:world.world().npc_records()) {
+            if(n.home_ship==roster_owner->home_ship &&
+               n.location==roster_site.surface_location &&
+               !n.transport_id && roster.size()<16)
+                roster.push_back(id);
+        }
+        std::cout<<"NROSTER|1|"<<session<<'|'<<world.generation()
+                 <<'|'<<roster.size();
+        for(const auto id:roster)std::cout<<'|'<<id;
+        std::cout<<'\n'<<std::flush;
+        if(!std::cout)throw std::runtime_error("original NPC roster pipe closed");
         const auto source_person=landed();
         if(!source_person)throw std::runtime_error("original landed player lost");
         const PlanetarySiteKey walking_site{
@@ -403,7 +425,9 @@ static int run_planet_host(const std::string& save_utf8){
             const auto f=split(line);
             std::uint64_t supplied=0,req=0;
             std::int64_t dx=0,dz=0;
+            std::uint64_t named_npc=0;
             const bool walking=f.size()==5 && f[0]=="PMOVE";
+            const bool npc_walking=f.size()==6 && f[0]=="NMOVE";
             const bool vertical=f.size()==4 && f[0]=="PSTEP" &&
                 (f[3]=="JUMP" || f[3]=="WAIT");
             const bool oxygen=f.size()==4 && f[0]=="POXY" &&
@@ -416,9 +440,12 @@ static int run_planet_host(const std::string& save_utf8){
             // player record; a PFRAME would be invalid after this transaction.
             const bool reboard=f.size()==4 && f[0]=="PREBOARD" &&
                 f[3]=="REBOARD";
-            if((!walking&&!vertical&&!oxygen&&!suit&&!care&&!reboard) ||
+            if((!walking&&!npc_walking&&!vertical&&!oxygen&&!suit&&!care&&!reboard) ||
                !number(f[1],supplied) || !number(f[2],req) ||
-               (walking&&(!number(f[3],dx)||!number(f[4],dz)))){
+               (walking&&(!number(f[3],dx)||!number(f[4],dz))) ||
+               (npc_walking&&(!number(f[3],named_npc) ||
+                !number(f[4],dx) || !number(f[5],dz) ||
+                !named_npc))){
                 deny(0,"planet-command-malformed");continue;
             }
             if(supplied!=session){deny(req,"planet-session-mismatch");continue;}
@@ -426,7 +453,8 @@ static int run_planet_host(const std::string& save_utf8){
                 deny(req,"planet-request-replayed");continue;
             }
             last_request=req;
-            if(walking && !surface::within_step(dx,dz,true)){
+            if((walking && !surface::within_step(dx,dz,true)) ||
+               (npc_walking && !surface::within_step(dx,dz,false))){
                 deny(req,"planet-step-limit");continue;
             }
             // Native timing is separate from Godot frame rate. A fast or
@@ -460,6 +488,9 @@ static int run_planet_host(const std::string& save_utf8){
                 }
                 accepted=world.planetary_player_shuttle_action(
                     kLocalOwner,ship,key,PlanetaryPlayerAction::Reboard,proof);
+            }else if(npc_walking){
+                accepted=world.planetary_surface_move(
+                    kLocalOwner,ship,key,named_npc,dx,dz,proof);
             }else if(walking){
                 // The supervised autonomous ticker, not user key repetition,
                 // advances native time. A same-tick second move is denied
@@ -488,6 +519,23 @@ static int run_planet_host(const std::string& save_utf8){
             }
             if(!accepted){
                 deny(req,"planet-native-action-refused");continue;
+            }
+            if(npc_walking) {
+                const auto npc=world.world().npc_records().find(named_npc);
+                const auto site=world.world().planetary_sites().at(key);
+                if(npc==world.world().npc_records().end() ||
+                   npc->second.home_ship!=ship ||
+                   npc->second.location!=site.surface_location ||
+                   npc->second.surface_pose.last_move_receipt!=proof)
+                    throw std::runtime_error("NPC movement committed without original pose");
+                const auto& pose=npc->second.surface_pose;
+                std::cout<<"NACK|1|"<<session<<'|'<<req<<'|'<<named_npc
+                         <<'|'<<pose.x_mm<<'|'<<pose.z_mm<<'|'
+                         <<world.world().tick()<<'|'<<world.generation()
+                         <<'|'<<proof<<'\n'<<std::flush;
+                if(!std::cout)throw std::runtime_error("NPC receipt pipe closed");
+                emit(0,0);
+                continue;
             }
             if(reboard){
                 const auto it=world.world().player_people().find(kLocalOwner);
