@@ -9,6 +9,7 @@
 #include "galaxy/SpaceMiningSurvey.hpp"
 #include "galaxy/ColonyOnboarding.hpp"
 #include "galaxy/PlanetaryContinuousSurface.hpp"
+#include "galaxy/Stage6ConsolidatedAdmission.hpp"
 #include "galaxy/PlanetarySurfaceMovement.hpp"
 #include "galaxy/PlanetaryBodyGravity.hpp"
 #include <charconv>
@@ -279,7 +280,7 @@ static int run_planet_host(const std::string& save_utf8){
         // This is a deterministic source-only manifest migration under
         // the already acquired original OS writer lease and SQLite journal.
         // Not an automatic landing, equipment grant or oxygen supply.
-        world.ensure_planetary_atmosphere_manifest();
+        (void)stage6::consolidated::admit(world);
         const auto session=new_epoch();
         const auto receipt_base=(new_epoch()&((std::uint64_t{1}<<60)-1))
               & ~((std::uint64_t{1}<<20)-1);
@@ -557,6 +558,7 @@ static int run_host(int argc,char** argv){
         // is explicitly deferred and never installed at game genesis.
         seed.enable_station_ore_provenance();
         PersistentWorld world(save_utf8,std::move(seed));
+        (void)stage6::consolidated::admit(world);
         InteriorMovement person(save_utf8,world);
         if(world.world().has_pending_cockpit_flight())
             throw std::runtime_error("Interrupted cockpit flight command pending in original journal; refusing silent replay");
