@@ -1939,6 +1939,12 @@ public:
 
 
 private:
+    // S6-F5-B: body radius comes ONLY from the existing immutable celestial
+    // registry. A person/NPC can never manufacture a planet or hatch location.
+    std::optional<std::uint64_t> original_walkable_body_radius(
+        std::uint64_t body) const;
+    bool near_original_shuttle_hatch(const NativePlanetarySurfacePose& pose,
+        const PlanetarySiteKey& origin) const;
     friend class PersistentWorld;
     // Only PersistentWorld's trusted TEST host admission can call this until
     // a real, fitted hacking emitter and combat delivery authority exist.
