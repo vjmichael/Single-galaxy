@@ -58,4 +58,52 @@ inline CultivationBudget cultivation_budget(
         throw std::logic_error("ecological production generated matter");
     return result;
 }
+// S6-E6: season-scale biotic capacity and soil erosion feedback use the
+// ALREADY journaled v130 farm history. No mutable duplicate biome,
+// free seedlings, or mass-bearing ecological proxy is introduced.
+enum class EcologicalCondition : std::uint8_t {
+    NoNativeBiosphere=0, BareOrDepleted=1, Stressed=2, Viable=3
+};
+inline EcologicalCondition ecological_condition(
+        const PhysicalEnvironment* phase,bool native_biosphere) {
+    if(!native_biosphere)return EcologicalCondition::NoNativeBiosphere;
+    if(!phase || phase->soil_kg[0]<100 ||
+       (phase->water_kg[0]<100 && phase->water_kg[2]<100))
+        return EcologicalCondition::BareOrDepleted;
+    if(phase->hazard!=PhysicalHazard::None ||
+       phase->soil_kg[1]>phase->soil_kg[0])
+        return EcologicalCondition::Stressed;
+    return EcologicalCondition::Viable;
+}
+// Apply ONLY conservative adjustments to the actual 15-kg bounded recipe:
+// lost food becomes the existing wastewater residue, not vanished mass.
+// Field harvests require 20 committed original ticks between consecutive
+// batches. Controlled farms rely on installed power and actual consumables.
+inline CultivationBudget seasonal_ecology_budget(
+        const PhysicalEnvironment* phase,bool native_biosphere,
+        bool controlled_facility_ready,std::int64_t electricity,
+        bool contained_original_soil,std::uint64_t tick,
+        std::uint64_t last_harvest_tick,std::uint64_t prior_blocked_cycles) {
+    auto result=cultivation_budget(phase,native_biosphere,
+        controlled_facility_ready,electricity,contained_original_soil);
+    if(result.mode==CropMode::Blocked)return result;
+    if(result.mode==CropMode::Field) {
+        if(last_harvest_tick && tick>=last_harvest_tick &&
+           tick-last_harvest_tick<kPhysicalEnvironmentCycleTicks)
+            return {};
+        const auto condition=ecological_condition(phase,native_biosphere);
+        const auto season=(tick/kPhysicalEnvironmentCycleTicks)%4;
+        const auto winter=season==3;
+        const auto degraded=condition!=EcologicalCondition::Viable;
+        const auto fatigue=prior_blocked_cycles>=20;
+        const std::int64_t reduced=std::min<std::int64_t>(
+            result.food_kg,(winter?2:0)+(degraded?2:0)+(fatigue?1:0));
+        result.food_kg-=reduced;
+        result.wastewater_kg+=reduced;
+    }
+    if(result.water_kg+result.nutrients_kg!=
+       result.food_kg+result.wastewater_kg)
+        throw std::logic_error("ecological succession changed original mass");
+    return result;
+}
 } // namespace galaxy::planetary
