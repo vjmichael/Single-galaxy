@@ -22,6 +22,7 @@ inline std::optional<Decision> inspect(const Simulation& world,PlayerId owner) {
     const auto it=world.player_people().find(owner);
     if(it==world.player_people().end())return std::nullopt;
     const auto& p=it->second;
+    if(p.owner!=owner)return std::nullopt;
     Decision result{};
     result.person_state=p.state;
     // The station role may legitimately have no assigned home_ship, because
@@ -88,7 +89,8 @@ inline std::optional<Decision> inspect(const Simulation& world,PlayerId owner) {
     } else {
         if(phase!=2 || !p.planet_descent_receipt ||
            p.planet_descent_receipt!=sh->second.descent_receipt ||
-           p.surface_pose.surface_location!=site->second.surface_location)
+           (p.surface_pose.surface_location!=0 &&
+            p.surface_pose.surface_location!=site->second.surface_location))
             return std::nullopt;
     }
     result.role=p.state==PlayerPersonState::AtPlanetarySurface?
