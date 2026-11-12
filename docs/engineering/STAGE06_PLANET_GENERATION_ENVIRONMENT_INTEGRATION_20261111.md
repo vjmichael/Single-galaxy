@@ -3,6 +3,8 @@
 
 **Date:** 2026-11-11. **Branch:** `sg/group4-dock-colony-inventory-run-20261111`. **Status:** source staged; exact-head native/Windows/Linux and installed play acceptance OPEN. **DOCK-07/08/09:** continue parked provisionally. No PR merge/release authorized.
 
+> **S6-C implementation checkpoint (2026-11-11):** `galaxy-kernel-v127` original world state now stores immutable body-specific planetary environments and finite explicit genesis-stock / unique regional allocations for water, soil, minerals, and volatiles. Zero-material migration for pre-v127 saves is inside the original `PersistentWorld` SQLite transaction; new-world native colony and installed desktop station creation share one bounded original planet-source seed (38t). Authenticated orbital planet scanning projects those genuine region stocks but grants NO extraction. Original `total_ore` includes each mass exactly once; staged `galaxy_stage06_finite_planet_genesis` and strict web decoder tests remain **UNEXECUTED**. [Full S6-C source and acceptance ledger](STAGE06C_IMMUTABLE_PLANET_GENESIS_RESOURCES_20261111.md).
+
 ### Existing upstream foundations reused
 
 - Original `PhysicalCelestialBody`, system ID and immutable astronomical body ID from `Simulation`, not a new planet registry.
@@ -30,7 +32,7 @@
 | --- | --- | --- |
 | **S6-A — Single planetary geography** | Keep only PGF-01B watershed authority for landforms and native survey; remove remaining active ad hoc prototype projection consumers; establish stable longitude-seam/polar and erosion/river-morphology behavior | **Partial existing implementation; acceptance open** |
 | **S6-B — Seasonal environmental assessment** | Seasonal heat/precipitation/snow/ice/topological runoff joined to real body and native survey without granting resources | **STAGE6-ENV01 source staged, acceptance open** |
-| **S6-C — Immutable physical planetary genesis** | Persist original body-specific global envelope and generator version; allocate finite per-body water/rock/soil/volatiles from original genesis reserves, independent of read-only rain/noise; refuse double claims and preserve historical observed geography | **Not implemented** |
+| **S6-C — Immutable physical planetary genesis** | v127 canonical original body envelope, genesis-only finite water/soil/mineral/volatile stocks, one-use geographically placed regional sources, original mass accounting, zero-material historical SQLite migration and source-backed scanner readback. See [S6-C report](STAGE06C_IMMUTABLE_PLANET_GENESIS_RESOURCES_20261111.md) | **SOURCE IMPLEMENTED provisionally; real native/installed acceptance OPEN** |
 | **S6-D — Physical environmental processes** | Authenticated seasonal clock/weather hazards, ice/water phase transitions, aquifer/lake storage, soil erosion, meaningful heat/power/resource costs; durable original-transaction conservation and failure rollback | **Not implemented** |
 | **S6-E — Ecology and industry integration** | Independent biosphere selection and finite ecology; water/nutrients/energy/seasonal suitability affect actual existing farmland, constructed planetary sites, named-worker work, supplies and downstream original WO4/WO5 logistics | **Not implemented for new PGF climate** |
 | **S6-F — Actual planet arrival and playable terrain** | Map real body-relative coordinates to continuous surface navigation/landing, procedural terrain meshes LOD, original physical survey/installation colliders, terrain/no-fake-inventory telemetry, native player and NPC travel | **Not implemented in full** |
@@ -46,6 +48,6 @@
 
 ### Next implementation step
 
-**S6-C — Immutable body-specific planetary genesis and finite regional resource allocation.** Establish source-authoritative planetary envelope/revision and a resource manifest in the existing SQLite original transaction before using seasonal forecasts to affect actual farming, environmental damage or physical water extraction. Old worlds require a conservative migration or retained v1 interpretation. S6-B acceptance stays open and is included in the later consolidated matrix.
+**S6-D — Physical Environmental Processes.** S6-C's version-127 original body envelope and physical source allocation are now source-implemented provisionally, with no materials added to historical worlds. Next connect those finite original stocks to regional thermal/water/ice and soil behavior and ultimately authorized physical extraction, retaining original resource transfer/SQLite custody. S6-B/S6-C native and installed acceptance remain OPEN.
 
 **Release/merge status: not authorized.**
