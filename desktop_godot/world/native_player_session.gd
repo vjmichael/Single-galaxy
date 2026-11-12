@@ -16,6 +16,7 @@ signal asteroid_survey_received(observation: Dictionary)
 signal colony_onboarding_received(snapshot: Dictionary)
 
 const MAX_LINE := 256
+var _current_original_save := ""
 var _pid := -1
 var _last_shutdown_pid := -1
 var _last_shutdown_msec := -10000
@@ -49,6 +50,9 @@ var _buffer := PackedByteArray()
 
 func is_active() -> bool:
 	return _active
+
+func current_original_save() -> String:
+	return _current_original_save if _active else ""
 
 func process_id() -> int:
 	# Track even a just-stopped writer. A rapid H -> P or P -> H must
@@ -100,6 +104,7 @@ func start(save_override: String = "") -> void:
 	if result.is_empty() or not result.has("stdio") or not result.has("pid"):
 		_status("NATIVE PLAYER HOST LAUNCH FAILED")
 		return
+	_current_original_save = save
 	_stdout = result["stdio"]
 	_stderr = result.get("stderr")
 	_pid = result["pid"]
