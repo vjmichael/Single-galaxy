@@ -1418,6 +1418,18 @@ if(BUILD_TESTING)
   target_link_libraries(galaxy_stage6f5c_vertical_physics_tests PRIVATE galaxy_kernel)
   add_test(NAME galaxy_stage6f5c_vertical_physics
     COMMAND galaxy_stage6f5c_vertical_physics_tests)
+  # S6-F5-E: optional actual Godot 4 headless scene-level readback.
+  # This tests renderer admission and replay refusal only, never claims
+  # installed native/Windows/GPU acceptance.
+  find_program(SG_STAGE6F5E_GODOT NAMES godot godot4 godot.exe)
+  if(SG_STAGE6F5E_GODOT)
+    add_test(NAME galaxy_stage6f5e_godot_tile_window
+      COMMAND ${SG_STAGE6F5E_GODOT} --headless
+        --path ${CMAKE_CURRENT_SOURCE_DIR}/desktop_godot
+        --script res://tests/stage6f5e_terrain_renderer_smoke.gd)
+    set_tests_properties(galaxy_stage6f5e_godot_tile_window
+      PROPERTIES TIMEOUT 45 LABELS "stage6;godot;renderer-source-only")
+  endif()
   find_program(SG_STAGE6F5_NODE NAMES node node.exe)
   if(SG_STAGE6F5_NODE)
     add_test(NAME galaxy_stage6f5_surface_packet_contract
