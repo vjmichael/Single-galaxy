@@ -244,7 +244,7 @@ func _show_verified_surface_inspection(data: Dictionary, tiles: Array) -> void:
         push_error("Invalid original landed region")
         _clear_surface_inspection()
         return
-    var band_lat := int(floor(float(lat) / 7.0))
+    var band_lat := mini(int(floor(float(lat) / 7.0)), 4)
     var band_lon := int(floor(float(lon) / 6.0))
     var includes_landing_tile := false
     for tile in tiles:
