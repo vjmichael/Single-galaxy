@@ -108,6 +108,9 @@ enum class PlanetaryPlayerAction : std::uint8_t {
 // A zero receipt represents an unpositioned legacy NPC, not consent to move.
 struct NativePlanetarySurfacePose {
     std::int64_t x_mm=0,y_mm=0,z_mm=0;
+    // Exact already-built ORIGINAL PlanetarySiteFacility.surface_location,
+    // not an additional body, resource or world location registry.
+    EntityId surface_location=0;
     std::uint64_t last_move_tick=0,last_move_receipt=0;
 };
 // PLAY-STATION-02: host-validated finite station traversal and ship transfer.
