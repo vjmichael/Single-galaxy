@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <array>
 #include <cstdint>
+#include <cstdlib>
 #include <limits>
 #include <queue>
 #include <stdexcept>
@@ -69,7 +70,7 @@ inline SeasonalClimateMap generate_seasonal_climate(
        map.climate!=envelope.climate ||
        map.water_coverage!=envelope.water_coverage ||
        map.average_celsius!=envelope.average_celsius ||
-       map.cells.size()!=kWatershedCells)
+       map.cells.size()!=std::size_t(kWatershedCells))
         throw std::invalid_argument("planetary seasonal source mismatch");
 
     SeasonalClimateMap result;
