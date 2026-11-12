@@ -11802,6 +11802,17 @@ bool Simulation::planetary_player_shuttle_action(PlayerId owner,EntityId ship,
         person.surface_survival.injury_points=prior.injury_points;
         person.surface_survival.thermal_exposure_ms=prior.thermal_exposure_ms;
         person.surface_survival.unverified_air_exposure_ms=prior.unverified_air_exposure_ms;
+        // The original person's physical manufactured suit and medical history
+        // CROSS THE SAME SHUTTLE with the actual person; never dematerialize
+        // its 10 kg because ground velocity resets at a transport boundary.
+        person.surface_survival.suit_embodied_kg=prior.suit_embodied_kg;
+        person.surface_survival.suit_integrity=prior.suit_integrity;
+        person.surface_survival.suit_charge=prior.suit_charge;
+        person.surface_survival.suit_power_ticks=prior.suit_power_ticks;
+        person.surface_survival.suit_manufacture_receipt=prior.suit_manufacture_receipt;
+        person.surface_survival.hypoxia_exposure_ms=prior.hypoxia_exposure_ms;
+        person.surface_survival.last_medical_tick=prior.last_medical_tick;
+        person.surface_survival.medical_treatments=prior.medical_treatments;
     }else if(action==PlanetaryPlayerAction::Exit){
         // An original ascent is required after an actual descent. A player
         // may cancel a prelaunch boarding without claiming a surface visit.
@@ -11827,6 +11838,17 @@ bool Simulation::planetary_player_shuttle_action(PlayerId owner,EntityId ship,
         person.surface_survival.injury_points=prior.injury_points;
         person.surface_survival.thermal_exposure_ms=prior.thermal_exposure_ms;
         person.surface_survival.unverified_air_exposure_ms=prior.unverified_air_exposure_ms;
+        // The original person's physical manufactured suit and medical history
+        // CROSS THE SAME SHUTTLE with the actual person; never dematerialize
+        // its 10 kg because ground velocity resets at a transport boundary.
+        person.surface_survival.suit_embodied_kg=prior.suit_embodied_kg;
+        person.surface_survival.suit_integrity=prior.suit_integrity;
+        person.surface_survival.suit_charge=prior.suit_charge;
+        person.surface_survival.suit_power_ticks=prior.suit_power_ticks;
+        person.surface_survival.suit_manufacture_receipt=prior.suit_manufacture_receipt;
+        person.surface_survival.hypoxia_exposure_ms=prior.hypoxia_exposure_ms;
+        person.surface_survival.last_medical_tick=prior.last_medical_tick;
+        person.surface_survival.medical_treatments=prior.medical_treatments;
     }else return false;
     person.last_receipt=receipt;
     person.last_update_tick=tick_;
