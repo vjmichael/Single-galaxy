@@ -752,7 +752,7 @@ func set_industry(snapshot: Dictionary) -> void:
 		"W/0/good/aluminum_scrap"]
 	var quantities := [20,20,19,19,1]
 	for index in range(_industry_transfers.size()):
-		var enough := int(available.get(transfer_requirements[index],0))>=quantities[index]
+		var enough: bool = int(available.get(transfer_requirements[index],0))>=int(quantities[index])
 		_industry_transfers[index].disabled=not (store and workshop and enough)
 
 func present(snapshot: Dictionary) -> void:
