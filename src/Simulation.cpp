@@ -11069,6 +11069,9 @@ std::optional<transport::Manifest> Simulation::planetary_transport_manifest(
     add_stock(transport::ResourceGood::Food,vessel.food_kg);
     add_stock(transport::ResourceGood::Nutrients,vessel.nutrients_kg);
     add_stock(transport::ResourceGood::Oxygen,vessel.oxygen_kg);
+    add_stock(transport::ResourceGood::PlanetarySoil,vessel.regional_geology_kg[0]);
+    add_stock(transport::ResourceGood::PlanetaryMineral,vessel.regional_geology_kg[1]);
+    add_stock(transport::ResourceGood::PlanetaryVolatile,vessel.regional_geology_kg[2]);
     if(vessel.housing_module)
         manifest.contents.push_back({transport::GoodKind::Equipment,
             transport::kPlanetaryHousingModuleEquipmentId,1,2000});
@@ -11118,7 +11121,8 @@ bool Simulation::load_planetary_shuttle(PlayerId owner,EntityId ship,
     const auto& state=shuttle->second;
     if(from<kg || held>1000-kg ||
        state.water_kg+state.food_kg+state.nutrients_kg+
-        state.oxygen_kg>1000-kg)return false;
+        state.oxygen_kg+state.regional_geology_kg[0]+
+        state.regional_geology_kg[1]+state.regional_geology_kg[2]>1000-kg)return false;
     from-=kg;held+=kg;
     if(cargo==ShuttleCargo::Nutrients)
         snapshot_version_=std::max(snapshot_version_,87);
