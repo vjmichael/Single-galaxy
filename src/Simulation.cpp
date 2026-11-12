@@ -17267,6 +17267,67 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
             }
         }
     }
+    if(result.snapshot_version_>=127) {
+        // An installed S6-C world pins the same exact deterministic native
+        // planet/moon envelope for EVERY physical body already in its world,
+        // including uninhabited worlds with ZERO finite stock. Historic
+        // worlds only gain these zero-mass rows through an explicit commit.
+        std::size_t expected_bodies=0;
+        for(const auto& [system,bodies]:result.physical_celestial_systems_)
+            for(const auto& body:bodies) {
+                if(body.kind!=CelestialKind::Planet &&
+                   body.kind!=CelestialKind::Moon)continue;
+                ++expected_bodies;
+                const auto it=result.planetary_genesis_.find(body.id);
+                const auto env=planetary_envelope_for_body(body);
+                if(it==result.planetary_genesis_.end() ||
+                   it->second.key.galaxy_seed!=kAstronomicalGalaxySeed ||
+                   it->second.key.system!=system ||
+                   it->second.key.body!=body.id ||
+                   it->second.key.generator_revision!=1 ||
+                   it->second.envelope.climate!=env.climate ||
+                   it->second.envelope.water_coverage!=env.water_coverage ||
+                   it->second.envelope.average_celsius!=env.average_celsius ||
+                   it->second.envelope.biosphere_present!=env.biosphere_present)
+                    throw std::runtime_error("snapshot: planetary genesis catalogue/envelope alteration");
+            }
+        if(result.planetary_genesis_.size()!=expected_bodies)
+            throw std::runtime_error("snapshot: orphaned planetary body genesis");
+        std::map<std::uint64_t,std::array<std::int64_t,4>> assigned;
+        for(const auto& [key,source]:result.planetary_region_sources_) {
+            const auto body=std::get<0>(key);
+            const auto genesis=result.planetary_genesis_.find(body);
+            if(genesis==result.planetary_genesis_.end() ||
+               source.region.body!=body ||
+               source.region.latitude!=std::get<1>(key) ||
+               source.region.longitude!=std::get<2>(key) ||
+               source.region.revision!=std::get<3>(key) ||
+               source.region.revision!=genesis->second.key.generator_revision)
+                throw std::runtime_error("snapshot: planetary regional source not a registered identity");
+            const auto& gen=genesis->second;
+            const auto watershed=planetary::generate_watersheds(gen.key,gen.envelope);
+            const auto& cell=watershed.at(source.region.latitude,
+                                          source.region.longitude);
+            if((cell.ocean && (source.stock_kg[1] || source.stock_kg[2])) ||
+               (!gen.envelope.water_coverage && source.stock_kg[0]))
+                throw std::runtime_error("snapshot: planetary regional geology contradicts terrain");
+            auto& stock=assigned[body];
+            for(std::size_t i=0;i<4;++i) {
+                if(stock[i]>100000000-source.stock_kg[i])
+                    throw std::runtime_error("snapshot: planetary region overallocated");
+                stock[i]+=source.stock_kg[i];
+            }
+        }
+        for(const auto& [body,gen]:result.planetary_genesis_) {
+            const auto it=assigned.find(body);
+            for(std::size_t i=0;i<4;++i) {
+                const auto allocated=it==assigned.end()?0:it->second[i];
+                if(allocated>gen.original_kg[i] ||
+                   gen.unallocated_kg[i]!=gen.original_kg[i]-allocated)
+                    throw std::runtime_error("snapshot: planetary finite original mass mismatch");
+            }
+        }
+    }
     if(result.snapshot_version_>=76) {
         for(const auto& [ship,rig]:result.oasis_extractors_) {
             const auto* hull=result.find(ship);
