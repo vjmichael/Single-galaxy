@@ -1389,6 +1389,12 @@ if(BUILD_TESTING)
   target_link_libraries(galaxy_stage6_native_surface_movement_tests PRIVATE galaxy_kernel)
   add_test(NAME galaxy_stage6_native_surface_movement
     COMMAND galaxy_stage6_native_surface_movement_tests)
+  find_program(SG_STAGE6F5_NODE NAMES node node.exe)
+  if(SG_STAGE6F5_NODE)
+    add_test(NAME galaxy_stage6f5_surface_packet_contract
+      COMMAND ${SG_STAGE6F5_NODE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/STAGE6F5_SurfacePacketContractTests.cjs)
+  endif()
 endif()
 
 # PGF-01B.2: authenticated real host planetary survey and saved restart.
