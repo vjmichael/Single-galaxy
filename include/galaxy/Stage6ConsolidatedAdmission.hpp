@@ -46,7 +46,8 @@ inline Evidence observe(const PersistentWorld& source) {
         const auto s=w.planetary_sites().find(key);
         if(s==w.planetary_sites().end() ||
            !std::get<0>(key) || !shuttle.owner || !shuttle.source_ship ||
-           !shuttle.pilot_npc || shuttle.flight_phase>3 ||
+           (shuttle.flight_phase>0 && !shuttle.pilot_npc) ||
+           shuttle.flight_phase>3 ||
            shuttle.owner!=s->second.owner ||
            shuttle.source_ship!=s->second.source_ship)
             throw std::logic_error("S6-G original site and named-shuttle identity diverged");
@@ -89,7 +90,8 @@ inline Evidence admit(PersistentWorld& world) {
        after.total_ore!=before.total_ore ||
        after.total_material_kg!=before.total_material_kg ||
        after.total_credits!=before.total_credits ||
-       after.bodies!=before.bodies ||
+       after.bodies<before.bodies ||
+       after.regional_sources<before.regional_sources ||
        after.sites!=before.sites ||
        after.shuttles!=before.shuttles ||
        after.people!=before.people)
