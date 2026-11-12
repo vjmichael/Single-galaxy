@@ -19,6 +19,7 @@
 #include <string>
 #include <string_view>
 #include <thread>
+#include <tuple>
 #include <vector>
 
 namespace galaxy::installed_planet_transfer {
@@ -78,8 +79,8 @@ std::vector<Option> sites(const PersistentWorld& world,const PlayerPerson& p) {
         if(site.owner!=owner || site.source_ship!=p.home_ship ||
            site.spaceport_phase!=3 || !site.surface_location)continue;
         if(p.state!=PlayerPersonState::AboardOwnShip &&
-           (p.planet_body!=key.body || p.planet_latitude!=key.latitude ||
-            p.planet_longitude!=key.longitude || p.planet_revision!=key.revision))
+           (p.planet_body!=std::get<0>(key) || p.planet_latitude!=std::get<1>(key) ||
+            p.planet_longitude!=std::get<2>(key) || p.planet_revision!=std::get<3>(key)))
             continue;
         options.push_back({key,site.surface_location});
         if(options.size()>max_sites)
@@ -132,13 +133,13 @@ int run(const std::string& save_utf8) {
                site->second.surface_location!=option.surface)
                 throw std::runtime_error("selected original shuttle site custody changed");
             if(p.state!=PlayerPersonState::AboardOwnShip &&
-                (p.planet_body!=key.body || p.planet_latitude!=key.latitude ||
-                 p.planet_longitude!=key.longitude ||
-                 p.planet_revision!=key.revision))
+                (p.planet_body!=std::get<0>(key) || p.planet_latitude!=std::get<1>(key) ||
+                 p.planet_longitude!=std::get<2>(key) ||
+                 p.planet_revision!=std::get<3>(key)))
                 throw std::runtime_error("player left selected original shuttle");
             std::cout<<"TFRAME|1|"<<session<<'|'<<request<<'|'<<p.home_ship<<'|'
-                <<unsigned(p.state)<<'|'<<key.body<<'|'<<key.latitude<<'|'
-                <<key.longitude<<'|'<<unsigned(sh->second.flight_phase)<<'|'
+                <<unsigned(p.state)<<'|'<<std::get<0>(key)<<'|'<<std::get<1>(key)<<'|'
+                <<std::get<2>(key)<<'|'<<unsigned(sh->second.flight_phase)<<'|'
                 <<world.world().tick()<<'|'<<world.generation()<<'|'
                 <<option.surface<<'|'<<p.planet_flight_receipt<<'|'
                 <<p.planet_descent_receipt<<'|'<<p.planet_ascent_receipt<<'|'
@@ -148,8 +149,8 @@ int run(const std::string& save_utf8) {
         for(std::size_t i=0;i<options.size();++i) {
             const auto& o=options[i];
             const auto phase=world.world().planetary_shuttles().at(o.key).flight_phase;
-            std::cout<<"TSITE|1|"<<session<<'|'<<i<<'|'<<o.key.body<<'|'
-                <<o.key.latitude<<'|'<<o.key.longitude<<'|'<<o.surface<<'|'
+            std::cout<<"TSITE|1|"<<session<<'|'<<i<<'|'<<o.std::get<0>(key)<<'|'
+                <<o.std::get<1>(key)<<'|'<<o.std::get<2>(key)<<'|'<<o.surface<<'|'
                 <<unsigned(phase)<<'\n';
         }
         std::cout<<std::flush;
@@ -219,9 +220,9 @@ int run(const std::string& save_utf8) {
                     accepted=live.size()==options.size();
                     if(accepted) {
                         for(std::size_t i=0;i<options.size();++i) {
-                            if(live[i].key.body!=options[i].key.body ||
-                               live[i].key.latitude!=options[i].key.latitude ||
-                               live[i].key.longitude!=options[i].key.longitude ||
+                            if(live[i].std::get<0>(key)!=options[i].std::get<0>(key) ||
+                               live[i].std::get<1>(key)!=options[i].std::get<1>(key) ||
+                               live[i].std::get<2>(key)!=options[i].std::get<2>(key) ||
                                live[i].surface!=options[i].surface) {
                                 accepted=false;break;
                             }
