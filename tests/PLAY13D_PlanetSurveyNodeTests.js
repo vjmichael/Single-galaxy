@@ -683,3 +683,21 @@ test('WORK-01A universal work board uses bounded native work receipts',()=>{
   assert.match(sim,/process_universal_work/);
   assert.match(sim,/galaxy-kernel-v94/);
 });
+
+test('S6-D physical regional phases require strict bounded telemetry',()=>{
+  const p=decode('COLONY|1|5|PLANET_PHYSICAL|4294967300|17|36|1|0|2000|3000|1000|0|11500|500|3');
+  assert.equal(p.type,'PLANET_PHYSICAL');
+  assert.equal(p.groundwaterKg,1000);
+  assert.equal(p.topsoilKg,11500);
+  assert.equal(p.hazard,3);
+  for(const row of [
+    'COLONY|1|5|PLANET_PHYSICAL|4294967300|17|36|1|0|2000|3000|1000|0|11500|500',
+    'COLONY|1|5|PLANET_PHYSICAL|4294967300|17|36|1|0|2000|3000|1000|0|11500|500|5',
+    'COLONY|1|5|PLANET_PHYSICAL|4294967300|17|36|0|0|2000|3000|1000|0|11500|500|3',
+    'COLONY|1|5|PLANET_PHYSICAL|4294967300|17|36|1|0|-2|3000|1000|0|11500|500|3',
+    'COLONY|1|5|PLANET_PHYSICAL|4294967300|17|36|1|0|100000000|3000|1000|0|11500|500|3'
+  ])assert.throws(()=>decode(row),Error,row);
+  const host=fs.readFileSync(path.join(root,'src/colony_live_host.cpp'),'utf8');
+  assert.match(host,/scan_planetary_physical_environment/);
+  assert.match(host,/PLANET_PHYSICAL/);
+});

@@ -1657,6 +1657,26 @@ void apply(PersistentWorld& world,EntityId ship,FleetSelection& fleet,const std:
                     std::to_string(kg[0])+"|"+std::to_string(kg[1])+"|"+
                     std::to_string(kg[2])+"|"+std::to_string(kg[3]));
             }
+            // Same source-bound owner/scanner check; no extraction authority.
+            const auto physical=world.world().scan_planetary_physical_environment(
+                principal,ship,static_cast<std::uint64_t>(body),
+                static_cast<std::uint16_t>(latitude),
+                static_cast<std::uint16_t>(longitude));
+            if(physical && regional_stock) {
+                planetary::verify_physical_environment(
+                    *physical,regional_stock->stock_kg[0],
+                    regional_stock->stock_kg[1]);
+                std::string payload="PLANET_PHYSICAL|"+std::to_string(body)+"|"+
+                    std::to_string(latitude)+"|"+std::to_string(longitude)+"|"+
+                    std::to_string(regional_stock->region.revision)+"|"+
+                    std::to_string(physical->updated_tick);
+                for(const auto kg:physical->water_kg)
+                    payload+="|"+std::to_string(kg);
+                for(const auto kg:physical->soil_kg)
+                    payload+="|"+std::to_string(kg);
+                payload+="|"+std::to_string(unsigned(physical->hazard));
+                announce(world.world(),payload);
+            }
             // Informational climate only. Actual harvest or settlement
             // remains under original physical source and human authority.
             for(unsigned q=0;q<planetary::kPlanetaryQuarters;++q){
