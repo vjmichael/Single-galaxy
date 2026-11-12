@@ -6,6 +6,7 @@
 #include "galaxy/PlanetaryGeography.hpp"
 #include "galaxy/PlanetarySeasonalClimate.hpp"
 #include "galaxy/PlanetaryPhysicalProcesses.hpp"
+#include "galaxy/PlanetaryEcology.hpp"
 #include "galaxy/NpcTransport.hpp"
 #include "galaxy/UniversalTransport.hpp"
 #include "galaxy/ShipStatusEffects.hpp"
@@ -623,6 +624,10 @@ struct PlanetarySiteFacility {
     // an exit receipt remains forever to prevent request/identity replay.
     std::map<std::uint64_t,std::array<std::uint64_t,3>> visitor_residency{};
     std::array<std::int64_t,3> regional_geology_kg{}; // v129 source-funded soil/mineral/volatile
+    // v130: production/equipment evidence. NEVER additional water or crops.
+    std::uint64_t ecology_field_batches=0,ecology_controlled_batches=0;
+    std::uint64_t ecology_blocked_cycles=0,ecology_last_tick=0;
+    planetary::PhysicalHazard ecology_last_hazard=planetary::PhysicalHazard::None;
 };
 using PlanetarySiteKey = std::tuple<std::uint64_t,std::uint16_t,std::uint16_t,std::uint32_t>;
 // WO3-E: an imported *historical legal address*, never a new household,
@@ -1414,6 +1419,9 @@ public:
     void enable_physical_planetary_environment();
     // v129 first-class receipt schema, zero-new-mass historic upgrade.
     void enable_planetary_source_custody();
+    // v130 original site/ecological process integration; zero new resources.
+    void enable_planetary_ecology();
+    bool planetary_ecology_enabled() const {return snapshot_version_>=130;}
     bool physical_planetary_environment_enabled() const {return snapshot_version_>=128;}
     const std::map<PlanetarySiteKey,planetary::PhysicalEnvironment>& planetary_physical_environment() const {
         return planetary_physical_environment_;

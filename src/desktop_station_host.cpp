@@ -103,6 +103,7 @@ static int run_host(int argc,char** argv){
   world.ensure_planetary_genesis_manifest();
   world.ensure_physical_planetary_environment();
   world.ensure_planetary_source_custody();
+    world.ensure_planetary_ecology();
   if(fresh){
    // One genuine original ship docking command and transition in the
    // persisted simulation, not a Godot-side dock state or second hull.

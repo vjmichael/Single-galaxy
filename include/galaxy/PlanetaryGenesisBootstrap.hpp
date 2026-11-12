@@ -25,13 +25,13 @@ inline bool provision_first_planet_seed(Simulation& seed) {
                 static_cast<std::uint16_t>(index/planetary::kWatershedColumns),
                 static_cast<std::uint16_t>(index%planetary::kWatershedColumns),
                 {6000,12000,16000,4000});
-            seed.enable_planetary_source_custody();
+            seed.enable_planetary_ecology();
             return true;
         }
     }
     // All-water or zero-water systems cannot be used as a fictitious
     // source for this explicitly dry-land introductory resource patch.
-    seed.enable_planetary_source_custody(); // no physical source created
+    seed.enable_planetary_ecology(); // no physical source created
     return false;
 }
 } // namespace galaxy::stage6

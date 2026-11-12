@@ -905,6 +905,7 @@ public:
         FailPoint fail=FailPoint::None);
     void ensure_physical_planetary_environment(FailPoint fail=FailPoint::None);
     void ensure_planetary_source_custody(FailPoint fail=FailPoint::None);
+    void ensure_planetary_ecology(FailPoint fail=FailPoint::None);
     void ensure_ship_frame_registry();
     void ensure_visited_local_regions();
     void ensure_local_environment_profiles();

@@ -11381,6 +11381,17 @@ void PersistentWorld::ensure_physical_planetary_environment(FailPoint fail) {
     world_.swap(next);
     ++generation_;
 }
+void PersistentWorld::ensure_planetary_ecology(FailPoint fail) {
+    auto next=world_;
+    next.enable_planetary_ecology();
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("S6-E migration changed original matter origin");
+    if(next.canonical_state()==world_.canonical_state())return;
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);
+    ++generation_;
+}
 void PersistentWorld::ensure_planetary_source_custody(FailPoint fail) {
     auto next=world_;
     const auto before=world_.total_ore();
