@@ -1617,6 +1617,10 @@ void apply(PersistentWorld& world,EntityId ship,FleetSelection& fleet,const std:
                 static_cast<std::uint16_t>(latitude),
                 static_cast<std::uint16_t>(longitude));
             if(!site){announce(world.world(),"ERROR|PLANET_SURVEY_DENIED");return;}
+            const auto regional_stock=world.world().scan_planetary_region_source(
+                principal,ship,static_cast<std::uint64_t>(body),
+                static_cast<std::uint16_t>(latitude),
+                static_cast<std::uint16_t>(longitude));
             const auto seasons=world.world().scan_planetary_seasons(
                 principal,ship,static_cast<std::uint64_t>(body),
                 static_cast<std::uint16_t>(latitude),
@@ -1642,6 +1646,16 @@ void apply(PersistentWorld& world,EntityId ship,FleetSelection& fleet,const std:
                 std::to_string(site->downstream_latitude)+"|"+
                 std::to_string(site->downstream_longitude)+"|"+
                 std::to_string(site->key.revision));
+            // Physical source rows exist ONLY following finite original
+            // genesis allocation; absent sources never appear as phantom ore.
+            if(regional_stock) {
+                const auto& kg=regional_stock->stock_kg;
+                announce(world.world(),"PLANET_SOURCE|"+std::to_string(body)+"|"+
+                    std::to_string(latitude)+"|"+std::to_string(longitude)+"|"+
+                    std::to_string(regional_stock->region.revision)+"|"+
+                    std::to_string(kg[0])+"|"+std::to_string(kg[1])+"|"+
+                    std::to_string(kg[2])+"|"+std::to_string(kg[3]));
+            }
             // Informational climate only. Actual harvest or settlement
             // remains under original physical source and human authority.
             for(unsigned q=0;q<planetary::kPlanetaryQuarters;++q){
@@ -2104,6 +2118,29 @@ int main(int argc,char** argv){
         genesis.add_geological_asteroid({140000,0},AsteroidClass::Carbonaceous,70,1700);
         genesis.add_geological_asteroid({320000,90000},AsteroidClass::Silicate,95,2900);
         genesis.add_geological_asteroid({-220000,-90000},AsteroidClass::Metallic,55,5700);
+        // S6-C: physical finite body-specific genesis in the original world
+        // candidate ONLY; existing SQLite saves do not read its inventory.
+        genesis.ensure_physical_celestial_systems();
+        genesis.ensure_planetary_genesis_manifest();
+        bool planet_seeded=false;
+        for(const auto& [id,record]:genesis.planetary_genesis()) {
+            if(!record.envelope.water_coverage)continue;
+            const auto map=planetary::generate_watersheds(
+                record.key,record.envelope);
+            for(int i=0;i<planetary::kWatershedCells;++i) {
+                if(map.cells[i].ocean)continue;
+                genesis.provision_planetary_body_genesis(
+                    id,{6000,12000,16000,4000}); // 38 physical tonnes
+                genesis.place_planetary_region_genesis(
+                    id,static_cast<std::uint16_t>(i/planetary::kWatershedColumns),
+                    static_cast<std::uint16_t>(i%planetary::kWatershedColumns),
+                    {6000,12000,16000,4000});
+                planet_seeded=true;
+                break;
+            }
+            if(planet_seeded)break;
+        }
+        // No compatible land/water body means no invented deposit.
         // No stations, other ships, markets, factions or gates at start.
         const bool was_saved=fs::exists(argv[1]);
         PersistentWorld world(argv[1],std::move(genesis));
@@ -2114,6 +2151,9 @@ int main(int argc,char** argv){
         world.configure_probe_report_tick_ms(static_cast<std::uint64_t>(ms));
         // Existing saves are upgraded atomically on first new-host start.
         world.ensure_physical_celestial_systems();
+        // Atomic original SQLite v127 migration grants ZERO kilograms
+        // to old worlds and preserves their physical oasis stocks.
+        world.ensure_planetary_genesis_manifest();
         // PLAY-13C.2B: migrate current ships to durable legacy-local frames.
         world.ensure_ship_frame_registry();
         // PLAY-13C.4: durable, idempotent region seeding for pre-v73 arrivals.
