@@ -74,9 +74,18 @@ static int run_host(int argc,char** argv){
   // Native v125 SQLite restore requires a matching durable NPC roster for
   // EVERY original colony ship. Initialize after both crews exist.
   seed.enable_individual_workforce();
+  // DOCK-09: new worlds receive finite original ship-held food/water/
+  // oxygen to support real habitat assignment. No factory, free module,
+  // cloned inventory or credential is granted. Existing saves are unchanged.
+  seed.provision_colony_genesis(starting_ship,3000,3000,3000,3000,3000);
   // Explicit test-station genesis ONLY: a single persistent finite asteroid.
   // Existing saves ignore this seed. A visual Godot sample never adds ore.
-  (void)seed.add_geological_asteroid({25000,0},AsteroidClass::Metallic,10,900);
+  // Finite and physically distinct STARTER deposits. Enough mined ore
+  // exists to construct (not gift) the first original outpost and machines.
+  // The original mining, fabrication, ore lots and cargo limits still apply.
+  // Compact rock radii avoid a 900-metre swept-collision sphere at the dock.
+  (void)seed.add_geological_asteroid({25000,0},AsteroidClass::Metallic,64,2);
+  (void)seed.add_geological_asteroid({42000,0},AsteroidClass::Silicate,24,2);
   seed.enable_native_galactic_physics({{1,galactic::Point{{0,100000},{0,100000},{0,100000}}}});
   // Opt in ONLY the genesis of this explicit test station. Existing
   // SQLite worlds must load their own original rules and resources.
