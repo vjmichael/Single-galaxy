@@ -7,6 +7,7 @@
 #include "galaxy/NativeInteriorMovement.hpp"
 #include "galaxy/SpaceMiningContact.hpp"
 #include "galaxy/SpaceMiningSurvey.hpp"
+#include "galaxy/ColonyOnboarding.hpp"
 #include <charconv>
 #include <chrono>
 #include <cstdint>
@@ -221,6 +222,7 @@ static int run_host(int argc,char** argv){
         const auto frame=person.current(kLocalOwner);
         send_pose("POSE",session,0,frame,world);
         send_ship(session,0,0,Outcome::Applied,person.flight_state(kLocalOwner));
+        std::cout<<colony_onboarding::source_frame(world,kLocalOwner,frame.ship,session,0)<<std::flush;
         send_rock_contact(session,0,world,frame.ship);
         send_original_station_nav(session,0,world,frame.ship);
         auto last_move=std::chrono::steady_clock::now()-std::chrono::milliseconds(100);
@@ -238,7 +240,10 @@ static int run_host(int argc,char** argv){
             const bool fabricating=fields.size()==5&&fields[0]=="FAB";
             const bool powering=fields.size()==5&&fields[0]=="POWER";
             const bool surveying=fields.size()==5&&fields[0]=="SURVEY";
-            if(!walking&&!seating&&!flying&&!mining&&!fitting&&!fabricating&&!powering&&!surveying){
+            // DOCK-09: one explicitly selected original ship construction
+            // or material operation. No arbitrary recipes or world position.
+            const bool colony_build=fields.size()==5&&fields[0]=="ONBUILD";
+            if(!walking&&!seating&&!flying&&!mining&&!fitting&&!fabricating&&!powering&&!surveying&&!colony_build){
                 deny(0,"malformed");continue;
             }
             std::uint64_t supplied_session=0,req=0,expected=0,desired=0;
@@ -246,13 +251,14 @@ static int run_host(int argc,char** argv){
             if(!number(fields[1],supplied_session)||!number(fields[2],req)||
                !number(fields[3],expected)||
                (walking&&(!number(fields[4],dx)||!number(fields[5],dz)))||
-               ((seating||fitting||fabricating||powering||mining||surveying)&&
+               ((seating||fitting||fabricating||powering||mining||surveying||colony_build)&&
                 (!number(fields[4],desired)||
                  (seating&&desired>1)||
                  (fitting&&desired!=1)||
                  (fabricating&&desired!=1)||
                  (powering&&desired>1)||
-                 (surveying&&desired!=1)))){
+                 (surveying&&desired!=1)||
+                 (colony_build&&(desired<1||desired>4))))){
                 deny(0,"bad-integer");continue;
             }
             if(supplied_session!=session){deny(req,"session");continue;}
@@ -285,6 +291,8 @@ static int run_host(int argc,char** argv){
                 last_move=now;
                 galaxy::server_dx::committed_breadcrumb(world.world().tick(),world.generation());
                 send_ship(session,req,command_id,*outcome,person.flight_state(kLocalOwner));
+                std::cout<<colony_onboarding::source_frame(
+                    world,kLocalOwner,previous.ship,session,req)<<std::flush;
                 send_rock_contact(session,req,world,previous.ship);
                 send_original_station_nav(session,req,world,previous.ship);
                 continue;
@@ -327,7 +335,7 @@ static int run_host(int argc,char** argv){
                 last_move=now;
                 continue;
             }
-            if(mining||fitting||fabricating||powering){
+            if(mining||fitting||fabricating||powering||colony_build){
                 if(!previous.seated || expected!=previous.seat_sequence ||
                    !world.world().player_people().count(kLocalOwner)){
                     deny(req,"not-seated-or-stale-seat");continue;
@@ -343,7 +351,17 @@ static int run_host(int argc,char** argv){
                 c.sequence=c.id;
                 c.execute_tick=world.world().tick()+1;
                 c.issuer=kLocalOwner;c.actor=previous.ship;
-                if(mining){
+                if(colony_build){
+                    // Original-world proposal checks source mass and physical
+                    // hull; the kernel remains the sole producer of receipts.
+                    const auto original=colony_onboarding::propose(
+                        world.world(),kLocalOwner,previous.ship,c.id,
+                        static_cast<colony_onboarding::Operation>(desired));
+                    if(!original){
+                        deny(req,"physical-colony-construction-prerequisite");continue;
+                    }
+                    c=*original;
+                }else if(mining){
                     // Client-provided rock is only a selector. The ORIGINAL
                     // physical ship/rock proximity sensor independently
                     // identifies it before the simulation checks hull range.
@@ -389,6 +407,8 @@ static int run_host(int argc,char** argv){
                 galaxy::server_dx::committed_breadcrumb(world.world().tick(),world.generation());
                 last_move=now;
                 send_ship(session,req,c.id,outcome,person.flight_state(kLocalOwner));
+                std::cout<<colony_onboarding::source_frame(
+                    world,kLocalOwner,previous.ship,session,req)<<std::flush;
                 send_rock_contact(session,req,world,previous.ship);
                 send_original_station_nav(session,req,world,previous.ship);
                 continue;
