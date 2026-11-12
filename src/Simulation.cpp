@@ -7568,6 +7568,15 @@ void Simulation::enable_planetary_source_custody() {
         throw std::logic_error("planetary source custody migration changed matter");
     swap(next);
 }
+void Simulation::enable_planetary_ecology() {
+    if(snapshot_version_<129)enable_planetary_source_custody();
+    if(snapshot_version_>=130)return;
+    auto next=*this;
+    next.snapshot_version_=130;
+    if(next.total_ore()!=total_ore())
+        throw std::logic_error("planetary ecology migration created matter");
+    swap(next);
+}
 void Simulation::process_physical_planetary_environment() {
     if(snapshot_version_<128 ||
        tick_%planetary::kPhysicalEnvironmentCycleTicks)return;
@@ -11825,19 +11834,27 @@ void Simulation::process_planetary_surface_operations() {
             ground.wastewater_kg+=people;ground.co2_kg+=people;
         }
     for(auto& [key,site]:planetary_sites_) {
-        (void)key;
+        const auto physical=planetary_physical_environment_.find(key);
+        const auto* phase=(snapshot_version_>=130 &&
+            physical!=planetary_physical_environment_.end())?
+            &physical->second:nullptr;
+        const auto hazard=planetary::site_physical_hazard(phase);
         if(site.spaceport_phase==0 || site.assigned_workers==0)continue;
         // Deterministic bounded solar period. Generation has no created
         // matter; electricity is a 0..120 service buffer. HVAC needs one
         // unit every tick, even while people are unable to work.
         if(site.utility_phase==2) {
-            if(tick_%20<14 && site.equipment_condition>0) {
+            if(tick_%20<14 && site.equipment_condition>0 &&
+               !(snapshot_version_>=130 &&
+                 planetary::surface_work_hazard(hazard))) {
                 site.stored_electricity=std::min<std::int64_t>(
                     120,site.stored_electricity+3);
                 ++site.utility_powered_cycles;
             }
-            if(site.stored_electricity>=1) {
-                --site.stored_electricity;
+            const auto hvac=snapshot_version_>=130?
+                planetary::habitat_hvac_energy(hazard):1;
+            if(site.stored_electricity>=hvac) {
+                site.stored_electricity-=hvac;
                 ++site.hvac_cycles;
             } else ++site.utility_outages;
             // Loss-bearing, never perfect closure. Recycled water and
@@ -11931,6 +11948,25 @@ void Simulation::process_planetary_surface_operations() {
             site.oxygen_kg-=2;
             site.co2_kg+=2;
             ++site.worker_support_cycles;
+        }
+        // Flooding stops exposed construction and production, but REAL
+        // deployed people have already consumed their physical rations.
+        if(snapshot_version_>=130 &&
+           planetary::surface_work_hazard(hazard)) {
+            if(site.utility_phase==1)++site.utility_stalled_ticks;
+            if(site.housing_phase==1)++site.housing_stalled_ticks;
+            for(auto& job:site.production_projects)
+                if(job.phase==1)++job.stalled_ticks;
+            for(auto& job:site.service_projects)
+                if(job.phase==1)++job.stalled_ticks;
+            if(site.workforce_policy && tick_%20==0) {
+                ++site.ecology_blocked_cycles;
+                ++site.stalled_cycles;
+                site.last_work_tick=tick_;
+            }
+            site.ecology_last_hazard=hazard;
+            site.ecology_last_tick=tick_;
+            continue;
         }
         if(site.housing_phase==1) {
             // No manufacturing on acceptance: only real original world
@@ -12095,14 +12131,36 @@ void Simulation::process_planetary_surface_operations() {
             // and the local physical inventories can sustain work.
             if(site.workforce_policy==0 || tick_%20!=0)continue;
             bool worked=false;
+            const auto gen=planetary_genesis_.find(std::get<0>(key));
+            const bool biosphere=gen!=planetary_genesis_.end() &&
+                gen->second.envelope.biosphere_present;
+            const auto crop=snapshot_version_>=130?
+                planetary::cultivation_budget(phase,biosphere,
+                    site.utility_phase==2 && site.farm &&
+                    site.equipment_condition>0,site.stored_electricity):
+                planetary::CultivationBudget{planetary::CropMode::Field,
+                    planetary::PhysicalHazard::None,10,5,12,3,0};
             if(site.workforce_policy==1 && site.farm &&
                site.equipment_condition>0 &&
-               site.water_kg>=10 && site.nutrients_kg>=5 &&
-               site.food_kg<=1000000-12 &&
-               site.wastewater_kg<=1000000-3) {
-                site.water_kg-=10;site.nutrients_kg-=5;
-                site.food_kg+=12;site.wastewater_kg+=3;
+               crop.mode!=planetary::CropMode::Blocked &&
+               site.water_kg>=crop.water_kg &&
+               site.nutrients_kg>=crop.nutrients_kg &&
+               site.food_kg<=1000000-crop.food_kg &&
+               site.wastewater_kg<=1000000-crop.wastewater_kg &&
+               site.stored_electricity>=crop.electricity_units) {
+                site.water_kg-=crop.water_kg;
+                site.nutrients_kg-=crop.nutrients_kg;
+                site.food_kg+=crop.food_kg;
+                site.wastewater_kg+=crop.wastewater_kg;
+                site.stored_electricity-=crop.electricity_units;
                 ++site.harvest_cycles;worked=true;
+                if(snapshot_version_>=130) {
+                    if(crop.mode==planetary::CropMode::Field)
+                        ++site.ecology_field_batches;
+                    else ++site.ecology_controlled_batches;
+                    site.ecology_last_tick=tick_;
+                    site.ecology_last_hazard=crop.hazard;
+                }
             } else if((site.workforce_policy==2 || site.workforce_policy==3) &&
                       site.extractor && site.equipment_condition>0) {
                 auto r=oasis_reserves_.find(site.region.body);
@@ -12135,6 +12193,11 @@ void Simulation::process_planetary_surface_operations() {
                     --site.equipment_condition;
             } else {
                 ++site.stalled_cycles;
+                if(snapshot_version_>=130 && site.workforce_policy==1){
+                    ++site.ecology_blocked_cycles;
+                    site.ecology_last_tick=tick_;
+                    site.ecology_last_hazard=hazard;
+                }
             }
             continue;
         } // operational NPC workforce still consumes supplies
