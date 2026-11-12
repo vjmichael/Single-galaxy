@@ -58,7 +58,7 @@ def start_transfer(host,save):
             continue
         assert line is not None,"native transfer died before original TFRAME"
         if line.startswith("TFRAME|"):
-            return p,thread,line
+            return p,thread,line,lines
         assert line.startswith("TSITE|"),line
     raise AssertionError("no source-authoritative transfer frame")
 
@@ -93,17 +93,33 @@ def main():
         # A preflight must NEVER open a second original writer, even a
         # supposedly read-only one, while an installed host owns the OS lease.
         live=saves["--seed-boarded"]
-        p,thread,initial=start_transfer(host,live)
+        p,thread,initial,updates=start_transfer(host,live)
         assert initial.split("|")[5]=="5"
         probe(host,live,None)
-        p.stdin.write("QUIT\n")
-        p.stdin.flush()
+        # Native 100ms clock must progress autonomously for at least 16
+        # committed original steps with NO Godot or client command at all.
+        initial_tick=int(initial.split("|")[10])
+        deadline=time.monotonic()+30
+        later=None
+        while time.monotonic()<deadline:
+            try:
+                event=updates.get(timeout=0.5)
+            except queue.Empty:
+                continue
+            assert event is not None,"native clock stopped before sustained ticks"
+            packet=event.split("|")
+            if packet[0]=="TFRAME" and packet[3]=="0" and                     int(packet[10])>=initial_tick+16:
+                later=packet
+                break
+        assert later is not None,"no 16-tick independent native writer progression"
+        assert int(later[11])>int(initial.split("|")[11])
+        p.kill()  # the original writer is deliberately not given QUIT
         p.wait(timeout=20)
         thread.join(timeout=4)
-        assert p.returncode==0,p.stderr.read()[:2000]
-        # The previous host's 100ms autonomous steps are real journal
-        # operations, but the act of probing after its death adds NONE.
         fresh=inspect(fixture,"--inspect-transfer",live)
+        assert fresh[2]>=int(later[10]) and fresh[3]>=int(later[11])
+        time.sleep(0.3)  # closed app has no clock; no imaginary elapsed time
+        assert inspect(fixture,"--inspect-transfer",live)==fresh
         result=probe(host,live,3)
         assert result[8]==fresh[2] and result[9]==fresh[3]
 
@@ -118,7 +134,7 @@ def main():
         assert reopened[1]==6 and reopened[7]==1
         assert reopened[8]==saved[2] and reopened[9]==saved[3]
         # A new authorized native child resumes only FROM persisted tick.
-        p,thread,first=start_transfer(host,in_flight)
+        p,thread,first,_updates=start_transfer(host,in_flight)
         fields=first.split("|")
         assert int(fields[5])==6 and int(fields[9])==1
         assert int(fields[10])==saved[2] and int(fields[11])==saved[3]
