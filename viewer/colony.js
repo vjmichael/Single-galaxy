@@ -486,6 +486,22 @@
       return {...e,id,latitude,longitude,elevation,ocean:!!ocean,
         terrain,watercourse,runoff,downLatitude,downLongitude,revision};
     }
+    if(t==='PLANET_SOURCE'){
+      // A real pre-allocated original source only, NOT a right to extract.
+      if(v.length!==12)throw Error('Malformed original planetary source');
+      const id=numeric(v[4],Number.MAX_SAFE_INTEGER),
+        latitude=numeric(v[5],35),longitude=numeric(v[6],71),
+        revision=numeric(v[7],100000),
+        waterKg=numeric(v[8],100000000),
+        soilKg=numeric(v[9],100000000),
+        mineralKg=numeric(v[10],100000000),
+        volatileKg=numeric(v[11],100000000);
+      if(!id||!revision || ![waterKg,soilKg,mineralKg,volatileKg].some(Boolean) ||
+         [waterKg,soilKg,mineralKg,volatileKg].some(n=>n%1000))
+        throw Error('Invalid original physical region source stock');
+      return {...e,id,latitude,longitude,revision,
+        waterKg,soilKg,mineralKg,volatileKg};
+    }
     if(t==='PLANET_SEASON'){
       // STAGE6-ENV01: derived seasonal model scores, NEVER water kg,
       // actual weather, source rights, or mining/farming authorization.
@@ -2286,6 +2302,21 @@
          ' · geographic version '+e.revision+
          ' (survey potential, not extractable water).';
      }
+     if(e.type==='PLANET_SOURCE'){
+       const sourceKey=[e.id,e.latitude,e.longitude,e.revision].join(':');
+       const seen=discoveredSeasonalSites.get(sourceKey);
+       // Deliberately require the same-tick native PLANET_REGION gate.
+       if(!seen||seen.tick!==e.tick)return;
+       if(seen.source && JSON.stringify(seen.source)!==JSON.stringify(e))
+         return; // never overwrite conflicting same-frame physical claims
+       seen.source=e;
+       q('signatureFeedback').textContent=
+         'Original finite regional deposit: '+e.waterKg+'kg water, '+
+         e.soilKg+'kg soil, '+e.mineralKg+'kg minerals and '+
+         e.volatileKg+'kg volatiles. This is owner-authorized geological '+
+         'observation only; physical extraction and transport require a '+
+         'future approved native facility, workers and conservation receipts.';
+     }
      if(e.type==='PLANET_SEASON'){
        const seasonalKey=[e.id,e.latitude,e.longitude,e.revision].join(':');
        const seen=discoveredSeasonalSites.get(seasonalKey);
@@ -2304,6 +2335,13 @@
            'Floodplain engineering review indicated. ':
            rows.some(x=>x.risk===1||x.risk===2)?
            'Shelter and thermal-control review indicated. ': '';
+         const knownSource=seen.source;
+         const matter=knownSource ?
+           ' Original finite regional source: '+knownSource.waterKg+'kg water, '+
+           knownSource.soilKg+'kg soil, '+knownSource.mineralKg+
+           'kg mineral and '+knownSource.volatileKg+
+           'kg volatiles. No extraction authority. ' :
+           ' No authorized finite regional source has been provisioned here. ';
          q('signatureFeedback').textContent=
            'Planet #'+e.id+' region ('+e.latitude+','+e.longitude+
            ') · four modeled quarters '+rows.map(x=>x.temperature+'°C').join(' / ')+
@@ -2314,7 +2352,7 @@
            ' · modeled hazards '+rows.map(x=>hazardNames[x.risk]).join(' / ')+
            '. '+engineeringNote+
            'These are derived prospect scores only: no extractable water, vegetation, '+
-           'weather events, or construction permit is granted.';
+           'weather events, or construction permit is granted. '+matter;
        }
      }
      if(e.type==='OASIS_REGION'){
