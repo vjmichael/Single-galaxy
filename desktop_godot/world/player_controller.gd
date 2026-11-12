@@ -12,6 +12,10 @@ var native_seated := false
 var native_dock_state := -1
 var native_in_ship := false
 var native_on_planet := false
+var planet_third_person := false
+var _native_planet_mesh: MeshInstance3D
+var _native_planet_material: StandardMaterial3D
+var _native_collision: CollisionShape3D
 var authoritative_mode := false
 # On-foot Shift is a latch, not a hold-to-sprint requirement. Native C++
 # remains the only movement authority; this controls legal step cadence.
@@ -29,6 +33,36 @@ func use_native_planet_surface(verified: bool) -> void:
 		native_in_ship = false
 		native_seated = false
 		velocity = Vector3.ZERO
+	else:
+		planet_third_person = false
+	if is_instance_valid(_native_collision):
+		# A rendered original planet must never become a Godot collider.
+		_native_collision.disabled=verified
+	if is_instance_valid(sight):
+		sight.enabled=not verified
+	if is_instance_valid(_native_planet_mesh):
+		_native_planet_mesh.visible=verified and planet_third_person
+
+func toggle_native_planet_view() -> void:
+	if not native_on_planet:
+		return
+	planet_third_person=not planet_third_person
+	if is_instance_valid(_native_planet_mesh):
+		_native_planet_mesh.visible=planet_third_person
+
+func apply_native_planet_survival(pose: Dictionary) -> void:
+	if not native_on_planet or not is_instance_valid(_native_planet_mesh):
+		return
+	# Visual appearance is tied ONLY to the last verified original PFRAME.
+	if bool(pose.get("suit_equipped",false)):
+		_native_planet_material.albedo_color=Color(0.72,0.81,0.94)
+	elif int(pose.get("injury_points",0))>0:
+		_native_planet_material.albedo_color=Color(0.78,0.40,0.39)
+	else:
+		_native_planet_material.albedo_color=Color(0.56,0.62,0.60)
+
+func _native_camera_offset() -> Vector3:
+	return Vector3(0.0,EYE_HEIGHT+0.45,3.4) if native_on_planet and planet_third_person else Vector3(0.0,EYE_HEIGHT,0.0)
 
 func use_native_ship_custody(aboard: bool) -> void:
 	# This is a verified original PERSON/POSE presentation flag only.
@@ -102,12 +136,12 @@ func apply_native_station_pose(confirmed_position: Vector3, smooth_view: bool) -
 	else:
 		# First login, restore from dock, or an unusually large real
 		# positional discontinuity must never animate a fictitious journey.
-		camera.position = Vector3(0.0, EYE_HEIGHT, 0.0)
+		camera.position = _native_camera_offset()
 
 func _process(delta: float) -> void:
 	if authoritative_mode and not native_in_ship and is_instance_valid(camera) and camera.current:
 		camera.position = camera.position.lerp(
-			Vector3(0.0, EYE_HEIGHT, 0.0),
+			_native_camera_offset(),
 			clampf(delta * CAMERA_RECENTER_HZ, 0.0, 1.0))
 
 func _ready() -> void:
@@ -117,7 +151,20 @@ func _ready() -> void:
 	capsule.radius = 0.34
 	capsule.height = 1.75
 	collision.shape = capsule
+	_native_collision=collision
 	add_child(collision)
+	# This mesh is third-person presentation, never the native player record.
+	_native_planet_material=StandardMaterial3D.new()
+	_native_planet_material.roughness=0.88
+	_native_planet_mesh=MeshInstance3D.new()
+	_native_planet_mesh.name="NativeOriginalCharacter_VISUAL_ONLY"
+	var display_capsule := CapsuleMesh.new()
+	display_capsule.radius=0.33
+	display_capsule.height=1.70
+	_native_planet_mesh.mesh=display_capsule
+	_native_planet_mesh.material_override=_native_planet_material
+	_native_planet_mesh.visible=false
+	add_child(_native_planet_mesh)
 	camera = Camera3D.new()
 	camera.position = Vector3(0.0, EYE_HEIGHT, 0.0)
 	camera.fov = 78.0
