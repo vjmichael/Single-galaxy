@@ -35,6 +35,7 @@ void historical(const std::string& db) {
         Simulation legacy(810,1);
         legacy.add_colony_ship(7,{0,0},50,5);
         legacy.ensure_physical_celestial_systems();
+        legacy.enable_native_galactic_physics({{1,galactic::Point{{0,100000},{0,100000},{0,100000}}}});
         PersistentWorld source(db,std::move(legacy));
         source.steps(3);
         const auto first=stage6::consolidated::observe(source);
@@ -91,6 +92,7 @@ void finite_scale(const std::string& db) {
         Simulation physical(777,1);
         const auto ship=physical.add_colony_ship(7,{0,0},50,5);
         physical.provision_starter_exploration_scanner(ship);
+        physical.enable_native_galactic_physics({{1,galactic::Point{{0,100000},{0,100000},{0,100000}}}});
         CHECK(stage6::provision_first_planet_seed(physical));
         PersistentWorld original(db,std::move(physical));
         auto state=stage6::consolidated::admit(original);
