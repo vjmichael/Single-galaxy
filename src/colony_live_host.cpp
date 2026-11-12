@@ -1407,6 +1407,7 @@ void apply(PersistentWorld& world,EntityId ship,FleetSelection& fleet,const std:
                facility->second.source_ship!=ship ||
                !facility->second.surface_location)
                 throw std::invalid_argument("non-owned landing facility");
+            const auto original_surface_location=facility->second.surface_location;
             std::uint64_t npc=0;
             if(v[4]=="NPC"){
                 if(v.size()!=(motion?9U:6U))
@@ -1434,7 +1435,7 @@ void apply(PersistentWorld& world,EntityId ship,FleetSelection& fleet,const std:
                 const auto it=world.world().npc_records().find(npc);
                 if(it==world.world().npc_records().end() ||
                    it->second.home_ship!=ship ||
-                   it->second.location!=facility->second.surface_location)
+                   it->second.location!=original_surface_location)
                     throw std::invalid_argument("original NPC not ashore");
                 pose=it->second.surface_pose;
             }else{
