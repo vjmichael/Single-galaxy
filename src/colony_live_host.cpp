@@ -1,3 +1,4 @@
+#include "galaxy/NativeWriterLease.hpp"
 // B7.0b: graphical colony-first local host. Authoritative C++/SQLite owns every
 // action, world state, player identity, construction and geological inventory.
 // stdout SGVIEW frames; stderr bounded COLONY telemetry for the local relay.
@@ -2348,7 +2349,9 @@ int main(int argc,char** argv){
 #endif
         auto ms=integer(argv[2]),max_ticks=integer(argv[3]);
         if(ms<20||ms>5000||max_ticks<5||max_ticks>1200)throw std::invalid_argument("invalid run limits");
-        WorldWriterLease single_writer(argv[1]);
+        // Match desktop Godot's process-lifetime native + original-host locks.
+        // No parallel stale Simulation writer may open this original SQLite world.
+        NativeWriterLease single_writer(fs::path(argv[1]));
         const auto human_owners=trusted_human_owners(authenticated_transport);
         Simulation genesis(0xB70B);
         const auto initial_ship=genesis.add_colony_ship(owner,{0,0},60,24);
