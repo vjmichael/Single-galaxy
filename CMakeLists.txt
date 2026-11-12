@@ -17,7 +17,7 @@ else()
     find_package(SQLite3 REQUIRED)
     message(STATUS "Using OS SQLite SDK (amalgamation not present)")
 endif()
-add_library(galaxy_kernel STATIC src/PlanetaryAgriculture.cpp src/Simulation.cpp src/DockWorkforce.cpp src/ColonyResilience.cpp
+add_library(galaxy_kernel STATIC src/PlanetaryAgriculture.cpp src/Simulation.cpp src/PlanetarySurfaceMovement.cpp src/DockWorkforce.cpp src/ColonyResilience.cpp
   src/ColonyRecovery.cpp src/ColonyPolicy.cpp src/PopulationCohorts.cpp
     src/ColonyWaterSupply.cpp src/Persistence.cpp src/NativeCellProcessRunner.cpp src/EconomyPrototype.cpp src/QuantifiedProduction.cpp src/Industry01Catalog.generated.cpp src/WO2ProfessionCatalog.generated.cpp src/Inventory.cpp src/InventoryLogistics.cpp src/FactoryLayout.cpp src/BlueprintConstruction.cpp src/HostBlueprintRegistry.cpp src/ClientContract.cpp src/Galaxy.cpp src/Navigation.cpp src/GateTransit.cpp src/Region.cpp
   src/ColdColonyNeeds.cpp src/MacroNeeds.cpp src/ColonySafety.cpp src/ColonySafetyJournal.cpp src/ColonySafetyNotice.cpp src/ColonyDefense.cpp src/ColonyConflict.cpp src/TerritoryJournal.cpp src/CyberIncidentJournal.cpp src/ColonyEvacuation.cpp src/ColonyFamilyDeparture.cpp src/NpcAppearanceGenome.cpp src/MedicalSocietyBridge.cpp src/DependentIncidentAccounting.cpp src/DependentIncidentJournal.cpp src/DependentGuardianship.cpp src/SplitRescueIntent.cpp src/RegionalCheckpointStore.cpp src/RegionalPopulationAudit.cpp src/RegionalEventScheduler.cpp src/RegionalModeAuthority.cpp src/RegionalFactoryHandoff.cpp src/RegionalProductionNetwork.cpp src/RegionalShipmentReconciliation.cpp src/ShipmentManifest.cpp src/ThirdPartyShipment.cpp src/CanonicalShippingHost.cpp src/ShipmentStatusView.cpp
@@ -1383,6 +1383,12 @@ if(BUILD_TESTING)
   target_link_libraries(galaxy_stage6_player_planetary_custody_tests PRIVATE galaxy_kernel)
   add_test(NAME galaxy_stage6_player_planetary_custody
     COMMAND galaxy_stage6_player_planetary_custody_tests)
+  # S6-F5: original source-derived fixed-point player/NPC collision authority
+  add_executable(galaxy_stage6_native_surface_movement_tests
+    tests/STAGE6_NativeSurfaceMovementTests.cpp)
+  target_link_libraries(galaxy_stage6_native_surface_movement_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_stage6_native_surface_movement
+    COMMAND galaxy_stage6_native_surface_movement_tests)
 endif()
 
 # PGF-01B.2: authenticated real host planetary survey and saved restart.
