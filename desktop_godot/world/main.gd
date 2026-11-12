@@ -1353,43 +1353,43 @@ func _on_planet_save_selected(path: String) -> void:
 	_schedule_native_handoff("recover-probe",old_pid)
 
 func _on_original_npc_pose(id: int, pose: Dictionary) -> void:
-    _on_native_player_status(
-        "Native NPC #%d: x=%d mm, z=%d mm, generation=%d (original receipt #%d)" %
-        [id, int(pose.get("x_mm", 0)), int(pose.get("z_mm", 0)),
-         int(pose.get("generation", 0)), int(pose.get("receipt", 0))])
+	_on_native_player_status(
+		"Native NPC #%d: x=%d mm, z=%d mm, generation=%d (original receipt #%d)" %
+		[id, int(pose.get("x_mm", 0)), int(pose.get("z_mm", 0)),
+		 int(pose.get("generation", 0)), int(pose.get("receipt", 0))])
 
 func _unhandled_input(event: InputEvent) -> void:
-    # S6-F5-D: N cycles only source-verified, physically present NPC IDs;
-    # Shift+arrows propose displacement, never an absolute position.
-    # The source NPC and all collision/gravity constraints are enforced
-    # exclusively inside the existing original native writer.
-    if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_N:
-        if native_planet_surface_session != null and native_planet_surface_session.has_verified_pose():
-            var ids: Array = native_planet_surface_session.verified_npcs()
-            if ids.is_empty():
-                _selected_planet_npc_id = 0
-                _on_native_player_status("No original named NPC currently ashore at this site")
-            else:
-                var position: int = ids.find(_selected_planet_npc_id)
-                _selected_planet_npc_id = int(ids[(position+1) % ids.size()])
-                _on_native_player_status(
-                    "Selected original NPC #%d — Shift+arrow keys command one physical step" %
-                    _selected_planet_npc_id)
-        else:
-            _on_native_player_status("NPC movement requires a verified original planet session")
-        get_viewport().set_input_as_handled()
-        return
-    if event is InputEventKey and event.pressed and not event.echo and event.shift_pressed and             event.keycode in [KEY_UP, KEY_DOWN, KEY_LEFT, KEY_RIGHT] and             native_planet_surface_session != null and native_planet_surface_session.has_verified_pose():
-        if _selected_planet_npc_id <= 0:
-            _on_native_player_status("Press N to select a real surface NPC before moving")
-        else:
-            var dx := -200 if event.keycode==KEY_LEFT else (200 if event.keycode==KEY_RIGHT else 0)
-            var dz := -200 if event.keycode==KEY_UP else (200 if event.keycode==KEY_DOWN else 0)
-            if not native_planet_surface_session.submit_npc_move(
-                    _selected_planet_npc_id, dx, dz):
-                _on_native_player_status("Native NPC move pending, unavailable or no longer authorized")
-        get_viewport().set_input_as_handled()
-        return
+	# S6-F5-D: N cycles only source-verified, physically present NPC IDs;
+	# Shift+arrows propose displacement, never an absolute position.
+	# The source NPC and all collision/gravity constraints are enforced
+	# exclusively inside the existing original native writer.
+	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_N:
+		if native_planet_surface_session != null and native_planet_surface_session.has_verified_pose():
+			var ids: Array = native_planet_surface_session.verified_npcs()
+			if ids.is_empty():
+				_selected_planet_npc_id = 0
+				_on_native_player_status("No original named NPC currently ashore at this site")
+			else:
+				var position: int = ids.find(_selected_planet_npc_id)
+				_selected_planet_npc_id = int(ids[(position+1) % ids.size()])
+				_on_native_player_status(
+					"Selected original NPC #%d — Shift+arrow keys command one physical step" %
+					_selected_planet_npc_id)
+		else:
+			_on_native_player_status("NPC movement requires a verified original planet session")
+		get_viewport().set_input_as_handled()
+		return
+	if event is InputEventKey and event.pressed and not event.echo and event.shift_pressed and             event.keycode in [KEY_UP, KEY_DOWN, KEY_LEFT, KEY_RIGHT] and             native_planet_surface_session != null and native_planet_surface_session.has_verified_pose():
+		if _selected_planet_npc_id <= 0:
+			_on_native_player_status("Press N to select a real surface NPC before moving")
+		else:
+			var dx := -200 if event.keycode==KEY_LEFT else (200 if event.keycode==KEY_RIGHT else 0)
+			var dz := -200 if event.keycode==KEY_UP else (200 if event.keycode==KEY_DOWN else 0)
+			if not native_planet_surface_session.submit_npc_move(
+					_selected_planet_npc_id, dx, dz):
+				_on_native_player_status("Native NPC move pending, unavailable or no longer authorized")
+		get_viewport().set_input_as_handled()
+		return
 	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_F1 and \
 			native_planet_surface_session != null and native_planet_surface_session.has_verified_pose():
 		player.toggle_native_planet_view()
