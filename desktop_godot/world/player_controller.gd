@@ -240,10 +240,8 @@ func _physics_process(delta: float) -> void:
 					var direction := (global_transform.basis * Vector3(axis.x, 0.0, axis.y)).normalized()
 					if direction.length_squared() >= 0.01:
 						native_planet_surface_intent.emit(direction)
-					else:
-						# Explicit idle tick for gravity/exposure, still original
-						# world admission and rate-limit; no client timer authority.
-						native_planet_vertical_intent.emit(false)
+					# No idle WAIT commands. Original C++ supervised ticker
+					# advances gravity/exposure with no Godot input at all.
 			elif not native_in_ship and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
 				# Walking still requires captured mouse and original PERSON custody.
 				var axis := Input.get_vector("fps_left", "fps_right", "fps_forward", "fps_backward")

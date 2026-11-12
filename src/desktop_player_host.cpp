@@ -272,8 +272,9 @@ static int run_planet_host(const std::string& save_utf8){
                 body->atmosphere_pressure_pa,
                 body->atmosphere_oxygen_permille,
                 body->atmosphere_toxic}:planetary::air::State{};
-            const bool atmosphere_known=world.world().canonical_state().rfind(
-                "galaxy-kernel-v135|",0)==0 && body!=nullptr;
+            const bool atmosphere_known=
+                world.world().original_surface_atmosphere_enabled() &&
+                body!=nullptr;
             const bool breathable=atmosphere_known &&
                 planetary::air::breathable(body_air);
             std::cout<<"PFRAME|1|"<<session<<'|'<<request<<'|'<<p->home_ship

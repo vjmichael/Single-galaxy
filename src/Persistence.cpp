@@ -10053,7 +10053,8 @@ bool PersistentWorld::planetary_surface_vertical_action(PlayerId owner,EntityId 
         (void)id;if(transit.ship==ship)return false;
     }
     auto next=world_;
-    next.step(); // same original transaction, never a Godot client delta
+    // The original supervised world ticker, not a keypress, owns time.
+    // This command records an impulse at its already-committed current tick.
     if(!next.planetary_surface_vertical_action(owner,ship,key,jump,receipt))
         return false;
     if(next.total_ore()!=resource_origin_ ||
