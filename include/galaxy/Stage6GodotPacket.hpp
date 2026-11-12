@@ -23,10 +23,15 @@ inline std::optional<std::string> original_godot_mesh_packet(
     if(!first.still_current(native) || !first.original_body.physical_radius_mm)
         return std::nullopt;
     std::optional<NativeLandingObservation> landed;
+    std::optional<NativePlayerSurfaceObservation> player_landed;
     if(landing_key){
         if(std::get<0>(*landing_key)!=body)return std::nullopt;
         landed=observe_native_landed_shuttle(native,owner,ship,*landing_key);
         if(!landed || !landed->still_current(native))
+            return std::nullopt;
+        player_landed=observe_native_landed_player(
+            native,owner,ship,*landing_key);
+        if(player_landed && !player_landed->still_current(native))
             return std::nullopt;
     }
     std::ostringstream out;
@@ -42,6 +47,9 @@ inline std::optional<std::string> original_godot_mesh_packet(
        <<"\"physical_radius_mm\":\""
        <<first.original_body.physical_radius_mm<<"\","
        <<"\"landing_verified\":"<<(landed?"true":"false")<<","
+       <<"\"player_surface_verified\":"<<(player_landed?"true":"false")<<","
+       <<"\"player_disembark_receipt\":\""
+       <<(player_landed?player_landed->player_disembark_receipt:0)<<"\","
        <<"\"original_descent_receipt\":\""
        <<(landed?landed->original_descent_receipt:0)<<"\","
        <<"\"landing_lat\":"<<(landed?std::get<1>(landed->key):0)<<","
