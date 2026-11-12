@@ -136,6 +136,28 @@ static void inspect_transfer(const std::string& file) {
         <<p.planet_descent_receipt<<'|'<<p.planet_ascent_receipt<<'|'
         <<world.world().total_ore()<<'|'<<world.world().state_hash()<<"\n";
 }
+static void inspect_npc(const std::string& file){
+    REQUIRE(fs::exists(fs::u8path(file)));
+    PersistentWorld world(file,Simulation(0xC021));
+    const auto& p=world.world().player_people().at(7);
+    REQUIRE(p.state==PlayerPersonState::AtPlanetarySurface);
+    const PlanetarySiteKey key{p.planet_body,p.planet_latitude,
+        p.planet_longitude,p.planet_revision};
+    const auto& ground=world.world().planetary_sites().at(key);
+    std::vector<std::uint64_t> residents;
+    for(const auto& [id,n]:world.world().npc_records())
+        if(n.home_ship==p.home_ship &&
+           n.location==ground.surface_location && !n.transport_id)
+            residents.push_back(id);
+    std::cout<<"NPCSTATE|"<<world.world().tick()<<'|'<<world.generation()
+             <<'|'<<world.world().state_hash()<<'|'<<residents.size();
+    for(const auto id:residents) {
+        const auto& pose=world.world().npc_records().at(id).surface_pose;
+        std::cout<<'|'<<id<<'|'<<pose.x_mm<<'|'<<pose.z_mm
+                 <<'|'<<pose.last_move_receipt;
+    }
+    std::cout<<'\n';
+}
 int main(int argc,char** argv){
     try{
         if(argc!=3)throw std::invalid_argument("usage: fixture --seed|--seed-surface|--seed-orbit|--seed-boarded|--seed-transit|--seed-shuttle|--inspect|--inspect-transfer PATH");
@@ -162,6 +184,7 @@ int main(int argc,char** argv){
             inspect_transfer(file);
         }else if(mode=="--inspect")inspect(file);
         else if(mode=="--inspect-transfer")inspect_transfer(file);
+        else if(mode=="--inspect-npc")inspect_npc(file);
         else throw std::invalid_argument("unknown fixture mode");
         return 0;
     }catch(const std::exception& e){
