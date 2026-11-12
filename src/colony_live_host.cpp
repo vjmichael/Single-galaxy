@@ -3,6 +3,7 @@
 // stdout SGVIEW frames; stderr bounded COLONY telemetry for the local relay.
 #include "galaxy/Simulation.hpp"
 #include "galaxy/Persistence.hpp"
+#include "galaxy/PlanetaryGenesisBootstrap.hpp"
 #include "galaxy/ServerDiagnostics.hpp"
 #include "galaxy/ServerBreadcrumb.hpp"
 #include "galaxy/OrbitalShuttleCommands.hpp"
@@ -2120,26 +2121,7 @@ int main(int argc,char** argv){
         genesis.add_geological_asteroid({-220000,-90000},AsteroidClass::Metallic,55,5700);
         // S6-C: physical finite body-specific genesis in the original world
         // candidate ONLY; existing SQLite saves do not read its inventory.
-        genesis.ensure_physical_celestial_systems();
-        genesis.ensure_planetary_genesis_manifest();
-        bool planet_seeded=false;
-        for(const auto& [id,record]:genesis.planetary_genesis()) {
-            if(!record.envelope.water_coverage)continue;
-            const auto map=planetary::generate_watersheds(
-                record.key,record.envelope);
-            for(int i=0;i<planetary::kWatershedCells;++i) {
-                if(map.cells[i].ocean)continue;
-                genesis.provision_planetary_body_genesis(
-                    id,{6000,12000,16000,4000}); // 38 physical tonnes
-                genesis.place_planetary_region_genesis(
-                    id,static_cast<std::uint16_t>(i/planetary::kWatershedColumns),
-                    static_cast<std::uint16_t>(i%planetary::kWatershedColumns),
-                    {6000,12000,16000,4000});
-                planet_seeded=true;
-                break;
-            }
-            if(planet_seeded)break;
-        }
+        (void)stage6::provision_first_planet_seed(genesis);
         // No compatible land/water body means no invented deposit.
         // No stations, other ships, markets, factions or gates at start.
         const bool was_saved=fs::exists(argv[1]);
