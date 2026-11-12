@@ -19,7 +19,7 @@ host/journal evidence, not just a headless renderer screenshot.
 | **S6-F5-E character** | Actual Godot player controller displays original XYZ, suit and injury; optional F1 third-person; native planet mode disables Godot capsule collision/raycast and does not call local physics | Source integrated; windowed visual/control acceptance NOT executed |
 | **S6-F5-E background recovery** | Existing 100ms original-world journaled ticker independent of input; added multi-tick SQLite recover-copy and process-kill/restart acceptance fixtures; new host epoch rejects stale commands; initial reentry MUST be exact persisted state with no offline catch-up; Godot's 3s PFRAME heartbeat watchdog invalidates a stalled display and locks native movement pending recovery | Fixtures staged; subprocess run and OS/kernel restart verification outstanding |
 | **S6-F5-F installed shuttle transfer** | Same desktop native executable gains `--planet-transfer` mode under the original SQLite OS writer lease, bounded original shuttle-site enumeration, explicit human BOARD/DESCEND/DISEMBARK/ASCEND/EXIT with native commits, source-validated TSITE/TFRAME/TLAND/TRETURN; Godot transfer panel and role handoff; original-hatch E reboard with committed PLEAVE | Source implemented; exact-head compilation, transport subprocess test, Godot panel, SGDX supervision and installed human game **NOT RUN** |
-| **S6-F6 continuous/recovery** | Existing native 100ms journaled original surface/shuttle clock; new lease-held read-only `--planet-recover` role decision from original person/site/shuttle receipts, exact-save Godot startup preflight, at most one auto-crash reattachment after SGDX PID termination, no offline ticks, ambiguous-save/orphan-WAL refusal, full uint64 planet identity across Godot terrain/transport | **Source implemented; exact-head native/Godot, real SGDX kernel restart and installed human acceptance NOT RUN** |
+| **S6-F6 continuous/recovery** | Existing native 100ms journaled original surface/shuttle clock; new lease-held read-only `--planet-recover` role decision from original person/site/shuttle receipts, exact-save Godot startup preflight plus user-selected save pointer, at most one auto-crash reattachment after SGDX PID termination, no offline ticks, ambiguous-save/orphan-WAL refusal, full uint64 planet identity across Godot terrain/transport | **Source implemented; exact-head native/Godot, real SGDX kernel restart and installed human acceptance NOT RUN** |
 
 ## New tests, by their exact registration names
 
@@ -31,7 +31,8 @@ host/journal evidence, not just a headless renderer screenshot.
 6. `galaxy_stage6f6_original_role_reconciliation`: five true original SQLite checkpoints (ship/boarded/in-flight/landed-shuttle/surface), immutable read-only probe, live writer lock refusal, 16 unsolicited original world ticks and no offline catch-up. **Authored, NOT RUN.**
 7. `galaxy_stage6f6_godot_recovery_source`: strict source-role/identity packet/parser negative fixtures. **Authored, NOT RUN.**
 8. `galaxy_stage6f6_godot_unsigned_source_id`: full C++ unsigned body ID no rounding in recovery and shuttle; F5-E Godot tile test also now covers 20-digit planet identity. **Authored, NOT RUN.**
-9. Existing S6-F native-math, original landing and Godot/SGDX tests retain their separate admission criteria.
+9. `galaxy_stage6f6_godot_selected_world_hint`: UI-only last-selected original SQLite path persistence, bad-hint refusal and explicit cleanup. **Authored, NOT RUN.**
+10. Existing S6-F native-math, original landing and Godot/SGDX tests retain their separate admission criteria.
 
 ## Required consolidated verification sequence
 
