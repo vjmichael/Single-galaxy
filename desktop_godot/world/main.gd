@@ -180,6 +180,7 @@ func _ready() -> void:
 	native_station_session = NATIVE_STATION_SESSION.new()
 	native_station_session.person_received.connect(_on_native_station_person)
 	native_station_session.refinery_received.connect(_on_native_refinery_state)
+	native_station_session.industry_received.connect(_on_native_industry_state)
 	native_station_session.colony_population_received.connect(_on_native_colony_population)
 	native_station_session.dock_received.connect(_on_native_dock_status)
 	native_station_session.dock_pedestrians_received.connect(_on_native_dock_pedestrians)
@@ -189,6 +190,9 @@ func _ready() -> void:
 	native_station_session.connection_changed.connect(_on_native_station_connection)
 	refinery_terminal.refine_requested.connect(_on_native_refine_requested)
 	refinery_terminal.unload_requested.connect(_on_native_unload_requested)
+	refinery_terminal.industry_refresh_requested.connect(_on_industry_refresh_requested)
+	refinery_terminal.industry_batch_requested.connect(_on_industry_batch_requested)
+	refinery_terminal.industry_tick_requested.connect(_on_industry_tick_requested)
 	refinery_terminal.dock_status_requested.connect(_on_dock_status_requested)
 	refinery_terminal.dock_worker_requested.connect(_on_dock_worker_requested)
 	refinery_terminal.dock_release_requested.connect(_on_dock_release_requested)
@@ -1359,6 +1363,27 @@ func _on_native_unload_requested() -> void:
 	# ship and one tonne of cargo before committing original SQLite.
 	if native_station_session != null and native_station_session.is_active() and last_station_player_state == 4:
 		native_station_session.unload_colony_docked_ship_tonne()
+
+func _on_native_industry_state(snapshot: Dictionary) -> void:
+	# Same original physical station/owner as the open colony interface.
+	# Every workshop and warehouse entry is native, not a new UI inventory.
+	if not _colony_console_open():
+		return
+	if int(snapshot.get("station",0))!=int(native_station_session.person().get("station",0)):
+		return
+	refinery_terminal.set_industry(snapshot)
+
+func _on_industry_refresh_requested() -> void:
+	if _colony_console_open():
+		native_station_session.request_colony_industry()
+
+func _on_industry_batch_requested(trade: int) -> void:
+	if _colony_console_open():
+		native_station_session.approve_local_workshop_batch(trade)
+
+func _on_industry_tick_requested() -> void:
+	if _colony_console_open():
+		native_station_session.advance_local_manufacturing()
 
 func _hide_refinery_terminal() -> void:
 	if is_instance_valid(refinery_terminal):
