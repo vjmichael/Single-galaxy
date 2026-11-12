@@ -773,7 +773,7 @@ func _industrial_item_code(code: String) -> bool:
 	if code.is_empty() or code.length()>60:
 		return false
 	for character in code:
-		if not character in "abcdefghijklmnopqrstuvwxyz0123456789/_":
+		if not (character in "abcdefghijklmnopqrstuvwxyz0123456789/_"):
 			return false
 	return true
 
@@ -801,7 +801,8 @@ func _accept_industry_line(f: PackedStringArray) -> void:
 				int(f[13])<0 or int(f[14])<0 or \
 				(_pending_industry_kind=="VIEW" and result!=0) or \
 				(_pending_industry_kind=="APPROVE" and result not in [1,2]) or \
-				(_pending_industry_kind=="STEP" and result!=3):
+				(_pending_industry_kind=="STEP" and result!=3) or \
+				(_pending_industry_kind=="MOVE" and result not in [4,5]):
 			stop("Industrial inventory locality, generation or receipt mismatch")
 			return
 		_industry_head = {"station":station,"tick":int(f[4]),
@@ -821,13 +822,15 @@ func _accept_industry_line(f: PackedStringArray) -> void:
 		return
 	if kind=="ISTOCK":
 		if f.size()!=8 or _industry_stocks.size()>=int(_industry_head["rows"]) or \
-				f[4] not in ["R","W","S"] or not _integer(f[5]) or \
+				f[4] not in ["R","W","S","H","C"] or not _integer(f[5]) or \
 				not _industrial_item_code(f[6]) or not _integer(f[7]) or \
 				int(f[5])<0 or int(f[7])<=0 or int(f[7])>1000000000000 or \
 				(f[4]=="R" and not _industry_head["refinery"]) or \
 				(f[4]=="W" and not _industry_head["workshop"]) or \
 				(f[4]=="S" and not _industry_head["storage"]) or \
-				(f[4]!="S" and int(f[5])!=0):
+				(f[4] in ["H","C"] and not _industry_head["constructed"]) or \
+				(f[4]!="S" and int(f[5])!=0) or \
+				(f[4]=="C" and f[6]!="module/construction"):
 			stop("Invalid physical industrial stock entry")
 			return
 		for row in _industry_stocks:
@@ -894,6 +897,8 @@ func _accept_industry_line(f: PackedStringArray) -> void:
 		_status("Original workshop batch approved" if int(snapshot["result"])==1 else
 			"Original workshop declined batch" if int(snapshot["result"])==2 else
 			"Original colony manufacturing advanced one native tick" if int(snapshot["result"])==3 else
+			"Local industrial goods moved by original journal" if int(snapshot["result"])==4 else
+			"Original world refused local goods movement" if int(snapshot["result"])==5 else
 			"Local industrial inventory and production refreshed")
 		return
 	stop("Unknown original industrial frame")
@@ -914,7 +919,7 @@ func _send_colony_industry(kind: String, selector: int) -> bool:
 		_status("Local industry console busy or not inside original colony")
 		return false
 	var opcode := {"VIEW":"INDVIEW","APPROVE":"INDAPPROVE",
-		"STEP":"INDSTEP"}.get(kind,"")
+		"STEP":"INDSTEP","MOVE":"INDMOVE"}.get(kind,"")
 	if opcode.is_empty():
 		return false
 	var request := _next_request
@@ -935,6 +940,11 @@ func approve_local_workshop_batch(trade: int) -> bool:
 
 func advance_local_manufacturing() -> bool:
 	return _send_colony_industry("STEP",int(_person.get("station",0)))
+
+func transfer_local_industrial_goods(selector: int) -> bool:
+	if selector<1 or selector>5:
+		return false
+	return _send_colony_industry("MOVE",selector)
 
 func request_colony_inventory() -> void:
 	# Colony-local operations panel: user must be physically at THIS native
