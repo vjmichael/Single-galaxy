@@ -70,10 +70,10 @@ def command(proc, fields):
     proc.stdin.flush()
 
 
-def stop(proc, reader, forced=False):
+def stop(proc, reader, forced=False, natural=False):
     if forced:
         proc.kill()
-    elif proc.poll() is None:
+    elif not natural and proc.poll() is None:
         proc.stdin.write("QUIT\n")
         proc.stdin.flush()
     proc.wait(timeout=20)
@@ -87,7 +87,7 @@ def transfer(host, save):
     proc, output, reader = launch(host, save, "--planet-transfer")
     first = receive(output, lambda f:f[0]=="TFRAME")
     assert int(first[3]) == 0 and int(first[5]) in (0,5,6), first
-    assert int(first[2])>0 and int(first[13])>0, first
+    assert int(first[2])>0 and int(first[12])>0, first
     return proc, output, reader, first
 
 
@@ -135,7 +135,7 @@ def main():
         landed=receive(output,lambda f:f[0]=="TLAND")
         assert int(landed[2])==recovered_session and int(landed[3])==1
         assert int(landed[8])>0
-        stop(proc,reader)
+        stop(proc,reader,natural=True)
 
         on_surface=fixture(native_fixture,"--inspect-transfer",save)
         assert on_surface["state"]==7 and on_surface["descent"]>0
@@ -147,7 +147,7 @@ def main():
         reboard=receive(planet_output,lambda f:f[0]=="PLEAVE")
         assert int(reboard[2])==psession and int(reboard[3])==1
         assert int(reboard[10])>0
-        stop(planet,planet_reader)
+        stop(planet,planet_reader,natural=True)
         shore_exit=fixture(native_fixture,"--inspect-transfer",save)
         assert shore_exit["state"]==5 and shore_exit["phase"]==2
 
@@ -163,7 +163,7 @@ def main():
         returned=receive(output,lambda f:f[0]=="TRETURN")
         assert int(returned[2])==ascent_session and int(returned[3])==2
         assert int(returned[4])==start["ship"]
-        stop(proc,reader)
+        stop(proc,reader,natural=True)
         finish=fixture(native_fixture,"--inspect-transfer",save)
         assert finish["state"]==0 and finish["phase"]==0
         assert finish["body"]==0
