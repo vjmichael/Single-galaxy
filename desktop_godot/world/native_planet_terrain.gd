@@ -137,9 +137,15 @@ func _load_if_changed() -> void:
         var cx: int=int(tile["center_x_mm"])
         var cy: int=int(tile["center_y_mm"])
         var cz: int=int(tile["center_z_mm"])
+        # Guard malicious sidecar integers before subtraction/abs. Original
+        # verified PFRAME X/Z are each bounded to +/-1e12 mm.
+        if cx < -1000000000000 or cx > 1000000000000 or \
+           cz < -1000000000000 or cz > 1000000000000 or \
+           cy < -1000000000 or cy > 1000000000:
+            _hide()
+            return
         if abs(cx-int(_pose.get("x_mm",0)))>MAX_CENTER_DISTANCE_MM or \
-           abs(cz-int(_pose.get("z_mm",0)))>MAX_CENTER_DISTANCE_MM or \
-           abs(cy)>1000000000:
+           abs(cz-int(_pose.get("z_mm",0)))>MAX_CENTER_DISTANCE_MM:
             _hide()
             return
         var identity: String=str(cx)+":"+str(cz)
