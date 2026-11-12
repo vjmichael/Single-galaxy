@@ -23,6 +23,9 @@ struct Source {
     bool breathable_atmosphere=false;
     bool verified_oxygen_supply=false;
     bool verified_thermal_protection=false;
+    // When false, caller handles native whole-kg oxygen conservation itself.
+    // This permits vertical dynamics without inventing atmospheric breathability.
+    bool evaluate_oxygen=true;
     std::int64_t oxygen_use_ml_s=0;
 };
 struct Result {
@@ -78,7 +81,7 @@ inline std::optional<Result> advance(State before,const Source& original,
             out.next.grounded=true;
         } else if(out.next.height_mm>kMaxHeightMm) return std::nullopt;
     }
-    if(!original.breathable_atmosphere){
+    if(original.evaluate_oxygen && !original.breathable_atmosphere){
         if(!original.verified_oxygen_supply) return std::nullopt;
         const auto use=(original.oxygen_use_ml_s*step_ms+999)/1000;
         out.next.oxygen_ml=before.oxygen_ml<use?0:before.oxygen_ml-use;

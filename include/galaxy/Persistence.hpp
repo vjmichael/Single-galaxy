@@ -955,6 +955,14 @@ public:
         const PlanetarySiteKey& key,std::uint64_t npc_id,
         std::int64_t dx_mm,std::int64_t dz_mm,std::uint64_t receipt,
         FailPoint fail=FailPoint::None);
+    // One world STEP + one verified jump/wait receipt in the SAME SQLite commit.
+    bool planetary_surface_vertical_action(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,bool jump,std::uint64_t receipt,
+        FailPoint fail=FailPoint::None);
+    // Physically debits/returns only pre-existing site oxygen and spent CO2.
+    bool planetary_surface_oxygen_action(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,bool return_to_site,std::uint64_t receipt,
+        FailPoint fail=FailPoint::None);
     // One original SQLite world step, immutable dock movement receipt and
     // original NPC custody mutation in one atomic transaction. Host only.
     bool station_dock_worker_transfer(PlayerId owner,EntityId ship,
