@@ -11346,6 +11346,18 @@ void PersistentWorld::ensure_planetary_genesis_manifest(FailPoint fail) {
     world_.swap(next);
     ++generation_;
 }
+void PersistentWorld::ensure_physical_planetary_environment(FailPoint fail) {
+    auto next=world_;
+    const auto initial=world_.total_ore();
+    next.enable_physical_planetary_environment();
+    if(next.total_ore()!=initial || next.total_ore()!=resource_origin_)
+        throw std::logic_error("planet physical migration altered conserved original matter");
+    if(next.canonical_state()==world_.canonical_state())return;
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);
+    ++generation_;
+}
 void PersistentWorld::ensure_physical_celestial_systems() {
     auto next=world_;
     next.ensure_physical_celestial_systems();

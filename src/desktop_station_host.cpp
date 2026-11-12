@@ -101,6 +101,7 @@ static int run_host(int argc,char** argv){
   PersistentWorld world(save_utf8,std::move(seed));
   // Idempotent v127 zero-material migration of pre-Stage6 saves.
   world.ensure_planetary_genesis_manifest();
+  world.ensure_physical_planetary_environment();
   if(fresh){
    // One genuine original ship docking command and transition in the
    // persisted simulation, not a Godot-side dock state or second hull.

@@ -5,6 +5,7 @@
 #include "galaxy/Astronomy.hpp"
 #include "galaxy/PlanetaryGeography.hpp"
 #include "galaxy/PlanetarySeasonalClimate.hpp"
+#include "galaxy/PlanetaryPhysicalProcesses.hpp"
 #include "galaxy/NpcTransport.hpp"
 #include "galaxy/UniversalTransport.hpp"
 #include "galaxy/ShipStatusEffects.hpp"
@@ -1394,6 +1395,12 @@ public:
     // S6-C: idempotent world-snapshot migration pins existing astronomical
     // envelopes with ZERO material grants. Old v126 sources stay untouched.
     void ensure_planetary_genesis_manifest();
+    // S6-D v128: zero-new-mass opt-in; never regenerated after activation.
+    void enable_physical_planetary_environment();
+    bool physical_planetary_environment_enabled() const {return snapshot_version_>=128;}
+    const std::map<PlanetarySiteKey,planetary::PhysicalEnvironment>& planetary_physical_environment() const {
+        return planetary_physical_environment_;
+    }
     // Explicit world-creation-only finite resource provisioning and placement.
     // Both refuse after the first original STEP or pending command.
     void provision_planetary_body_genesis(
@@ -1808,6 +1815,9 @@ public:
     // Exact original owner / installed scanner / celestial authorization.
     // A source row is prospective geology: not a mining right or accessible
     // inventory. Unallocated body stocks are never reported as local deposits.
+    std::optional<planetary::PhysicalEnvironment> scan_planetary_physical_environment(
+        PlayerId owner,EntityId ship,std::uint64_t body_id,
+        std::uint16_t latitude,std::uint16_t longitude) const;
     std::optional<PlanetaryRegionalSource> scan_planetary_region_source(
         PlayerId owner, EntityId ship, std::uint64_t body_id,
         std::uint16_t latitude, std::uint16_t longitude) const;
@@ -1911,6 +1921,7 @@ private:
     void process_clinics();
     void process_reclaimers();
     void process_waterworks();
+    void process_physical_planetary_environment();
 
     std::uint32_t system_id_;
     std::set<std::uint32_t> systems_;
@@ -1929,6 +1940,7 @@ private:
     std::map<std::uint64_t,LocalCelestialEnvironment> local_environments_; // v74
     std::map<std::uint64_t,PlanetaryGenesisBody> planetary_genesis_; // v127 source envelope + finite stocks
     std::map<PlanetarySiteKey,PlanetaryRegionalSource> planetary_region_sources_; // v127 exact physical cell
+    std::map<PlanetarySiteKey,planetary::PhysicalEnvironment> planetary_physical_environment_; // v128 subaccounts
     std::map<std::uint64_t,PhysicalOasisReserve> oasis_reserves_; // v75 explicit finite sources
     std::map<EntityId,OasisExtractor> oasis_extractors_;
     std::map<PlanetarySiteKey,PlanetarySiteFacility> planetary_sites_; // v76 real installed machinery
