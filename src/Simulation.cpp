@@ -17303,6 +17303,11 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
         if(result.planetary_genesis_.size()!=expected_bodies)
             throw std::runtime_error("snapshot: orphaned planetary body genesis");
         std::map<std::uint64_t,std::array<std::int64_t,4>> assigned;
+        // Region keys sort by body; reuse one bounded 36x72 watershed
+        // for adjacent regional deposits instead of reconstructing it
+        // thousands of times during original SQLite restore.
+        std::uint64_t cached_body=0;
+        std::optional<planetary::WatershedMap> cached_watershed;
         for(const auto& [key,source]:result.planetary_region_sources_) {
             const auto body=std::get<0>(key);
             const auto genesis=result.planetary_genesis_.find(body);
@@ -17314,9 +17319,12 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                source.region.revision!=genesis->second.key.generator_revision)
                 throw std::runtime_error("snapshot: planetary regional source not a registered identity");
             const auto& gen=genesis->second;
-            const auto watershed=planetary::generate_watersheds(gen.key,gen.envelope);
-            const auto& cell=watershed.at(source.region.latitude,
-                                          source.region.longitude);
+            if(!cached_watershed || cached_body!=body) {
+                cached_watershed=planetary::generate_watersheds(gen.key,gen.envelope);
+                cached_body=body;
+            }
+            const auto& cell=cached_watershed->at(source.region.latitude,
+                                                   source.region.longitude);
             if((cell.ocean && (source.stock_kg[1] || source.stock_kg[2])) ||
                (!gen.envelope.water_coverage && source.stock_kg[0]))
                 throw std::runtime_error("snapshot: planetary regional geology contradicts terrain");
