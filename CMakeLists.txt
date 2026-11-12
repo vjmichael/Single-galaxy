@@ -2248,6 +2248,14 @@ if(BUILD_TESTING)
   add_test(NAME galaxy_dock06_original_npc_corridor
     COMMAND galaxy_dock06_corridor_tests
     "${CMAKE_CURRENT_BINARY_DIR}/dock06_world.sqlite")
+  # DOCK-07 source-only: original colony industrial stock, permissions,
+  # native workshop job approval gates and durable SQLite reopening.
+  add_executable(galaxy_dock07_industry_tests
+    tests/Dock07ColonyIndustryTests.cpp)
+  target_link_libraries(galaxy_dock07_industry_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_dock07_local_industry
+    COMMAND galaxy_dock07_industry_tests
+    "${CMAKE_CURRENT_BINARY_DIR}/dock07_world.sqlite")
 endif()
 add_executable(galaxy_desktop_station_host src/desktop_station_host.cpp)
 target_link_libraries(galaxy_desktop_station_host PRIVATE galaxy_kernel)
