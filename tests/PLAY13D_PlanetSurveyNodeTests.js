@@ -51,6 +51,31 @@ test('Stage 6 climate frames decode only bounded native quarter assessments',()=
   assert.match(host,/PLANET_SEASON/);
 });
 
+test('Stage 6C only exposes finite allocated physical planet source manifests',()=>{
+  const source=decode('COLONY|1|5|PLANET_SOURCE|4294967300|17|36|1|6000|12000|16000|4000');
+  assert.equal(source.id,4294967300);
+  assert.equal(source.waterKg,6000);
+  assert.equal(source.soilKg,12000);
+  assert.equal(source.mineralKg,16000);
+  assert.equal(source.volatileKg,4000);
+  for(const raw of [
+    'COLONY|1|5|PLANET_SOURCE|4294967300|17|36|1|6000|12000|16000',
+    'COLONY|1|5|PLANET_SOURCE|4294967300|17|36|1|6000|12000|16000|4000|1',
+    'COLONY|1|5|PLANET_SOURCE|4294967300|17|36|1|6000|12000|16000|-1',
+    'COLONY|1|5|PLANET_SOURCE|4294967300|17|36|1|0|0|0|0',
+    'COLONY|1|5|PLANET_SOURCE|4294967300|17|36|1|6001|12000|16000|4000',
+    'COLONY|1|5|PLANET_SOURCE|4294967300|17|36|0|6000|12000|16000|4000',
+    'COLONY|1|5|PLANET_SOURCE|4294967300|36|36|1|6000|12000|16000|4000',
+    'COLONY|1|5|PLANET_SOURCE|4294967300|17|72|1|6000|12000|16000|4000',
+    'COLONY|1|5|PLANET_SOURCE|4294967300|17|36|1|100000001|12000|16000|4000',
+  ])assert.throws(()=>decode(raw),Error,raw);
+  const host=fs.readFileSync(path.join(root,'src/colony_live_host.cpp'),'utf8');
+  const ui=fs.readFileSync(path.join(root,'viewer/colony.js'),'utf8');
+  assert.match(host,/scan_planetary_region_source/);
+  assert.match(host,/PLANET_SOURCE/);
+  assert.match(ui,/No extraction authority/);
+});
+
 test('relay and viewer route through canonical geographic survey action',()=>{
   const relay=fs.readFileSync(path.join(root,'live/interactive_relay.py'),'utf8');
   const ui=fs.readFileSync(path.join(root,'viewer/colony.js'),'utf8');
