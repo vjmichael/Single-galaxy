@@ -147,15 +147,21 @@ def main():
         report["status"]="failed_native_compile"
         receipt(dest,report)
         return 1
-    listing=run(["ctest","--test-dir",str(build),"-C",args.config,
-                 "--show-only=json-v1"],60)
-    report["phases"]["discovery"]={k:v for k,v in listing.items() if k!="stdout_tail"}
-    if listing["exit_code"]!=0:
+    listing_argv=["ctest","--test-dir",str(build),"-C",args.config,
+                  "--show-only=json-v1"]
+    listed=subprocess.run(listing_argv,capture_output=True,text=True,
+                          errors="replace",timeout=60,check=False)
+    report["phases"]["discovery"]={
+        "command":listing_argv,"exit_code":listed.returncode,
+        "stderr_tail":listed.stderr[-12000:]}
+    if listed.returncode!=0:
         report["status"]="blocked_native_test_discovery"
         receipt(dest,report)
         return 2
     try:
-        registered={t["name"] for t in json.loads(listing["stdout_tail"])["tests"]}
+        # CTest can return hundreds of records (>24KiB). Parse the full
+        # captured payload, never the intentionally bounded report excerpt.
+        registered={t["name"] for t in json.loads(listed.stdout)["tests"]}
     except (ValueError,TypeError,KeyError) as e:
         report["status"]="blocked_native_test_discovery"
         report["blocker"]="Invalid CTest JSON: "+str(e)
