@@ -145,7 +145,9 @@ static int run_host(int argc,char** argv){
    const bool industrial_view=f.size()==5&&f[0]=="INDVIEW";
    const bool industrial_approve=f.size()==5&&f[0]=="INDAPPROVE";
    const bool industrial_step=f.size()==5&&f[0]=="INDSTEP";
-   const bool industrial_action=industrial_view||industrial_approve||industrial_step;
+   const bool industrial_move=f.size()==5&&f[0]=="INDMOVE";
+   const bool industrial_action=industrial_view||industrial_approve||
+                                industrial_step||industrial_move;
    const bool population=f.size()==5&&f[0]=="POPVIEW";
    const bool dock_view=f.size()==5&&f[0]=="DOCKVIEW";
    const bool dock_pedestrians=f.size()==5&&f[0]=="DOCKPED";
@@ -215,6 +217,45 @@ static int run_host(int argc,char** argv){
       if(applied.command_id!=candidate->id)
         throw std::runtime_error("original industrial job receipt mismatch");
       result=applied.result==Outcome::Applied?1:2;
+    }else if(industrial_move){
+      // Explicit, fixed-sized ORIGINAL physical site transfers only.
+      // 1 docked ship -> warehouse 20 kg aluminum; 2 warehouse -> workshop
+      // 20 kg aluminum; 3/4/5 workshop -> warehouse finished panels,
+      // frames or scrap. The original kernel owns item limits/capacity,
+      // transfer, immutable ledger, conservation and replay refusal.
+      if(ship<1 || ship>5 ||
+         !colony_industry::native_workshop_at(world.world(),station,kOwner) ||
+         !colony_industry::native_storage_at(world.world(),station,kOwner)){
+        deny(req,"no-local-physical-workshop-or-warehouse-route");continue;
+      }
+      const auto source_ship=colony_industry::local_source_ship(
+          world.world(),station,kOwner);
+      const auto* vessel=world.world().find(source_ship);
+      if(!vessel || vessel->owner_id!=kOwner ||
+         vessel->dock_state!=DockState::Docked ||
+         vessel->dock_station!=station){
+        deny(req,"original-industrial-hull-must-be-docked-here");continue;
+      }
+      Command c{};
+      c.id=receipt_prefix|req;c.sequence=c.id;
+      c.issuer=kOwner;c.actor=source_ship;c.target=station;
+      c.execute_tick=world.world().tick()+1;
+      c.action=Action::TransferStorageStack;
+      c.thrust_x=ship==3?1:ship==4?2:ship==5?3:0;
+      c.thrust_y=ship==1?0:ship==2?3:2;
+      c.amount=ship==5?1:ship==3||ship==4?19:20;
+      if(!world.submit(c)){
+        deny(req,"original-industrial-transfer-rejected");continue;
+      }
+      world.step();
+      galaxy::server_dx::committed_breadcrumb(
+          world.world().tick(),world.generation());
+      const auto& applied=world.world().events().back();
+      if(applied.command_id!=c.id)
+        throw std::runtime_error("original storage transfer receipt mismatch");
+      result=applied.result==Outcome::Applied?4:5;
+      if(result==4 && applied.transferred!=c.amount)
+        throw std::runtime_error("original storage transfer amount mismatch");
     }else if(industrial_step){
       const auto* shop=world.world().workshop(station);
       if(!colony_industry::native_workshop_at(world.world(),station,kOwner) ||
