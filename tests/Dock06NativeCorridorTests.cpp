@@ -15,7 +15,7 @@ static void erase(const std::string& path){
         std::error_code ec;fs::remove(path+suffix,ec);
     }
 }
-static void dock(PersistentWorld& world,EntityId ship,EntityId station){
+static void dock_ship(PersistentWorld& world,EntityId ship,EntityId station){
     Command c{};c.id=61001;c.sequence=c.id;c.issuer=7;
     c.actor=ship;c.target=station;c.execute_tick=world.world().tick()+1;
     c.action=Action::RequestDock;
@@ -47,7 +47,7 @@ int main(int argc,char** argv){
                 if(n.home_ship==ship){named=id;break;}
             CHECK(named>0);
             PersistentWorld world(file,std::move(genesis));
-            dock(world,ship,station);
+            dock_ship(world,ship,station);
             CHECK(world.station_dock_worker_transfer(
                 7,ship,station,named,true,61002));
             dock::Ledger shifts(file);
