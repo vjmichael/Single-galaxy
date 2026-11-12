@@ -12091,6 +12091,26 @@ std::optional<planetary::GeographicSite> Simulation::scan_planetary_geography(
     return planetary::survey_geographic_site(
         terrain,key,env,latitude,longitude);
 }
+std::optional<planetary::SeasonalSite> Simulation::scan_planetary_seasons(
+    PlayerId owner,EntityId ship,std::uint64_t body_id,
+    std::uint16_t latitude,std::uint16_t longitude) const {
+    // Intentionally independent owner/scanner/body admission through the
+    // existing authoritative world. The seasonal map is derived from the
+    // EXACT same immutable body identity and v1 watershed, not a second
+    // geography authority, and it never mutates original material or sites.
+    const auto body=celestial_navigation_anchor(owner,ship,body_id);
+    if(!body || (body->kind!=CelestialKind::Planet &&
+                 body->kind!=CelestialKind::Moon) ||
+       latitude>=planetary::kWatershedRows ||
+       longitude>=planetary::kWatershedColumns)return std::nullopt;
+    const auto env=planetary_envelope_for_body(*body);
+    const planetary::PlanetaryWorldKey key{
+        kAstronomicalGalaxySeed,body->system,body->id,1};
+    const auto geography=planetary::generate_watersheds(key,env);
+    const auto climate=planetary::generate_seasonal_climate(geography,key,env);
+    return planetary::survey_seasonal_site(
+        geography,climate,key,env,latitude,longitude);
+}
 std::optional<PhysicalCelestialBody> Simulation::celestial_navigation_anchor(
     PlayerId owner,EntityId ship,std::uint64_t body_id) const {
     if(!body_id)return std::nullopt;
