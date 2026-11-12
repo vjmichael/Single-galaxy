@@ -22,6 +22,7 @@ var _tick := -1
 var _generation := -1
 var _identity := ""
 var _last_pose: Dictionary = {}
+var _last_action_receipt := 0
 
 func is_active() -> bool:
     return _active
@@ -64,6 +65,7 @@ func start(save: String) -> void:
     _generation = -1
     _identity = ""
     _last_pose.clear()
+    _last_action_receipt = 0
     _buffer.clear()
     connection_changed.emit(true)
     status_changed.emit("Verifying original planetary custody; no local movement")
@@ -130,10 +132,10 @@ func _accept(line: String) -> void:
             _pending = 0
         status_changed.emit("Original C++ refused planetary step #%d: %s" % [id, p[3]])
         return
-    if p.size() != 28 or p[0]!="PFRAME" or p[1]!="1":
+    if p.size() != 40 or p[0]!="PFRAME" or p[1]!="1":
         stop("Unexpected original planetary host frame")
         return
-    for i in range(2,28):
+    for i in range(2,40):
         if not _integer(p[i]):
             stop("Non-numeric original planetary pose")
             return
@@ -163,12 +165,33 @@ func _accept(line: String) -> void:
     var injury := int(p[25])
     var vertical_tick := int(p[26])
     var command_receipt := int(p[27])
+    var pressure := int(p[28])
+    var oxygen_permille := int(p[29])
+    var toxic := int(p[30])
+    var atmosphere_known := int(p[31])
+    var breathable := int(p[32])
+    var suit_mass := int(p[33])
+    var suit_condition := int(p[34])
+    var suit_charge := int(p[35])
+    var suit_equipped := int(p[36])
+    var hypoxia_ms := int(p[37])
+    var care_count := int(p[38])
+    var last_care_tick := int(p[39])
     if sess<=0 or ship<=0 or body<=0 or site<=0 or lat<0 or lat>=36 or lon<0 or lon>=72 or        abs(x)>1000000000000 or abs(z)>1000000000000 or abs(y)>100000000 or        abs(lat_pdeg)>90000000000000 or abs(lon_pdeg)>180000000000000 or        move_tick<0 or move_tick>tick or receipt<0 or tick<0 or gen<=0 or \
        gravity<0 or gravity>50000 or abs(radial_speed)>60000 or \
        grounded not in [0,1] or oxygen_kg<0 or oxygen_kg>4 or co2_kg<0 or co2_kg>4 or \
        oxygen_kg+co2_kg>4 or thermal_ms<0 or thermal_ms>1000000000000 or \
        air_unknown_ms<0 or air_unknown_ms>1000000000000 or injury<0 or injury>100 or \
-       vertical_tick<0 or vertical_tick>tick or command_receipt<0:
+       vertical_tick<0 or vertical_tick>tick or command_receipt<0 or \
+       pressure<0 or pressure>500000 or oxygen_permille<0 or oxygen_permille>1000 or \
+       toxic not in [0,1] or atmosphere_known not in [0,1] or breathable not in [0,1] or \
+       (breathable==1 and atmosphere_known==0) or \
+       (atmosphere_known==0 and (pressure!=0 or oxygen_permille!=0 or toxic!=0)) or \
+       suit_mass not in [0,10] or suit_condition<0 or suit_condition>100 or \
+       suit_charge<0 or suit_charge>10 or suit_equipped not in [0,1] or \
+       (suit_mass==0 and (suit_condition!=0 or suit_charge!=0 or suit_equipped==1)) or \
+       hypoxia_ms<0 or hypoxia_ms>1000000000000 or \
+       care_count<0 or care_count>100000 or last_care_tick<0 or last_care_tick>tick:
         stop("Native planetary source/pose out of bounds")
         return
     var identity := "%d:%d:%d:%d:%d" % [ship,body,lat,lon,site]
@@ -179,12 +202,24 @@ func _accept(line: String) -> void:
         _session=sess
         _identity=identity
     else:
-        if sess!=_session or identity!=_identity or req!=_pending or            tick<_tick or gen<=_generation or command_receipt<=0 or \
-           vertical_tick<int(_last_pose.get("last_vertical_tick",0)) or \
-           (receipt!=int(_last_pose.get("receipt",0)) and receipt<=0):
-            stop("Replayed or mismatched original planetary receipt")
+        if sess!=_session or identity!=_identity or gen<=_generation or \
+           tick<_tick or vertical_tick<int(_last_pose.get("last_vertical_tick",0)):
+            stop("Regressed or mismatched original planetary identity")
             return
-        _pending=0
+        if req==0:
+            # Native clock-driven original world step. No human command was
+            # issued; this is fresh source evidence, not a movement ACK.
+            if command_receipt!=0 or tick<=_tick or \
+               receipt!=int(_last_pose.get("receipt",0)):
+                stop("Invalid background survival tick")
+                return
+        else:
+            if req!=_pending or command_receipt<=_last_action_receipt or \
+               receipt<int(_last_pose.get("receipt",0)):
+                stop("Replayed or mismatched original planetary action receipt")
+                return
+            _last_action_receipt=command_receipt
+            _pending=0
     _tick=tick
     _generation=gen
     _last_pose={"ship":ship,"body":body,"lat":lat,"lon":lon,"site":site,
@@ -195,7 +230,14 @@ func _accept(line: String) -> void:
         "grounded":grounded==1,"oxygen_kg":oxygen_kg,"co2_kg":co2_kg,
         "thermal_ms":thermal_ms,"air_uncertain_ms":air_unknown_ms,
         "injury_points":injury,"last_vertical_tick":vertical_tick,
-        "command_receipt":command_receipt}
+        "command_receipt":command_receipt,
+        "atmosphere_known":atmosphere_known==1,
+        "pressure_pa":pressure,"oxygen_permille":oxygen_permille,
+        "atmosphere_toxic":toxic==1,"ambient_breathable":breathable==1,
+        "suit_mass_kg":suit_mass,"suit_integrity":suit_condition,
+        "suit_charge":suit_charge,"suit_equipped":suit_equipped==1,
+        "hypoxia_ms":hypoxia_ms,"medical_treatments":care_count,
+        "last_medical_tick":last_care_tick}
     pose_received.emit(_last_pose.duplicate(true))
 
 func submit_walk(heading: Vector3, running: bool=false) -> void:
@@ -234,3 +276,11 @@ func _send_player_action(verb: String, mode: String) -> void:
     _last_send_ms=now
     _stdout.store_line("%s|%d|%d|%s" % [verb,_session,req,mode])
     _stdout.flush()
+
+func submit_suit(action: String) -> void:
+    if action not in ["EQUIP", "UNEQUIP", "CHARGE"]:
+        return
+    _send_player_action("PSUIT", action)
+
+func submit_medical() -> void:
+    _send_player_action("PMED", "TREAT")
