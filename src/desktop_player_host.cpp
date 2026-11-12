@@ -490,9 +490,12 @@ static int run_planet_host(const std::string& save_utf8){
         return 3;
     }
 }
+namespace galaxy::installed_planet_transfer { int run(const std::string&); }
 static int run_host(int argc,char** argv){
     if(argc==3 && std::string(argv[2])=="--planet")return run_planet_host(argv[1]);
-    if(argc!=2){std::cerr<<"Usage: galaxy_desktop_player_host SQLITE_PATH [--planet]\n";return 2;}
+    if(argc==3 && std::string(argv[2])=="--planet-transfer")
+        return galaxy::installed_planet_transfer::run(argv[1]);
+    if(argc!=2){std::cerr<<"Usage: galaxy_desktop_player_host SQLITE_PATH [--planet|--planet-transfer]\n";return 2;}
     try{
         const std::string save_utf8(argv[1]);
    // sqlite3_open_v2 takes UTF-8; NativeWriterLease uses an accurately
