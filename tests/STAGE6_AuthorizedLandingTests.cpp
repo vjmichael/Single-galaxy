@@ -115,8 +115,8 @@ try {
     CHECK(packet &&
           packet->find(R"("landing_verified":true)")!=std::string::npos &&
           packet->find(R"("original_descent_receipt":"81234")")!=std::string::npos &&
-          packet->find("\\"shuttle_pilot_npc\\":")!=std::string::npos &&
-          packet->find("\\"surface_location\\":")!=std::string::npos);
+          packet->find("\"shuttle_pilot_npc\":")!=std::string::npos &&
+          packet->find("\"surface_location\":")!=std::string::npos);
     CHECK(!stage6::original_godot_mesh_packet(
         world,8,ship,selected.body,{landing_tile},key));
     CHECK(!stage6::original_godot_mesh_packet(
