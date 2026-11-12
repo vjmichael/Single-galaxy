@@ -10,6 +10,7 @@ const NATIVE_PLANET_TERRAIN := preload("res://world/native_planet_terrain.gd")
 const NATIVE_PLANET_TRANSFER_SESSION := preload("res://world/native_planet_transfer_session.gd")
 const PLANET_TRANSFER_PANEL := preload("res://world/planet_transfer_panel.gd")
 const NATIVE_PLANET_RECOVERY_PROBE := preload("res://world/native_planet_recovery_probe.gd")
+const ORIGINAL_SAVE_CHOICE := preload("res://world/native_saved_world_choice.gd")
 const NATIVE_STATION_SESSION := preload("res://world/native_station_session.gd")
 const REFINERY_TERMINAL_UI := preload("res://world/refinery_terminal_ui.gd")
 const FLIGHT_INSTRUMENTS := preload("res://world/native_flight_instruments.gd")
@@ -418,6 +419,8 @@ func _advance_world_reset() -> void:
 	_planet_current_save = ""
 	_planet_recovery_blocked=false
 	_planet_auto_recovery_used=false
+	if not ORIGINAL_SAVE_CHOICE.forget():
+		_on_native_player_status("New Game archived original world, but saved-world selection hint could not be cleared")
 	_last_native_dock = -1
 	_verified_flight_ship.clear()
 	_verified_flight_rock.clear()
@@ -435,6 +438,19 @@ func _open_saved_station_automatically() -> void:
 		return
 	_station_connect_attempted=true
 	_station_connection_failure=""
+	# The player's prior explicit choice is a PATH HINT ONLY. Native C++ must
+	# still independently validate the original PlayerPerson/SQLite role.
+	var choice: Dictionary=ORIGINAL_SAVE_CHOICE.read_hint()
+	if choice.get("status","")=="invalid":
+		_on_planet_recovery_blocked("Original-world selection hint is corrupted; choose the intended SQLite save with F9")
+		return
+	if choice.get("status","")=="ok":
+		var chosen: String=choice["save"]
+		if FileAccess.file_exists(chosen):
+			_begin_native_planet_recovery(chosen)
+		else:
+			_on_planet_recovery_blocked("Previously chosen original saved world is missing; select an existing source with F9")
+		return
 	var folder := OS.get_user_data_dir()
 	var save := folder.path_join("single_galaxy_station_test.sqlite")
 	var legacy := folder.path_join("single_galaxy_authoritative.sqlite")
@@ -477,6 +493,10 @@ func _on_planet_recovery_decision(frame: Dictionary) -> void:
 	_planet_current_save=save
 	_station_connection_failure=""
 	_planet_recovery_blocked=false
+	# This saves only the user's selected pathname, not an action receipt or
+	# native role. A write failure cannot change the actual recovered world.
+	if not ORIGINAL_SAVE_CHOICE.remember(save):
+		_on_native_player_status("Original world is verified, but selected-save preference could not be stored")
 	station_test_save_selected = save == OS.get_user_data_dir().path_join("single_galaxy_station_test.sqlite")
 	if role==1:
 		_schedule_native_handoff("station",-1)
