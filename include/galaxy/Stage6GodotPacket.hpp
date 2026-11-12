@@ -24,6 +24,7 @@ inline std::optional<std::string> original_godot_mesh_packet(
         return std::nullopt;
     std::optional<NativeLandingObservation> landed;
     std::optional<NativePlayerSurfaceObservation> player_landed;
+    std::optional<NativePlanetarySurfacePose> player_pose;
     if(landing_key){
         if(std::get<0>(*landing_key)!=body)return std::nullopt;
         landed=observe_native_landed_shuttle(native,owner,ship,*landing_key);
@@ -33,6 +34,11 @@ inline std::optional<std::string> original_godot_mesh_packet(
             native,owner,ship,*landing_key);
         if(player_landed && !player_landed->still_current(native))
             return std::nullopt;
+        if(player_landed){
+            const auto& pose=native.world().player_people().at(owner).surface_pose;
+            // Snapshot receipt is an original-world claim, not render movement.
+            if(pose.last_move_receipt)player_pose=pose;
+        }
     }
     std::ostringstream out;
     out<<std::setprecision(17);
@@ -48,6 +54,12 @@ inline std::optional<std::string> original_godot_mesh_packet(
        <<first.original_body.physical_radius_mm<<"\","
        <<"\"landing_verified\":"<<(landed?"true":"false")<<","
        <<"\"player_surface_verified\":"<<(player_landed?"true":"false")<<","
+       <<"\"native_surface_pose_verified\":"<<(player_pose?"true":"false")<<","
+       <<"\"native_surface_x_mm\":\""<<(player_pose?player_pose->x_mm:0)<<"\","
+       <<"\"native_surface_y_mm\":\""<<(player_pose?player_pose->y_mm:0)<<"\","
+       <<"\"native_surface_z_mm\":\""<<(player_pose?player_pose->z_mm:0)<<"\","
+       <<"\"native_surface_move_receipt\":\""
+       <<(player_pose?player_pose->last_move_receipt:0)<<"\","
        <<"\"player_disembark_receipt\":\""
        <<(player_landed?player_landed->player_disembark_receipt:0)<<"\","
        <<"\"original_descent_receipt\":\""
