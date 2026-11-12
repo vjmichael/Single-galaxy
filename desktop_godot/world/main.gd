@@ -1160,6 +1160,11 @@ func _on_planet_save_selected(path: String) -> void:
 	_schedule_native_handoff("planet",old_pid)
 
 func _unhandled_input(event: InputEvent) -> void:
+	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_F1 and \
+			native_planet_surface_session != null and native_planet_surface_session.has_verified_pose():
+		player.toggle_native_planet_view()
+		get_viewport().set_input_as_handled()
+		return
 	if event is InputEventKey and event.pressed and not event.echo and event.keycode in [KEY_F2,KEY_F7]:
 		if native_planet_surface_session != null and native_planet_surface_session.has_verified_pose():
 			if event.keycode == KEY_F2:
@@ -1969,13 +1974,14 @@ func _on_original_planet_pose(pose: Dictionary) -> void:
 	if is_instance_valid(player):
 		player.use_native_authority(true)
 		player.use_native_planet_surface(true)
+		player.apply_native_planet_survival(pose)
 		# Only original committed XYZ. Godot capsule is presentation, not collision.
 		player.apply_native_station_pose(Vector3(
 			float(x_mm-_planet_visual_origin_x_mm)/1000.0,
 			AVATAR_CENTER_HEIGHT_M + float(pose["y_mm"])/1000.0,
 			float(z_mm-_planet_visual_origin_z_mm)/1000.0), true)
-	# The adjacent original-host world-sourced 17x17 terrain patch is
-	# rendered as a VISUAL, NON-COLLIDING mesh. The original native C++
+	# The 3x3 source-tile window follows continuous original body coordinates.
+	# Rendering has no authority to place the native player or to collide. The original native C++
 	# elevation and swept collision still govern actual gameplay.
 	if is_instance_valid(station_space): station_space.visible=false
 	if is_instance_valid(ship_space): ship_space.visible=false
@@ -1988,7 +1994,7 @@ func _on_original_planet_pose(pose: Dictionary) -> void:
 			int(pose["body"]),int(pose["site"]),float(x_mm)/1000.0,
 			float(z_mm)/1000.0,float(pose["y_mm"])/1000.0,int(pose["gen"])]
 	if is_instance_valid(status_label):
-		status_label.text="WASD original movement | Space jump | F7 suit / Shift-F7 power | F8 O2 | F10 return | F2 medical"
+		status_label.text="WASD original move | Space jump | F1 camera | F7 suit / Shift-F7 power | F8 O2 | F10 return | F2 care"
 	if is_instance_valid(native_label):
 		var source_g := int(pose.get("gravity_mm_s2",0))
 		var g_display := ("%d mm/s²" % source_g) if source_g > 0 else "UNVERIFIED"
