@@ -7,6 +7,7 @@ const SGDX_LAUNCH := preload("res://world/sgdx_process_launch.gd")
 signal pose_received(pose: Dictionary)
 signal status_changed(message: String)
 signal connection_changed(connected: bool)
+signal reboard_completed()
 const MAX_LINE := 1024
 var _active := false
 var _pid := -1
@@ -17,6 +18,7 @@ var _buffer := PackedByteArray()
 var _session := 0
 var _request := 1
 var _pending := 0
+var _pending_kind := ""
 var _last_send_ms := -100000
 var _last_frame_ms := 0
 const MAX_IDLE_PFRAME_MS := 3000
@@ -63,6 +65,7 @@ func start(save: String) -> void:
     _session = 0
     _request = 1
     _pending = 0
+    _pending_kind = ""
     _tick = -1
     _generation = -1
     _identity = ""
@@ -88,6 +91,7 @@ func stop(reason: String="Planetary client closed", graceful: bool=false) -> voi
     _stderr = null
     _session = 0
     _pending = 0
+    _pending_kind = ""
     _identity = ""
     _last_pose.clear()
     _buffer.clear()
@@ -139,7 +143,23 @@ func _accept(line: String) -> void:
         var id := int(p[2])
         if id != 0 and id == _pending:
             _pending = 0
+            _pending_kind = ""
         status_changed.emit("Original C++ refused planetary step #%d: %s" % [id, p[3]])
+        return
+    # This is a DIFFERENT receipt from a planetary PFRAME: the original
+    # player is no longer ashore. Never fabricate a final surface pose.
+    if p.size()==11 and p[0]=="PLEAVE" and p[1]=="1":
+        for i in range(2,11):
+            if not _integer(p[i]):
+                stop("Malformed original shuttle reboarding receipt")
+                return
+        if not has_verified_pose() or _pending_kind!="PREBOARD" or                 int(p[2])!=_session or int(p[3])!=_pending or                 int(p[4])!=int(_last_pose.get("ship",0)) or                 int(p[5])!=int(_last_pose.get("body",0)) or                 int(p[6])!=int(_last_pose.get("lat",-1)) or                 int(p[7])!=int(_last_pose.get("lon",-1)) or                 int(p[8])<_tick or int(p[9])<=_generation or                 int(p[10])<=_last_action_receipt:
+            stop("Original reboarding source/epoch mismatch")
+            return
+        _last_action_receipt=int(p[10])
+        _pending=0
+        _pending_kind=""
+        reboard_completed.emit()
         return
     if p.size() != 40 or p[0]!="PFRAME" or p[1]!="1":
         stop("Unexpected original planetary host frame")
@@ -227,8 +247,12 @@ func _accept(line: String) -> void:
                receipt<int(_last_pose.get("receipt",0)):
                 stop("Replayed or mismatched original planetary action receipt")
                 return
+            if _pending_kind=="PREBOARD":
+                stop("Surface frame cannot acknowledge original shuttle reboarding")
+                return
             _last_action_receipt=command_receipt
             _pending=0
+            _pending_kind=""
     _tick=tick
     _generation=gen
     _last_frame_ms=Time.get_ticks_msec()
@@ -264,6 +288,7 @@ func submit_walk(heading: Vector3, running: bool=false) -> void:
     var req := _request
     _request += 1
     _pending=req
+    _pending_kind="PMOVE"
     _last_send_ms=now
     _stdout.store_line("PMOVE|%d|%d|%d|%d" % [_session,req,dx,dz])
     _stdout.flush()
@@ -283,6 +308,7 @@ func _send_player_action(verb: String, mode: String) -> void:
     var req := _request
     _request += 1
     _pending=req
+    _pending_kind=verb
     _last_send_ms=now
     _stdout.store_line("%s|%d|%d|%s" % [verb,_session,req,mode])
     _stdout.flush()
@@ -297,3 +323,8 @@ func submit_suit(action: String) -> void:
 
 func submit_medical() -> void:
     _send_player_action("PMED", "TREAT")
+
+func submit_reboard() -> void:
+    # The native host checks the original hatch, grounded state and returned
+    # oxygen/CO2, then performs the original SQLite Reboard transaction.
+    _send_player_action("PREBOARD", "REBOARD")
