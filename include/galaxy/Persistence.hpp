@@ -898,6 +898,11 @@ public:
     void steps(std::uint64_t n);
     void configure_probe_report_tick_ms(std::uint64_t tick_ms);
     void ensure_physical_celestial_systems();
+    // S6-C: original-world one-writer migration to immutable v127 planetary
+    // envelopes. Old worlds gain exactly ZERO new water/soil/mineral/volatiles.
+    // Recovered-copy/rollback uses the same Store::commit as other migrations.
+    void ensure_planetary_genesis_manifest(
+        FailPoint fail=FailPoint::None);
     void ensure_ship_frame_registry();
     void ensure_visited_local_regions();
     void ensure_local_environment_profiles();
