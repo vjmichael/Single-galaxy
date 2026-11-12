@@ -3,6 +3,7 @@ extends Node3D
 ## Native Simulation/PersistentWorld owns ALL terrain, collisions-to-game,
 ## player/NPC arrival and resources. This adapter NEVER writes a game state.
 const VISUAL_RADIUS: float = 1000.0
+const INSPECTOR_SCRIPT := preload("res://scripts/SurfaceInspector.gd")
 const MAX_RESIDENT_TILES: int = 12
 const REFRESH_INTERVAL: float = 0.5
 # Native exporter publishes one atomic, <=4-tile packet per request.
@@ -21,6 +22,10 @@ var loaded_hash: String = ""
 # GPU frame time on machines where that hardware is not actually installed.
 var _frame_ms: Array[float] = []
 var _completed_measurement: bool = false
+var _orbital_camera: Camera3D
+var _inspector: CharacterBody3D
+var _inspector_receipt: String = ""
+var _status_hint: Label
 
 func _process(delta: float) -> void:
     if not _packet_path.is_empty() and delta > 0.0:
@@ -63,11 +68,17 @@ func _process(delta: float) -> void:
 
 
 func _ready() -> void:
-    var camera := Camera3D.new()
-    camera.position = Vector3(0.0, 0.0, 2500.0)
-    camera.current = true
-    add_child(camera)
-    camera.look_at(Vector3.ZERO)
+    _orbital_camera = Camera3D.new()
+    _orbital_camera.position = Vector3(0.0, 0.0, 2500.0)
+    _orbital_camera.current = true
+    add_child(_orbital_camera)
+    _orbital_camera.look_at(Vector3.ZERO)
+    var layer := CanvasLayer.new()
+    add_child(layer)
+    _status_hint = Label.new()
+    _status_hint.position = Vector2(14.0, 14.0)
+    _status_hint.text = "Read-only original planetary survey — not landed"
+    layer.add_child(_status_hint)
     var sunlight := DirectionalLight3D.new()
     sunlight.rotation_degrees = Vector3(-35.0, -30.0, 0.0)
     add_child(sunlight)
@@ -191,12 +202,73 @@ func load_verified_packet(packet_path: String) -> void:
     # instead of mixing page-in spikes with a different resident tile count.
     _frame_ms.clear()
     _completed_measurement = false
-    # There is no player teleport here. A true descent receipt remains an
-    # ORIGINAL native server authority, not a height-map or collision event.
-    if data.get("landing_verified", false) == true:
-        print("Original native shuttle descent receipt: ", data.get("original_descent_receipt", ""))
-    else:
-        print("Read-only original planet; no native player landing receipt")
+    # A physically landed original NPC-piloted shuttle allows LOCAL camera
+    # inspection, not a player descent or a durable walking command.
+    # The original native owner, ship and SQLite journal remain authoritative.
+    _show_verified_surface_inspection(data, tiles)
+
+
+func _clear_surface_inspection() -> void:
+    if is_instance_valid(_inspector):
+        _inspector.queue_free()
+    _inspector = null
+    _inspector_receipt = ""
+    if is_instance_valid(_orbital_camera):
+        _orbital_camera.current = true
+    if is_instance_valid(_status_hint):
+        _status_hint.text = "Read-only orbital terrain survey — no native player landing"
+
+func _show_verified_surface_inspection(data: Dictionary, tiles: Array) -> void:
+    if data.get("landing_verified", false) != true:
+        _clear_surface_inspection()
+        return
+    # Validate the complete native read-only observation presentation. Native
+    # exporter itself must have joined a completed original shuttle receipt.
+    var receipt := str(data.get("original_descent_receipt", ""))
+    var surface_id := str(data.get("surface_location", ""))
+    var pilot_id := str(data.get("shuttle_pilot_npc", ""))
+    var lat_raw: Variant = data.get("landing_lat", null)
+    var lon_raw: Variant = data.get("landing_lon", null)
+    if not receipt.is_valid_int() or not surface_id.is_valid_int() or not pilot_id.is_valid_int() or \
+            int(receipt) <= 0 or int(surface_id) <= 0 or int(pilot_id) <= 0 or \
+            typeof(lat_raw) != TYPE_INT or typeof(lon_raw) != TYPE_INT:
+        push_error("Incomplete original-world landed shuttle evidence")
+        _clear_surface_inspection()
+        return
+    var lat := int(lat_raw)
+    var lon := int(lon_raw)
+    if lat < 0 or lat >= 36 or lon < 0 or lon >= 72:
+        push_error("Invalid original landed region")
+        _clear_surface_inspection()
+        return
+    var band_lat := int(floor(float(lat) / 7.0))
+    var band_lon := int(floor(float(lon) / 6.0))
+    var includes_landing_tile := false
+    for tile in tiles:
+        if int(tile["lat_band"]) == band_lat and int(tile["lon_band"]) == band_lon:
+            includes_landing_tile = true
+            break
+    if not includes_landing_tile:
+        # No remote floating camera that pretends absent terrain was streamed.
+        _clear_surface_inspection()
+        return
+    var stamp := loaded_generation + ":" + loaded_hash + ":" + receipt + ":" + str(lat) + ":" + str(lon)
+    if is_instance_valid(_inspector) and stamp == _inspector_receipt:
+        return
+    _clear_surface_inspection()
+    # These unit-sphere coordinates reproduce the SOURCE cell centre, using
+    # the original native mesh's documented latitude/longitude convention.
+    # NEVER send the visual transform back to Simulation/PersistentWorld.
+    var phi := deg_to_rad(-90.0 + (float(lat) + 0.5) * 5.0)
+    var lam := deg_to_rad(-180.0 + (float(lon) + 0.5) * 5.0)
+    var outward := Vector3(cos(phi) * cos(lam), sin(phi), cos(phi) * sin(lam)).normalized()
+    _inspector = INSPECTOR_SCRIPT.new()
+    add_child(_inspector)
+    _inspector.global_position = outward * (VISUAL_RADIUS + 1.8)
+    _inspector_receipt = stamp
+    _status_hint.text = "SURFACE INSPECTION ONLY (WASD / mouse / Esc) — original NPC shuttle receipt " + receipt + " | NOT player descent"
+    print("Original NPC-piloted shuttle landed at native surface ", surface_id,
+        "; Godot inspection avatar is NOT the original player")
 
 func _append_native_tile(tile: Dictionary) -> void:
     var positions: Variant = tile.get("vertices", [])
