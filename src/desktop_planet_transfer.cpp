@@ -7,6 +7,7 @@
 #include "galaxy/Persistence.hpp"
 #include "galaxy/Simulation.hpp"
 #include "galaxy/Stage6RecoveryDecision.hpp"
+#include "galaxy/Stage6ConsolidatedAdmission.hpp"
 #include <algorithm>
 #include <atomic>
 #include <charconv>
@@ -133,6 +134,9 @@ int run(const std::string& save_utf8) {
             throw std::invalid_argument("transfer requires existing original SQLite world");
         NativeWriterLease custody(save);
         PersistentWorld world(save_utf8,Simulation(0xC021));
+        // The recovery probe intentionally leaves source unchanged.
+        // Only the newly admitted protected writer upgrades v127-v135.
+        (void)stage6::consolidated::admit(world);
         const auto& initial=person(world);
         const auto options=sites(world,initial);
         if(options.empty())
