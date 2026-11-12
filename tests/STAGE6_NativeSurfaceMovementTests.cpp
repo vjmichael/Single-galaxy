@@ -1,5 +1,6 @@
 #include "galaxy/Stage6GodotPacket.hpp"
 #include "galaxy/PlanetarySurfaceMovement.hpp"
+#include "galaxy/PlanetaryBodyGravity.hpp"
 #include <algorithm>
 #include <chrono>
 #include <filesystem>
@@ -200,6 +201,80 @@ try {
         CHECK(world.planetary_surface_move(7,ship,key,0,-300,0,82020+i));
     }
     CHECK(world.world().player_people().at(7).surface_pose.x_mm==0);
+
+    // S6-F5-C: a new canonical body-mass source is adopted ONLY through an
+    // original approved SQLite physics tick. No Godot gravity or instant
+    // healing/oxygen supply can be supplied by this test caller.
+    CHECK(!world.planetary_surface_vertical_action(
+        8,ship,key,false,87001));
+    const auto pre_vertical_gen=world.generation();
+    const auto pre_vertical_hash=world.world().state_hash();
+    bool vertical_fault=false;
+    try{
+        (void)world.planetary_surface_vertical_action(
+            7,ship,key,false,87001,FailPoint::AfterSnapshotWrite);
+    }catch(const std::exception&){vertical_fault=true;}
+    CHECK(vertical_fault && world.generation()==pre_vertical_gen);
+    CHECK(world.world().state_hash()==pre_vertical_hash);
+    CHECK(world.planetary_surface_vertical_action(7,ship,key,false,87001));
+    CHECK(!world.planetary_surface_vertical_action(7,ship,key,false,87001));
+    CHECK(world.world().canonical_state().find("galaxy-kernel-v134|")==0);
+    const auto planet=world.world().celestial_navigation_anchor(7,ship,selected.body);
+    CHECK(planet && planet->physical_mass_1e18_kg>0);
+    const auto g=planetary::gravity::surface_gravity_mm_s2(
+        planet->physical_radius_mm,planet->physical_mass_1e18_kg);
+    CHECK(g && *g>0 && *g<=50000);
+    CHECK(world.world().player_people().at(7).surface_survival.initialized);
+    CHECK(world.world().player_people().at(7).surface_survival.grounded);
+    CHECK(world.planetary_surface_vertical_action(7,ship,key,true,87002));
+    CHECK(!world.world().player_people().at(7).surface_survival.grounded);
+    CHECK(world.world().player_people().at(7).surface_survival.radial_speed_mm_s==
+          planetary::vertical::kJumpSpeedMmS);
+    bool landed_again=false;
+    for(int i=0;i<80;++i){
+        world.step();
+        if(world.world().player_people().at(7).surface_survival.grounded){
+            landed_again=true;break;
+        }
+    }
+    CHECK(landed_again);
+    CHECK(world.world().player_people().at(7).surface_survival.radial_speed_mm_s==0);
+    const auto oxygen_before=world.world().planetary_sites().at(key).oxygen_kg;
+    if(oxygen_before>0){
+        CHECK(world.planetary_surface_oxygen_action(7,ship,key,false,87003));
+        CHECK(world.world().planetary_sites().at(key).oxygen_kg==oxygen_before-1);
+        CHECK(world.world().player_people().at(7).surface_survival.oxygen_kg==1);
+        CHECK(!world.planetary_surface_oxygen_action(7,ship,key,false,87003));
+        CHECK(!world.planetary_player_shuttle_action(
+            7,ship,key,PlanetaryPlayerAction::Reboard,81103));
+        CHECK(world.planetary_surface_oxygen_action(7,ship,key,true,87004));
+        CHECK(world.world().planetary_sites().at(key).oxygen_kg==oxygen_before);
+    }else{
+        CHECK(!world.planetary_surface_oxygen_action(7,ship,key,false,87003));
+    }
+    const auto survival_copy=(dir/"v134-survival.sqlite").string();
+    PersistentWorld::recover_copy(db,survival_copy);
+    {
+        PersistentWorld restored(survival_copy,Simulation(613));
+        CHECK(restored.world().state_hash()==world.world().state_hash());
+        CHECK(restored.world().player_people().at(7).surface_survival.initialized);
+        CHECK(restored.world().physical_celestial_systems().at(selected.system)
+              .size()==world.world().physical_celestial_systems()
+              .at(selected.system).size());
+    }
+    auto tampered_mass=world.world().canonical_state();
+    const auto first_body= tampered_mass.find("celestial|");
+    CHECK(first_body!=std::string::npos);
+    const auto end_body=tampered_mass.find('\n',first_body);
+    CHECK(end_body!=std::string::npos);
+    const auto last_separator=tampered_mass.rfind('|',end_body);
+    CHECK(last_separator!=std::string::npos && last_separator>first_body);
+    tampered_mass.replace(last_separator+1,end_body-last_separator-1,"1234567");
+    bool mass_tamper_refused=false;
+    try{(void)Simulation::from_snapshot(tampered_mass);}
+    catch(const std::exception&){mass_tamper_refused=true;}
+    CHECK(mass_tamper_refused);
+
     CHECK(world.planetary_player_shuttle_action(
         7,ship,key,PlanetaryPlayerAction::Reboard,81103));
     CHECK(world.world().player_people().at(7).surface_pose.last_move_receipt==0);

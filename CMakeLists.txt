@@ -1396,6 +1396,13 @@ if(BUILD_TESTING)
   target_link_libraries(galaxy_stage6f5b_continuous_surface_math_tests PRIVATE galaxy_kernel)
   add_test(NAME galaxy_stage6f5b_continuous_surface_math
     COMMAND galaxy_stage6f5b_continuous_surface_math_tests)
+  # S6-F5-C v134: immutable source mass and original SQLite player
+  # survival/jump/oxygen receipt/restart integration.
+  add_executable(galaxy_stage6f5c_body_gravity_tests
+    tests/STAGE6F5C_BodyGravityTests.cpp)
+  target_link_libraries(galaxy_stage6f5c_body_gravity_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_stage6f5c_body_gravity
+    COMMAND galaxy_stage6f5c_body_gravity_tests)
   # S6-F5-C: deterministic radial motion + source-backed survival
   # contract ONLY. Not yet connected to the original world tick/health ledger.
   add_executable(galaxy_stage6f5c_vertical_physics_tests
