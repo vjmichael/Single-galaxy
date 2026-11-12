@@ -140,7 +140,16 @@ class SharedRuntime:
                             self.cv.notify_all()
                 continue
             if line.startswith('COLONY|1|'):
-                if len(line)<=180 and re.fullmatch(r'[a-zA-Z0-9_|-]+',line):
+                # S6-F5: only original player/ground receipt event families
+                # can exceed the established 180-byte colony limit. Signed
+                # numeric frames remain strictly bounded; arbitrary text
+                # and larger unrelated events never enter the SSE queue.
+                expanded=bool(re.fullmatch(
+                    r'COLONY\\|1\\|[0-9]{1,20}\\|'
+                    r'(?:PLANET_PLAYER_STATUS|PLANET_PLAYER_COMMITTED|'
+                    r'PLANET_SURFACE_POSE|PLANET_SURFACE_COMMITTED)'
+                    r'\\|[A-Za-z0-9_|-]+',line))
+                if len(line)<=(260 if expanded else 180) and re.fullmatch(r'[a-zA-Z0-9_|-]+',line):
                     with self.cv:
                         if len(self.colony_events)<4096:
                             self.colony_events.append(base64.b64encode(line.encode('ascii')).decode('ascii'))
