@@ -53,6 +53,27 @@ int main(int argc,char** argv){
     std::string db=argv[1];
     erase(db);
     try{
+        // Existing standalone native cockpit fixture is a non-colony ship:
+        // DOCK-09 readback must never abort it or mint original modules.
+        {
+            const std::string ordinary_db=db+".ordinary";
+            erase(ordinary_db);
+            Simulation generic_seed(0xD019);
+            const auto berth=generic_seed.add_station({0,0});
+            const auto ordinary=generic_seed.spawn_ship_docked(7,berth,24,60);
+            CHECK(generic_seed.colony_ship(ordinary)==nullptr);
+            PersistentWorld ordinary_world(ordinary_db,std::move(generic_seed));
+            const auto source=colony_onboarding::source_frame(
+                ordinary_world,7,ordinary,93,0);
+            CHECK(source.find("ONBOARD|1|93|0|")!=std::string::npos);
+            CHECK(!colony_onboarding::propose(
+                ordinary_world.world(),7,ordinary,77,
+                colony_onboarding::Operation::RefineRawOre));
+            CHECK(!colony_onboarding::propose(
+                ordinary_world.world(),7,ordinary,78,
+                colony_onboarding::Operation::EstablishOutpost));
+            erase(ordinary_db);
+        }
         EntityId home=0,station=0,raw=0,silicate=0,ship=0;
         std::uint64_t seq=92000;
         std::int64_t initial_mass=0;
