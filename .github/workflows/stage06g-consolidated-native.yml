@@ -91,13 +91,13 @@ jobs:
           fi
           cmake --build build/stage06g-history --target galaxy_play13d_regional_facilities_tests \
             --config Release --parallel 4
-          mkdir -p stage06g-history
-          export SG_WO3_HISTORICAL_CAPTURE_OUTPUT=stage06g-history/source-v85.sqlite
+          mkdir -p build/stage06g-history/evidence
+          export SG_WO3_HISTORICAL_CAPTURE_OUTPUT=build/stage06g-history/evidence/source-v85.sqlite
           "$HIST_EXE"
           test -s "$SG_WO3_HISTORICAL_CAPTURE_OUTPUT"
           python tests/WO3HistoricalNativeProducer.py attest "$HIST_SOURCE" \
             --binary "$HIST_EXE" --sqlite "$SG_WO3_HISTORICAL_CAPTURE_OUTPUT" \
-            --manifest stage06g-history/wo3-v85-attestation.json \
+            --manifest build/stage06g-history/evidence/wo3-v85-attestation.json \
             --github-env "$GITHUB_ENV"
       - name: One consolidated native compile, CTest discovery and Stage 6/industry matrix
         shell: bash
@@ -111,7 +111,7 @@ jobs:
           name: stage06g-native-${{ matrix.os }}-${{ github.sha }}
           path: |
             stage06g-native-acceptance.json
-            stage06g-history/wo3-v85-attestation.json
+            build/stage06g-history/evidence/wo3-v85-attestation.json
             build/stage06g/Testing/Temporary/LastTest.log
             build/stage06g/Testing/Temporary/LastTestsFailed.log
           if-no-files-found: warn
