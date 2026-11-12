@@ -746,6 +746,9 @@ struct PlanetaryShuttleState {
     // 1-tonne internal shuttle cargo hold (not a separate supply service).
     std::int64_t oxygen_kg=0;
     PlanetaryFamilyShuttleJourney family{}; // one durable, finite physical trip
+    // S6-D7/v136 original extracted soil/minerals/volatiles, same 1-tonne hold.
+    // Exactly one source: physically extracted site's regional_geology_kg.
+    std::array<std::int64_t,3> regional_geology_kg{};
 };
 // PLAY-13D.4F: finite local work board at the player's existing colony ship.
 // Multiple jobs may be posted, with only one claimed site-to-orbit delivery
@@ -1775,6 +1778,14 @@ public:
     // 1,000 kg capacity and the same committed ship/site transfer path.
     bool load_planetary_shuttle(PlayerId owner,EntityId ship,const PlanetarySiteKey& key,ShuttleCargo cargo,std::int64_t kg);
     bool unload_planetary_shuttle(PlayerId owner,EntityId ship,const PlanetarySiteKey& key,ShuttleCargo cargo,std::int64_t kg);
+    // S6-D7: source-funded site -> landed shuttle -> original orbiting ship.
+    // Every committed leg has its own globally replay-protected receipt.
+    bool load_planetary_geology_shuttle(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,PlanetaryResource resource,
+        std::int64_t kg,std::uint64_t request_id);
+    bool unload_planetary_geology_shuttle(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,PlanetaryResource resource,
+        std::int64_t kg,std::uint64_t request_id);
     bool assign_planetary_shuttle_pilot(PlayerId owner,EntityId ship,const PlanetarySiteKey& key,std::uint64_t npc);
     // Book/release actual named NPCs against the shuttle transport manifest.
     // Only orbital berth modifications; voyage departures move all occupants.
