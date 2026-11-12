@@ -561,9 +561,6 @@ struct PlanetarySiteFacility {
     std::int64_t embodied_ore=4;
     bool farm=false, extractor=false;
     std::int64_t water_kg=0, nutrients_kg=0, food_kg=0, wastewater_kg=0;
-    // v129 on-site physically landed stock; 0 soil, 1 mineral, 2 volatile.
-    // Only actual extraction can debit the original S6-C source into these.
-    std::array<std::int64_t,3> regional_geology_kg{};
     std::uint64_t harvest_cycles=0;
     // PLAY-13D.4: player remains in orbit; only finite NPCs deploy.
     // 1=surface transfer, 2=construction, 3=operational.
@@ -625,6 +622,7 @@ struct PlanetarySiteFacility {
     // independent adult visitors. {descent receipt, admit request, exit request};
     // an exit receipt remains forever to prevent request/identity replay.
     std::map<std::uint64_t,std::array<std::uint64_t,3>> visitor_residency{};
+    std::array<std::int64_t,3> regional_geology_kg{}; // v129 source-funded soil/mineral/volatile
 };
 using PlanetarySiteKey = std::tuple<std::uint64_t,std::uint16_t,std::uint16_t,std::uint32_t>;
 // WO3-E: an imported *historical legal address*, never a new household,
