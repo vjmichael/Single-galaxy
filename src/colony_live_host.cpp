@@ -1617,6 +1617,15 @@ void apply(PersistentWorld& world,EntityId ship,FleetSelection& fleet,const std:
                 static_cast<std::uint16_t>(latitude),
                 static_cast<std::uint16_t>(longitude));
             if(!site){announce(world.world(),"ERROR|PLANET_SURVEY_DENIED");return;}
+            const auto seasons=world.world().scan_planetary_seasons(
+                principal,ship,static_cast<std::uint64_t>(body),
+                static_cast<std::uint16_t>(latitude),
+                static_cast<std::uint16_t>(longitude));
+            if(!seasons || seasons->key.body!=site->key.body ||
+               seasons->key.latitude!=site->key.latitude ||
+               seasons->key.longitude!=site->key.longitude ||
+               seasons->key.revision!=site->key.revision)
+                throw std::runtime_error("seasonal source not joined to native geography");
             // A region is reported as discovered only after its private
             // immutable geography is written to the durable survey index.
             if(!knowledge){announce(world.world(),"ERROR|PLANET_SURVEY_ARCHIVE_UNAVAILABLE");return;}
@@ -1633,6 +1642,25 @@ void apply(PersistentWorld& world,EntityId ship,FleetSelection& fleet,const std:
                 std::to_string(site->downstream_latitude)+"|"+
                 std::to_string(site->downstream_longitude)+"|"+
                 std::to_string(site->key.revision));
+            // Informational climate only. Actual harvest or settlement
+            // remains under original physical source and human authority.
+            for(unsigned q=0;q<planetary::kPlanetaryQuarters;++q){
+                const auto& season=seasons->quarters[q];
+                announce(world.world(),"PLANET_SEASON|"+std::to_string(body)+"|"+
+                    std::to_string(latitude)+"|"+std::to_string(longitude)+"|"+
+                    std::to_string(site->key.revision)+"|"+
+                    std::to_string(seasons->model_revision)+"|"+
+                    std::to_string(q)+"|"+
+                    std::to_string(season.temperature_c)+"|"+
+                    std::to_string(season.precipitation)+"|"+
+                    std::to_string(season.evaporation)+"|"+
+                    std::to_string(season.snowpack_end)+"|"+
+                    std::to_string(season.local_runoff)+"|"+
+                    std::to_string(season.catchment_discharge)+"|"+
+                    std::to_string(season.candidate_liquid?1:0)+"|"+
+                    std::to_string(season.sea_ice?1:0)+"|"+
+                    std::to_string(season.environmental_risk));
+            }
         }catch(const std::exception&){
             announce(world.world(),"ERROR|PLANET_SURVEY_DENIED");
         }
