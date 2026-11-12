@@ -1128,6 +1128,12 @@ public:
     bool unload_planetary_shuttle(PlayerId owner,EntityId ship,const PlanetarySiteKey& key,bool water,std::int64_t kg,FailPoint fail=FailPoint::None);
     bool load_planetary_shuttle(PlayerId owner,EntityId ship,const PlanetarySiteKey& key,ShuttleCargo cargo,std::int64_t kg,FailPoint fail=FailPoint::None);
     bool unload_planetary_shuttle(PlayerId owner,EntityId ship,const PlanetarySiteKey& key,ShuttleCargo cargo,std::int64_t kg,FailPoint fail=FailPoint::None);
+    bool load_planetary_geology_shuttle(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,PlanetaryResource resource,
+        std::int64_t kg,std::uint64_t request_id,FailPoint fail=FailPoint::None);
+    bool unload_planetary_geology_shuttle(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,PlanetaryResource resource,
+        std::int64_t kg,std::uint64_t request_id,FailPoint fail=FailPoint::None);
     bool assign_planetary_shuttle_pilot(PlayerId owner,EntityId ship,const PlanetarySiteKey& key,std::uint64_t npc,FailPoint fail=FailPoint::None);
     // ART02-backed atomic household booking. Birth parentage and every
     // original physical dependent are checked against authoritative SQLite
