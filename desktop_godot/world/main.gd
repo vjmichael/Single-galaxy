@@ -195,6 +195,7 @@ func _ready() -> void:
 	refinery_terminal.industry_refresh_requested.connect(_on_industry_refresh_requested)
 	refinery_terminal.industry_batch_requested.connect(_on_industry_batch_requested)
 	refinery_terminal.industry_tick_requested.connect(_on_industry_tick_requested)
+	refinery_terminal.industry_run_requested.connect(_on_industry_run_requested)
 	refinery_terminal.industry_transfer_requested.connect(_on_industry_transfer_requested)
 	refinery_terminal.industry_management_refresh_requested.connect(_on_management_refresh_requested)
 	refinery_terminal.industry_management_apply_requested.connect(_on_management_apply_requested)
@@ -1388,6 +1389,10 @@ func _on_industry_batch_requested(trade: int) -> void:
 func _on_industry_tick_requested() -> void:
 	if _dock_commands_allowed():
 		native_station_session.advance_local_manufacturing()
+
+func _on_industry_run_requested() -> void:
+	if _dock_commands_allowed():
+		native_station_session.run_local_manufacturing_window()
 
 func _on_industry_transfer_requested(selector: int) -> void:
 	if _dock_commands_allowed():
