@@ -95,6 +95,36 @@ void denial(std::uint64_t request,const char* reason) {
 }
 } // namespace
 
+// S6-G: a read-only, mutually exclusive original-world integration audit.
+// It proves that a *saved* world contains just one canonical material,
+// source-site, shuttle, and player history, and emits stable source evidence.
+// No writable migration or elapsed game tick is allowed here.
+int audit(const std::string& save_utf8) {
+    try {
+        const auto save=fs::u8path(save_utf8);
+        if(save_utf8.empty() || save_utf8.size()>1024 ||
+           !fs::is_regular_file(save))
+            throw std::invalid_argument("Stage 6 audit requires an existing original SQLite world");
+        NativeWriterLease custody(save);
+        PersistentWorld world(save_utf8,Simulation(0xC021));
+        const auto proof=stage6::consolidated::observe(world);
+        std::cout<<"GFRAME|1|"<<proof.tick<<'|'<<proof.generation<<'|'
+            <<proof.state_hash<<'|'<<proof.total_ore<<'|'
+            <<proof.total_material_kg<<'|'<<proof.total_credits<<'|'
+            <<proof.bodies<<'|'<<proof.regional_sources<<'|'
+            <<proof.physical_regions<<'|'<<proof.sites<<'|'
+            <<proof.shuttles<<'|'<<proof.people<<'|'
+            <<(proof.ecology_v130?1:0)<<'|'
+            <<(proof.continuous_v133?1:0)<<'|'
+            <<(proof.atmosphere_v135?1:0)<<'\n'<<std::flush;
+        if(!std::cout)throw std::runtime_error("Stage 6 audit pipe closed");
+        return 0;
+    } catch(const std::exception& e) {
+        std::cerr<<"Original Stage 6 audit refused: "<<e.what()<<'\n';
+        return 3;
+    }
+}
+
 // S6-F6: short-lived native recovery preflight. This acquires the SAME
 // non-blocking OS writer lease before reading an existing SQLite world.
 // The lock is released on process exit BEFORE Godot launches a writer.
