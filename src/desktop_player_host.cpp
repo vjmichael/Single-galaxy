@@ -410,7 +410,11 @@ static int run_planet_host(const std::string& save_utf8){
                 (f[3]=="EQUIP" || f[3]=="UNEQUIP" || f[3]=="CHARGE");
             const bool care=f.size()==4 && f[0]=="PMED" &&
                 f[3]=="TREAT";
-            if((!walking&&!vertical&&!oxygen&&!suit&&!care) ||
+            // Reboarding is explicit and physical. It changes the original
+            // player record; a PFRAME would be invalid after this transaction.
+            const bool reboard=f.size()==4 && f[0]=="PREBOARD" &&
+                f[3]=="REBOARD";
+            if((!walking&&!vertical&&!oxygen&&!suit&&!care&&!reboard) ||
                !number(f[1],supplied) || !number(f[2],req) ||
                (walking&&(!number(f[3],dx)||!number(f[4],dz)))){
                 deny(0,"planet-command-malformed");continue;
@@ -440,7 +444,21 @@ static int run_planet_host(const std::string& save_utf8){
             // No host-side local interpolation or physics may advance the person.
             const auto proof=receipt_base+req;
             bool accepted=false;
-            if(walking){
+            if(reboard){
+                const auto& pose=before->surface_pose;
+                const auto& life=before->surface_survival;
+                // Verified original source hatch at local (0,0), not a
+                // client-proposed Godot collision or proximity estimate.
+                if(std::llabs(pose.x_mm)>2000 ||
+                   std::llabs(pose.z_mm)>2000 ||
+                   !life.grounded || life.radial_speed_mm_s!=0 ||
+                   life.oxygen_kg!=0 || life.exhaled_co2_kg!=0){
+                    deny(req,"return-to-original-hatch-and-store-gas");
+                    continue;
+                }
+                accepted=world.planetary_player_shuttle_action(
+                    kLocalOwner,ship,key,PlanetaryPlayerAction::Reboard,proof);
+            }else if(walking){
                 // The supervised autonomous ticker, not user key repetition,
                 // advances native time. A same-tick second move is denied
                 // by the existing original surface rule.
@@ -468,6 +486,20 @@ static int run_planet_host(const std::string& save_utf8){
             }
             if(!accepted){
                 deny(req,"planet-native-action-refused");continue;
+            }
+            if(reboard){
+                const auto it=world.world().player_people().find(kLocalOwner);
+                if(it==world.world().player_people().end() ||
+                   it->second.state!=PlayerPersonState::InPlanetaryShuttle ||
+                   it->second.home_ship!=ship)
+                    throw std::runtime_error("original reboard proof missing");
+                std::cout<<"PLEAVE|1|"<<session<<'|'<<req<<'|'<<ship<<'|'
+                    <<std::get<0>(key)<<'|'<<std::get<1>(key)<<'|'
+                    <<std::get<2>(key)<<'|'<<world.world().tick()<<'|'
+                    <<world.generation()<<'|'<<proof<<'\n'<<std::flush;
+                // Godot must observe this receipt, wait for OS writer death
+                // and only then relaunch --planet-transfer.
+                return 0;
             }
             if(walking){
                 const auto* current=landed();
