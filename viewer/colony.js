@@ -2040,6 +2040,111 @@
              line.append(choices);
              shuttlePanel.append(line);
            }
+           // S6-F5: non-CLI original-person control. This panel submits
+           // intent and displays strictly decoded SQLite receipts. It NEVER
+           // predicts movement, computes contact, or pilots the Godot camera.
+           const surfacePanel=document.createElement('details');
+           const surfaceTitle=document.createElement('summary');
+           surfaceTitle.textContent='Your player · shuttle & native surface steps';
+           const surfaceHelp=document.createElement('p');
+           surfaceHelp.textContent='Register your original person once. Board the original shuttle, use the existing shuttle Descend command, then disembark. Steps are bounded to 300 mm/player or 250 mm/NPC per committed world tick. Return to the hatch before reboarding. Only native receipts prove movement.';
+           const playerSelect=document.createElement('select');
+           playerSelect.setAttribute('aria-label','Original player shuttle action');
+           for(const [name,action] of [
+             ['Register original player','REGISTER'],
+             ['Check original player custody','STATUS'],
+             ['Board actual shuttle','BOARD'],
+             ['Disembark on landed surface','DISEMBARK'],
+             ['Reboard near shuttle hatch','REBOARD'],
+             ['Exit returned shuttle to original ship','EXIT']
+           ])playerSelect.add(new Option(name,action));
+           const playerSend=document.createElement('button');
+           playerSend.type='button';playerSend.textContent='Send player operation';
+           const nativePlayerState=document.createElement('output');
+           nativePlayerState.dataset.nativePlayerStatus='1';
+           nativePlayerState.textContent='No original player transport receipt has been received.';
+           const surfaceActor=document.createElement('select');
+           surfaceActor.setAttribute('aria-label','Surface movement actor');
+           surfaceActor.add(new Option('My original player','PLAYER'));
+           surfaceActor.add(new Option('Existing named NPC','NPC'));
+           const nativeNpc=document.createElement('input');
+           nativeNpc.type='number';nativeNpc.min='1';nativeNpc.step='1';
+           nativeNpc.placeholder='Existing NPC ID';
+           nativeNpc.setAttribute('aria-label','Named NPC ground movement ID');
+           const nativePose=document.createElement('output');
+           nativePose.dataset.nativePoseStatus='1';
+           nativePose.textContent='No original ground position received; check status.';
+           const oneUsePersonReceipt=()=>{
+             const n=Math.max(Date.now()*100,
+               Number(window.GalaxyLastOriginalPersonReceipt||0)+1);
+             if(!Number.isSafeInteger(n)||n<=0||n>=2**50)return null;
+             window.GalaxyLastOriginalPersonReceipt=n;
+             return n;
+           };
+           const nativePersonArgs=()=>{
+             const lat=Number(latitude.value),lon=Number(longitude.value);
+             if(!Number.isSafeInteger(body.id)||body.id<=0||
+                !Number.isSafeInteger(lat)||lat<0||lat>=36||
+                !Number.isSafeInteger(lon)||lon<0||lon>=72)return null;
+             return {body:body.id,latitude:lat,longitude:lon};
+           };
+           playerSend.addEventListener('click',()=>{
+             const op=playerSelect.value,coords=nativePersonArgs();
+             if(!coords)return;
+             if(op==='REGISTER')
+               window.GalaxyColonyCommand?.('colonyPlanetPlayerRegister',{});
+             else {
+               const args={...coords,operation:op};
+               if(op!=='STATUS'){
+                 const proof=oneUsePersonReceipt();
+                 if(!proof)return;
+                 args.receipt=proof;
+               }
+               window.GalaxyColonyCommand?.('colonyPlanetPlayer',args);
+             }
+             nativePlayerState.textContent='Submitted original-player intent. Await native authorization and committed custody.';
+           });
+           const selectedSurfaceActor=()=>{
+             const actor=surfaceActor.value;
+             if(actor==='PLAYER')return {actor};
+             const npc=Number(nativeNpc.value);
+             if(!Number.isSafeInteger(npc)||npc<=0)return null;
+             return {actor:'NPC',npc};
+           };
+           const nativeStatusButton=document.createElement('button');
+           nativeStatusButton.type='button';nativeStatusButton.textContent='Refresh original feet position';
+           nativeStatusButton.addEventListener('click',()=>{
+             const where=nativePersonArgs(),who=selectedSurfaceActor();
+             if(!where||!who)return;
+             window.GalaxyColonyCommand?.('colonyPlanetSurface',{
+               ...where,...who,operation:'STATUS'});
+             nativePose.textContent='Reading original SQLite ground pose...';
+           });
+           const surfaceControls=document.createElement('div');
+           surfaceControls.setAttribute('role','group');
+           surfaceControls.setAttribute('aria-label','Original native footstep controls');
+           for(const [name,dirX,dirZ] of [
+             ['Walk north',0,-1],['Walk south',0,1],
+             ['Walk west',-1,0],['Walk east',1,0]
+           ]){
+             const button=document.createElement('button');
+             button.type='button';button.textContent=name;
+             button.addEventListener('click',()=>{
+               const where=nativePersonArgs(),who=selectedSurfaceActor();
+               const proof=oneUsePersonReceipt();
+               if(!where||!who||!proof)return;
+               const max=who.actor==='PLAYER'?300:250;
+               window.GalaxyColonyCommand?.('colonyPlanetSurface',{
+                 ...where,...who,operation:'MOVE',
+                 dx:dirX*max,dz:dirZ*max,receipt:proof});
+               nativePose.textContent='Requested bounded native footstep; awaiting committed receipt.';
+             });
+             surfaceControls.append(button);
+           }
+           surfacePanel.append(surfaceTitle,surfaceHelp,playerSelect,playerSend,
+             nativePlayerState,surfaceActor,nativeNpc,nativeStatusButton,
+             surfaceControls,nativePose);
+           shuttlePanel.append(surfacePanel);
            // Local work board: queue finite instructions; the native world
            // controls the physical pilot, shuttle, fuel and source stock.
            const workTitle=document.createElement('strong');
@@ -2184,6 +2289,8 @@
              shuttlePanel.querySelectorAll('[data-shuttle-roster]').forEach(
                slot=>{slot.textContent='Check status';});
              shuttleState.textContent='Request status for this surface region.';
+             nativePlayerState.textContent='Different original surface cell: request person custody.';
+             nativePose.textContent='Different original surface cell: request native position.';
              workList.replaceChildren();
              workStatus.textContent='Check local work board for this region.';
            };
