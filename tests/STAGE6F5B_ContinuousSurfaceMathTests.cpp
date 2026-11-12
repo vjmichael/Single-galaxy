@@ -17,7 +17,8 @@ try{
     constexpr std::uint64_t moon_radius=1737400000ULL;
     const auto initial=cell_center({17,36});
     CHECK(initial && canonical(*initial));
-    CHECK(source_region(*initial)==SourceCell{17,36});
+    const SourceCell expected_region{17,36};
+    CHECK(source_region(*initial)==expected_region);
     const auto contact=source_ground(*initial,sample);
     CHECK(contact && !contact->ocean);
     CHECK(contact->height_mm==(-250+3*17+36)*1000);
