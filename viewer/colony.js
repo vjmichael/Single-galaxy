@@ -458,6 +458,23 @@
       return {...e,id,latitude,longitude,phase,progress,required,workers,
               food,water,oxygen,nutrients,npc1,npc2,policy,condition,cycles,stalled,extracted,repairs};
     }
+    if(t==='PLANET_ECOLOGY'){
+      if(v.length!==17)throw Error('Malformed original site ecology');
+      const id=numeric(v[4],Number.MAX_SAFE_INTEGER),
+        latitude=numeric(v[5],35),longitude=numeric(v[6],71),
+        field=numeric(v[7],Number.MAX_SAFE_INTEGER),
+        controlled=numeric(v[8],Number.MAX_SAFE_INTEGER),
+        blocked=numeric(v[9],Number.MAX_SAFE_INTEGER),
+        lastTick=numeric(v[10],Number.MAX_SAFE_INTEGER),
+        hazard=numeric(v[11],4),electricity=numeric(v[12],120),
+        observed=numeric(v[13],1),topsoil=numeric(v[14],100000000),
+        liquid=numeric(v[15],100000000),aquifer=numeric(v[16],100000000);
+      if(!id || lastTick>e.tick || blocked>e.tick ||
+         (!observed&&(topsoil||liquid||aquifer)))
+        throw Error('Invalid source-backed site ecology');
+      return {...e,id,latitude,longitude,field,controlled,blocked,
+        lastTick,hazard,electricity,observed,topsoil,liquid,aquifer};
+    }
     if(t==='PLANET_OPERATION_COMMITTED'){
       if(v.length!==9)throw Error('Malformed planetary operation receipt');
       const id=numeric(v[4],Number.MAX_SAFE_INTEGER);
@@ -2350,6 +2367,20 @@
          ' at body #'+e.id+' region ('+e.latitude+','+e.longitude+
          '). Autonomous work now follows simulation ticks; generation '+
          e.generation+'.';
+     }
+     if(e.type==='PLANET_ECOLOGY'){
+       const hazards=['Clear','Cold','Heat','Flood','Drought'];
+       q('signatureFeedback').textContent=
+         'Physical ecology on planet #'+e.id+' ('+e.latitude+','+
+         e.longitude+'): '+hazards[e.hazard]+
+         ' · field batches '+e.field+' · controlled batches '+e.controlled+
+         ' · environmentally blocked cycles '+e.blocked+
+         ' · site power '+e.electricity+' units'+
+         (e.observed?
+          ' · stable topsoil '+e.topsoil+' kg, surface water '+
+          e.liquid+' kg, groundwater '+e.aquifer+' kg':
+          ' · no funded local geology (only powered indoor cultivation)')+
+         '. Forecast weather never grants inventory.';
      }
      if(e.type==='PLANET_OPERATION_COMMITTED'){
        q('signatureFeedback').textContent=

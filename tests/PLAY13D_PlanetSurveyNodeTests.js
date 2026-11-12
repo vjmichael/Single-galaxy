@@ -726,3 +726,23 @@ test('depleted original regional source is a real empty stock, not free ore',()=
  assert.equal(source.waterKg,0);
  assert.equal(source.mineralKg,0);
 });
+
+test('S6-E source-backed site ecological telemetry is strict',()=>{
+ const row='COLONY|1|20|PLANET_ECOLOGY|4294967300|17|36|2|3|1|20|4|35|1|10000|2500|1000';
+ const e=decode(row);
+ assert.equal(e.type,'PLANET_ECOLOGY');
+ assert.equal(e.field,2);
+ assert.equal(e.controlled,3);
+ assert.equal(e.hazard,4);
+ assert.equal(e.topsoil,10000);
+ for(const bad of [
+  row.slice(0,row.lastIndexOf('|')),
+  row.replace('|20|4|35|1|','|21|4|35|1|'),
+  row.replace('|20|4|35|1|','|20|5|35|1|'),
+  row.replace('|20|4|35|1|','|20|4|121|1|'),
+  row.replace('|35|1|10000|','|35|0|10000|')
+ ])assert.throws(()=>decode(bad),Error,bad);
+ const host=fs.readFileSync(path.join(root,'src/colony_live_host.cpp'),'utf8');
+ assert.match(host,/planetary_ecology_enabled/);
+ assert.match(host,/PLANET_ECOLOGY/);
+});

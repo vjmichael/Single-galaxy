@@ -38,7 +38,7 @@ int main(int argc,char** argv){
               source.stock_kg[2]==16000 && source.stock_kg[3]==4000);
         const auto total=seed.total_ore();
         const auto prior=seed.canonical_state();
-        CHECK(prior.find("galaxy-kernel-v129|")==0);
+        CHECK(prior.find("galaxy-kernel-v130|")==0);
         CHECK(!seed.extract_planetary_regional_source(
             8,ship,body,latitude,longitude,PlanetaryResource::Water,
             0,1000,999,40001)); // wrong owner
@@ -77,7 +77,7 @@ int main(int argc,char** argv){
         {
             PersistentWorld reopened(db,Simulation(777,1));
             CHECK(reopened.world().total_ore()==total);
-            CHECK(reopened.world().canonical_state().find("galaxy-kernel-v129|")==0);
+            CHECK(reopened.world().canonical_state().find("galaxy-kernel-v130|")==0);
             CHECK(reopened.world().planetary_source_transfers().empty());
         }
         cleanup(db);

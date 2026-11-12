@@ -1162,6 +1162,23 @@ void apply(PersistentWorld& world,EntityId ship,FleetSelection& fleet,const std:
                 std::to_string(site.auto_extracted_kg)+"|"+
                 std::to_string(site.repair_cycles)+
                 (site.nutrients_kg>0?"|"+std::to_string(site.nutrients_kg):""));
+            if(world.world().planetary_ecology_enabled()) {
+                const auto p=world.world().planetary_physical_environment().find(key);
+                const bool observed=p!=world.world().planetary_physical_environment().end();
+                announce(world.world(),"PLANET_ECOLOGY|"+
+                    std::to_string(body)+"|"+std::to_string(lat)+"|"+
+                    std::to_string(lon)+"|"+
+                    std::to_string(site.ecology_field_batches)+"|"+
+                    std::to_string(site.ecology_controlled_batches)+"|"+
+                    std::to_string(site.ecology_blocked_cycles)+"|"+
+                    std::to_string(site.ecology_last_tick)+"|"+
+                    std::to_string(unsigned(site.ecology_last_hazard))+"|"+
+                    std::to_string(site.stored_electricity)+"|"+
+                    std::to_string(unsigned(observed))+"|"+
+                    std::to_string(observed?p->second.soil_kg[0]:0)+"|"+
+                    std::to_string(observed?p->second.water_kg[0]:0)+"|"+
+                    std::to_string(observed?p->second.water_kg[2]:0));
+            }
         }catch(const std::exception&){
             announce(world.world(),"ERROR|PLANET_SITE_STATUS_DENIED");
         }
