@@ -1139,6 +1139,14 @@ public:
     bool extract_planetary_site(PlayerId owner,EntityId ship,std::uint64_t body,
         std::uint16_t latitude,std::uint16_t longitude,bool water,std::int64_t kg,
         FailPoint fail=FailPoint::None);
+    // Same existing SQLite writer, exact origin, durable request ID and
+    // rollback. Authenticated owner comes from the native host principal.
+    bool extract_planetary_regional_source(
+        PlayerId owner,EntityId ship,std::uint64_t body,
+        std::uint16_t latitude,std::uint16_t longitude,
+        PlanetaryResource resource,std::uint8_t water_phase,
+        std::int64_t kg,std::uint64_t worker,std::uint64_t request_id,
+        FailPoint fail=FailPoint::None);
     bool retrieve_planetary_site(PlayerId owner,EntityId ship,std::uint64_t body,
         std::uint16_t latitude,std::uint16_t longitude,bool food,std::int64_t kg,
         FailPoint fail=FailPoint::None);

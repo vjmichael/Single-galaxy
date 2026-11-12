@@ -12253,6 +12253,83 @@ bool Simulation::extract_planetary_site(PlayerId owner,EntityId ship,
     source-=kg;dest+=kg;
     return true;
 }
+bool Simulation::extract_planetary_regional_source(
+    PlayerId owner,EntityId ship,std::uint64_t body,
+    std::uint16_t latitude,std::uint16_t longitude,
+    PlanetaryResource resource,std::uint8_t water_phase,
+    std::int64_t kg,std::uint64_t worker,std::uint64_t request_id) {
+    const auto key=PlanetarySiteKey{body,latitude,longitude,1};
+    const auto site=planetary_sites_.find(key);
+    const auto original=planetary_region_sources_.find(key);
+    const auto phase=planetary_physical_environment_.find(key);
+    const auto frame=ship_frames_.find(ship);
+    const auto* hull=find(ship);
+    const auto npc=npcs_.find(worker);
+    const auto index=unsigned(resource);
+    if(snapshot_version_<128 || !owner || owner==kServerAuthority ||
+       !request_id || request_id>=(std::uint64_t{1}<<50) ||
+       !worker || index>3 || kg<1000 || kg>10000 || kg%1000 ||
+       (index!=0 && water_phase!=0) ||
+       (index==0 && water_phase!=0 && water_phase!=2) ||
+       site==planetary_sites_.end() || original==planetary_region_sources_.end() ||
+       phase==planetary_physical_environment_.end() ||
+       !hull || hull->type!=EntityType::Ship || hull->owner_id!=owner ||
+       hull->dock_state!=DockState::InSpace ||
+       hull->jump_state!=ShipJumpState::Ready ||
+       frame==ship_frames_.end() || frame->second.anchor_body!=body ||
+       site->second.owner!=owner || site->second.source_ship!=ship ||
+       site->second.spaceport_phase!=3 || !site->second.extractor ||
+       site->second.production_projects[1].phase!=2 ||
+       site->second.production_projects[1].paused ||
+       site->second.workforce_policy!=0 || site->second.equipment_condition==0 ||
+       site->second.utility_phase!=2 || site->second.utility_paused ||
+       npc==npcs_.end() || npc->second.home_ship!=ship ||
+       npc->second.location!=site->second.surface_location ||
+       npc->second.assigned_site!=site->second.surface_location ||
+       npc->second.role!=NpcRole::PlanetarySurface ||
+       std::find(site->second.delegated_npcs.begin(),
+                 site->second.delegated_npcs.end(),worker)==
+                 site->second.delegated_npcs.end() ||
+       !npc_available_for_duty(worker) ||
+       !workshop_trade_certified(worker,WorkshopTrade::Shape) ||
+       submitted_ids_.count(request_id) ||
+       planetary_source_transfers_.count(request_id) ||
+       local_delivery_orders_.count(request_id) ||
+       shuttle_flight_request_ids_.count(request_id) ||
+       planetary_family_booking_ids_.count(request_id) ||
+       voyages_.count(request_id) ||
+       pending_celestial_transits_.count(request_id) ||
+       completed_celestial_transits_.count(request_id) ||
+       planetary_source_transfers_.size()>=10000 ||
+       original->second.stock_kg[index]<kg ||
+       (phase->second.hazard==planetary::PhysicalHazard::Cold ||
+        phase->second.hazard==planetary::PhysicalHazard::Heat ||
+        phase->second.hazard==planetary::PhysicalHazard::Flood))
+        return false;
+    // Ice remains ice and held vapor remains atmospheric: only liquid or
+    // genuinely stored groundwater is eligible. Soil must be intact topsoil.
+    if(index==0 && phase->second.water_kg[water_phase]<kg)return false;
+    if(index==1 && phase->second.soil_kg[0]<kg)return false;
+    auto& destination=index==0?site->second.water_kg:
+                      site->second.regional_geology_kg[index-1];
+    if(destination>1000000-kg)return false;
+    const auto units=(kg/1000)*(index==0 && water_phase==2?2:1);
+    if(site->second.stored_electricity<units)return false;
+    // Complete preflight before any mutation. One candidate copy will be
+    // committed by PersistentWorld with the original SQLite origin fence.
+    original->second.stock_kg[index]-=kg;
+    if(index==0)phase->second.water_kg[water_phase]-=kg;
+    if(index==1)phase->second.soil_kg[0]-=kg;
+    destination+=kg;
+    site->second.stored_electricity-=units;
+    planetary_source_transfers_.emplace(request_id,PlanetarySourceTransferReceipt{
+        request_id,owner,ship,worker,{body,1,latitude,longitude},
+        resource,water_phase,kg,units,tick_});
+    snapshot_version_=std::max(snapshot_version_,129);
+    planetary::verify_physical_environment(
+        phase->second,original->second.stock_kg[0],original->second.stock_kg[1]);
+    return true;
+}
 bool Simulation::retrieve_planetary_site(PlayerId owner,EntityId ship,
     std::uint64_t body,std::uint16_t latitude,std::uint16_t longitude,
     bool food,std::int64_t kg) {

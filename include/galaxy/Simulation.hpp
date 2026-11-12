@@ -561,6 +561,9 @@ struct PlanetarySiteFacility {
     std::int64_t embodied_ore=4;
     bool farm=false, extractor=false;
     std::int64_t water_kg=0, nutrients_kg=0, food_kg=0, wastewater_kg=0;
+    // v129 on-site physically landed stock; 0 soil, 1 mineral, 2 volatile.
+    // Only actual extraction can debit the original S6-C source into these.
+    std::array<std::int64_t,3> regional_geology_kg{};
     std::uint64_t harvest_cycles=0;
     // PLAY-13D.4: player remains in orbit; only finite NPCs deploy.
     // 1=surface transfer, 2=construction, 3=operational.
@@ -822,6 +825,20 @@ struct PlanetaryGenesisBody {
 struct PlanetaryRegionalSource {
     planetary::PlanetaryRegionKey region{};
     std::array<std::int64_t,4> stock_kg{}; // uncollected reserved physical matter
+};
+// S6-D5 / v129: immutable original source-to-local-inventory transfer.
+// These receipts are historical audit records, not additional material.
+struct PlanetarySourceTransferReceipt {
+    std::uint64_t request_id=0;
+    PlayerId owner=0;
+    EntityId ship=0;
+    std::uint64_t worker=0;
+    planetary::PlanetaryRegionKey region{};
+    PlanetaryResource resource=PlanetaryResource::Water;
+    std::uint8_t water_phase=0; // 0 surface liquid, 2 aquifer. Never ice/vapor.
+    std::int64_t kilograms=0;
+    std::int64_t electricity_units=0;
+    std::uint64_t tick=0;
 };
 struct PhysicalOasisReserve {
     std::int64_t water_kg=0,nutrients_kg=0;
@@ -1810,6 +1827,15 @@ public:
     // Finite, explicitly genesis-funded oasis matter moves to a SITE stock.
     bool extract_planetary_site(PlayerId owner,EntityId ship,std::uint64_t body,
         std::uint16_t latitude,std::uint16_t longitude,bool water,std::int64_t kilograms);
+    // S6-D5: owner-selected, request-ID-bounded original geological stock
+    // -> existing local site inventory; never OasisReserve or free rainfall.
+    bool extract_planetary_regional_source(
+        PlayerId owner,EntityId ship,std::uint64_t body,
+        std::uint16_t latitude,std::uint16_t longitude,
+        PlanetaryResource resource,std::uint8_t water_phase,
+        std::int64_t kilograms,std::uint64_t worker,std::uint64_t request_id);
+    const std::map<std::uint64_t,PlanetarySourceTransferReceipt>&
+        planetary_source_transfers() const {return planetary_source_transfers_;}
     bool retrieve_planetary_site(PlayerId owner,EntityId ship,std::uint64_t body,
         std::uint16_t latitude,std::uint16_t longitude,bool food,std::int64_t kilograms);
     // Exact original owner / installed scanner / celestial authorization.
@@ -1941,6 +1967,7 @@ private:
     std::map<std::uint64_t,PlanetaryGenesisBody> planetary_genesis_; // v127 source envelope + finite stocks
     std::map<PlanetarySiteKey,PlanetaryRegionalSource> planetary_region_sources_; // v127 exact physical cell
     std::map<PlanetarySiteKey,planetary::PhysicalEnvironment> planetary_physical_environment_; // v128 subaccounts
+    std::map<std::uint64_t,PlanetarySourceTransferReceipt> planetary_source_transfers_; // v129 immutable debits
     std::map<std::uint64_t,PhysicalOasisReserve> oasis_reserves_; // v75 explicit finite sources
     std::map<EntityId,OasisExtractor> oasis_extractors_;
     std::map<PlanetarySiteKey,PlanetarySiteFacility> planetary_sites_; // v76 real installed machinery

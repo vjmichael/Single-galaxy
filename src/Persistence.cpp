@@ -11242,6 +11242,29 @@ bool PersistentWorld::extract_planetary_site(PlayerId owner,EntityId ship,
     return true;
 }
 
+bool PersistentWorld::extract_planetary_regional_source(
+    PlayerId owner,EntityId ship,std::uint64_t body,
+    std::uint16_t latitude,std::uint16_t longitude,
+    PlanetaryResource resource,std::uint8_t phase,
+    std::int64_t kg,std::uint64_t worker,std::uint64_t request_id,FailPoint fail) {
+    // The actual original world retains admission/physical effects. This
+    // wrapper owns only transactionality, origin and rollback.
+    for(const auto& [id,p]:world_.pending_celestial_transits_) {
+        (void)id;
+        if(p.ship==ship)return false;
+    }
+    auto next=world_;
+    if(!next.extract_planetary_regional_source(
+        owner,ship,body,latitude,longitude,resource,phase,kg,worker,request_id))
+        return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("S6-D5 extraction changed original material origin");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);
+    ++generation_;
+    return true;
+}
 bool PersistentWorld::retrieve_planetary_site(PlayerId owner,EntityId ship,
     std::uint64_t body,std::uint16_t latitude,std::uint16_t longitude,bool food,std::int64_t kg,FailPoint fail) {
     // Every mutation happens on an isolated candidate. Commit succeeds before
