@@ -112,22 +112,22 @@ inline std::uint32_t cosine_ppm(std::int64_t lat) noexcept {
     const auto value=(left*(kWeight-fraction)+right*fraction)/kWeight;
     return std::max<std::uint32_t>(1000,static_cast<std::uint32_t>(value));
 }
-inline std::optional<GeoPoint> native_step(GeoPoint from,
+inline std::optional<GeoPoint> native_offset(GeoPoint from,
             std::int64_t east_mm,std::int64_t north_mm,
             std::uint64_t radius_mm) noexcept {
+    // Also used once to migrate a v132 <=32-metre original landing-pad
+    // odometer. It NEVER admits a client destination or a game command.
     if(!canonical(from)||
        radius_mm<kMinWalkableBodyRadiusMm||
        radius_mm>kMaxWalkableBodyRadiusMm||
-       east_mm< -300||east_mm>300||
-       north_mm< -300||north_mm>300||
-       (east_mm==0&&north_mm==0)||
-       east_mm*east_mm+north_mm*north_mm>90000)
+       east_mm< -32000||east_mm>32000||
+       north_mm< -32000||north_mm>32000)
         return std::nullopt;
     const auto absolute=[](std::int64_t x)->std::uint64_t {
         return static_cast<std::uint64_t>(x<0?-x:x);
     };
-    // Max numerator 300*57295779513082 < 2^55. No 128-bit / compiler-
-    // dependent intrinsics, integer overflow, or floating calculation.
+    // Max numerator 32,000*57,295,779,513,082 < 2^61. No 128-bit /
+    // compiler-dependent intrinsics or platform floating-point rounding.
     const auto north_step=static_cast<std::int64_t>(
         (absolute(north_mm)*kPdegPerRadian+radius_mm/2)/radius_mm);
     const auto east_angle=(
@@ -142,12 +142,35 @@ inline std::optional<GeoPoint> native_step(GeoPoint from,
     const GeoPoint result{lat,normalize_lon(lon)};
     return canonical(result)?std::optional<GeoPoint>(result):std::nullopt;
 }
+inline std::optional<GeoPoint> native_step(GeoPoint from,
+            std::int64_t east_mm,std::int64_t north_mm,
+            std::uint64_t radius_mm) noexcept {
+    if(east_mm< -300||east_mm>300||
+       north_mm< -300||north_mm>300||
+       (east_mm==0&&north_mm==0)||
+       east_mm*east_mm+north_mm*north_mm>90000)
+        return std::nullopt;
+    return native_offset(from,east_mm,north_mm,radius_mm);
+}
 inline std::uint64_t wrapped_longitude_gap(GeoPoint a,GeoPoint b) noexcept {
     const auto delta=static_cast<std::uint64_t>(
         a.longitude_pdeg>b.longitude_pdeg?
         a.longitude_pdeg-b.longitude_pdeg:
         b.longitude_pdeg-a.longitude_pdeg);
     return std::min<std::uint64_t>(delta,kFullTurn-delta);
+}
+inline std::uint64_t angular_proximity_score(GeoPoint a,
+                                                 GeoPoint b) noexcept {
+    // Monotone local contact/retreat metric, not a global orbital distance.
+    // Split before multiplication to avoid overflow on opposite meridians.
+    const auto lat=static_cast<std::uint64_t>(
+        a.latitude_pdeg>b.latitude_pdeg?
+        a.latitude_pdeg-b.latitude_pdeg:b.latitude_pdeg-a.latitude_pdeg);
+    const auto lon=wrapped_longitude_gap(a,b);
+    const auto cos=cosine_ppm((a.latitude_pdeg+b.latitude_pdeg)/2);
+    const auto projected=(lon/1000000ULL)*cos+
+                         ((lon%1000000ULL)*cos)/1000000ULL;
+    return lat+projected;
 }
 inline bool within_radius(GeoPoint a,GeoPoint b,
                           std::uint64_t radius_mm,
@@ -164,7 +187,8 @@ inline bool within_radius(GeoPoint a,GeoPoint b,
     const auto cos=cosine_ppm((a.latitude_pdeg+b.latitude_pdeg)/2);
     const auto lon_diff=wrapped_longitude_gap(a,b);
     if(lon_diff>(allowed*1000000ULL)/cos+1)return false;
-    const auto lon_projected=(lon_diff*cos)/1000000ULL;
+    const auto lon_projected=(lon_diff/1000000ULL)*cos+
+                             ((lon_diff%1000000ULL)*cos)/1000000ULL;
     return lat_diff*lat_diff+lon_projected*lon_projected<=allowed*allowed;
 }
 template<class Fetch>
