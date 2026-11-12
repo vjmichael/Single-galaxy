@@ -22,8 +22,7 @@ Status: SOURCE STAGED, not native accepted. No merge or release authorized.
 - D3: risk-governed local soil erosion/stabilization move exact soil kg
   between topsoil and retained sediment (no new fertile earth).
 - D4: deterministic per-region cold/heat/flood/drought hazards persist on
-  a maximum of one cycle per 20 committed ticks. Read-only physical survey
-  uses the existing owner/ship/fitted scanner and source-region gate.
+  a maximum of one cycle per 20 committed ticks. Read-only physical survey is sent by the existing native PLANET_SURVEY command as PLANET_PHYSICAL, strictly parsed by viewer/colony.js and source-mass-checked in the same native tick; it uses the existing owner/ship/fitted scanner and source-region gate.
   Hazards do not automatically invent damage, power costs or new workers.
 - New-game colony/station genesis enables the layer after original 38-tonne
   S6-C allocation; recovered historical worlds receive only original-material
@@ -34,7 +33,7 @@ Status: SOURCE STAGED, not native accepted. No merge or release authorized.
 
 ## Source-staged regression
 
-Stage06PhysicalEnvironmentTests.cpp / galaxy_stage06_physical_environment:
+Stage06PhysicalEnvironmentTests.cpp / galaxy_stage06_physical_environment, plus PLAY13D_PlanetSurveyNodeTests.js strict PLANET_PHYSICAL decoding:
 ice/water, aquifer, local soil erosion, hazard, conservation, zero-material
 worlds, rejection of repeat/overbudget transfers, unauthorized scanner
 denial, v128 reparse and missing-row refusal, committed recovery,
