@@ -1506,6 +1506,60 @@ void apply(PersistentWorld& world,EntityId ship,FleetSelection& fleet,const std:
         }
         return;
     }
+    // S6-D5/v129: original finite geological extraction is NOT the legacy
+    // OasisReserve operation. Both the private survey and real worker,
+    // equipment, energy and mass preflights are checked before commit.
+    if(!v.empty() && v[0]=="PLANET_GEO_EXTRACT") {
+        try {
+            if(v.size()!=9 || !knowledge)
+                throw std::invalid_argument("invalid geological request arity");
+            const auto body=integer(v[1]),lat=integer(v[2]),lon=integer(v[3]);
+            const auto phase=integer(v[5]),kg=integer(v[6]);
+            const auto worker=integer(v[7]),request=integer(v[8]);
+            if(body<=0 || lat<0 || lat>=planetary::kWatershedRows ||
+               lon<0 || lon>=planetary::kWatershedColumns ||
+               worker<=0 || request<=0 || phase<0 || phase>2 ||
+               kg<1000 || kg>10000 || kg%1000)
+                throw std::invalid_argument("invalid geological source operation");
+            PlanetaryResource resource=PlanetaryResource::Water;
+            if(v[4]=="WATER")resource=PlanetaryResource::Water;
+            else if(v[4]=="SOIL")resource=PlanetaryResource::Soil;
+            else if(v[4]=="MINERAL")resource=PlanetaryResource::Mineral;
+            else if(v[4]=="VOLATILE")resource=PlanetaryResource::Volatile;
+            else throw std::invalid_argument("invalid geological resource class");
+            const auto observed=world.world().scan_planetary_geography(
+                principal,ship,std::uint64_t(body),
+                std::uint16_t(lat),std::uint16_t(lon));
+            if(!observed)
+                throw std::invalid_argument("unowned or unscanned planet");
+            const auto known=knowledge->known_planetary_region(
+                principal,std::uint32_t(std::uint64_t(body)>>32),
+                std::uint64_t(body),std::uint16_t(lat),std::uint16_t(lon),
+                observed->key.revision);
+            if(!known || known->elevation!=observed->landscape.region.elevation ||
+               known->ocean!=std::uint8_t(observed->landscape.region.surface_water) ||
+               known->terrain!=std::uint8_t(observed->landscape.region.terrain) ||
+               known->watercourse!=std::uint8_t(observed->landscape.watercourse) ||
+               known->drainage!=observed->catchment_runoff)
+                throw std::invalid_argument("unsurveyed geological source");
+            if(!world.extract_planetary_regional_source(
+                principal,ship,std::uint64_t(body),
+                std::uint16_t(lat),std::uint16_t(lon),resource,
+                std::uint8_t(phase),kg,std::uint64_t(worker),std::uint64_t(request))) {
+                announce(world.world(),"ERROR|PLANET_GEO_EXTRACT_DENIED");
+                return;
+            }
+            announce(world.world(),"PLANET_SOURCE_TRANSFER|"+
+                std::to_string(body)+"|"+std::to_string(lat)+"|"+
+                std::to_string(lon)+"|"+std::to_string(observed->key.revision)+"|"+
+                std::to_string(request)+"|"+v[4]+"|"+std::to_string(phase)+"|"+
+                std::to_string(kg)+"|"+std::to_string(worker)+"|"+
+                std::to_string(world.generation()));
+        }catch(const std::exception&) {
+            announce(world.world(),"ERROR|PLANET_GEO_EXTRACT_DENIED");
+        }
+        return;
+    }
     // PLAY-13D.3: region-scoped physical actions. Player must have
     // previously observed this exact region/revision in the private archive.
     if(!v.empty() && (v[0]=="PLANET_BUILD" || v[0]=="PLANET_EQUIP" ||
