@@ -4,6 +4,7 @@
 // implied transfer, recipe invention or client-authored quantities.
 #include "galaxy/Persistence.hpp"
 #include "galaxy/WO2IndustryWorkforce.hpp"
+#include "galaxy/StationMineralIdentityAudit.hpp"
 #include <algorithm>
 #include <cstdint>
 #include <limits>
@@ -102,8 +103,16 @@ inline std::string make_snapshot(const PersistentWorld& world,PlayerId owner,
             add('C',0,"module/construction",cargo->modules);
         }
     }
-    if(plant)for(const auto& [name,kg]:plant->mineral_kg)
-        add('R',0,"mineral/"+name,kg);
+    if(plant){
+        // Match the existing original REFHEAD mineral-identity guard.
+        // Candidate industrial inputs may not disguise a station concentrate.
+        const auto audit=station_material_identity::audit_original_station(
+            sim,station,owner);
+        if(!audit || audit->stock.size()!=plant->mineral_kg.size())
+            throw std::runtime_error("unrecognized original station mineral identity");
+        for(const auto& row:audit->stock)
+            add('R',0,row.original_code,row.kilograms);
+    }
     if(shop){
         add('W',0,"good/aluminum",shop->aluminum_kg);
         add('W',0,"good/aluminum_panels",shop->panels_kg);
