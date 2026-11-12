@@ -711,6 +711,62 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     type(order)!=int or not 1<=order<(1<<50)):
                     raise ValueError('Invalid local delivery contract')
                 command=f'LOCAL_WORK_POST|{body}|{lat}|{lon}|{resource}|{kg}|{order}'
+            elif action=='colonyPlanetPlayerRegister' and set(doc)=={'token','action'}:
+                command='PLANET_PLAYER_REGISTER'
+            elif action in ('colonyPlanetPlayer','colonyPlanetSurface'):
+                base={'token','action','body','latitude','longitude','operation'}
+                if not base.issubset(doc):
+                    raise ValueError('Incomplete original planetary person command')
+                body,lat,lon=doc['body'],doc['latitude'],doc['longitude']
+                op=doc['operation']
+                if (type(body)!=int or not 1<=body<=9007199254740991 or
+                    type(lat)!=int or not 0<=lat<36 or
+                    type(lon)!=int or not 0<=lon<72 or type(op)!=str):
+                    raise ValueError('Invalid original planetary person site')
+                prefix=f'{body}|{lat}|{lon}'
+                expected=set(base)
+                if action=='colonyPlanetPlayer':
+                    if op not in ('STATUS','BOARD','DISEMBARK','REBOARD','EXIT'):
+                        raise ValueError('Unsupported player shuttle action')
+                    if op!='STATUS':
+                        expected.add('receipt')
+                        proof=doc.get('receipt')
+                        if type(proof)!=int or not 1<=proof<(1<<50):
+                            raise ValueError('Invalid original player receipt')
+                        prefix+=f'|{op}|{proof}'
+                    else:
+                        prefix+='|STATUS'
+                    command=f'PLANET_PLAYER|{prefix}'
+                else:
+                    if op not in ('STATUS','MOVE'):
+                        raise ValueError('Unsupported player/NPC surface order')
+                    expected.add('actor')
+                    actor=doc.get('actor')
+                    if actor not in ('PLAYER','NPC') or type(actor)!=str:
+                        raise ValueError('Invalid surface actor')
+                    prefix+=f'|{actor}'
+                    if actor=='NPC':
+                        expected.add('npc')
+                        npc=doc.get('npc')
+                        if type(npc)!=int or not 1<=npc<=9007199254740991:
+                            raise ValueError('Invalid original NPC ID')
+                        prefix+=f'|{npc}'
+                    if op=='MOVE':
+                        expected.update(('dx','dz','receipt'))
+                        dx,dz,proof=doc.get('dx'),doc.get('dz'),doc.get('receipt')
+                        speed=300 if actor=='PLAYER' else 250
+                        if (type(dx)!=int or type(dz)!=int or
+                            dx*dx+dz*dz==0 or
+                            dx < -speed or dx > speed or
+                            dz < -speed or dz > speed or
+                            dx*dx+dz*dz>speed*speed or
+                            type(proof)!=int or not 1<=proof<(1<<50)):
+                            raise ValueError('Invalid bounded native ground step')
+                        prefix+=f'|{dx}|{dz}|{proof}'
+                    command=('PLANET_SURFACE_MOVE' if op=='MOVE' else
+                             'PLANET_SURFACE_STATUS')+'|'+prefix
+                if set(doc)!=expected:
+                    raise ValueError('Unexpected planetary person fields')
             elif action=='colonyPlanetShuttle':
                 base={'token','action','body','latitude','longitude','operation'}
                 if not base.issubset(doc): raise ValueError('Incomplete shuttle order')
