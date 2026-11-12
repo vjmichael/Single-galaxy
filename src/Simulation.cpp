@@ -7474,6 +7474,8 @@ void Simulation::provision_planetary_body_genesis(
         total+=amount;
     }
     if(!total)throw std::invalid_argument("zero genesis adds no resources");
+    if(kilograms[0] && !it->second.envelope.water_coverage)
+        throw std::invalid_argument("zero-water body cannot receive liquid resource genesis");
     // Explicit caller-supplied genesis mass joins the SAME original material
     // conservation invariant. No scanner or global climate query creates it.
     auto next=*this;
@@ -7513,10 +7515,17 @@ void Simulation::place_planetary_region_genesis(
        (geo.landscape.region.surface_water &&
         (kilograms[1] || kilograms[2])))
         throw std::invalid_argument("regional source conflicts with real terrain and genesis");
+    // Candidate-and-swap is all-or-nothing even if insertion or material
+    // verification throws; no half-reserved regional source can survive.
+    auto next=*this;
+    auto& origin=next.planetary_genesis_.at(body);
     for(std::size_t i=0;i<kilograms.size();++i)
-        it->second.unallocated_kg[i]-=kilograms[i];
-    planetary_region_sources_.emplace(region,PlanetaryRegionalSource{
+        origin.unallocated_kg[i]-=kilograms[i];
+    next.planetary_region_sources_.emplace(region,PlanetaryRegionalSource{
         {body,genesis.key.generator_revision,latitude,longitude},kilograms});
+    if(next.total_ore()!=total_ore())
+        throw std::logic_error("original regional source placement minted mass");
+    swap(next);
 }
 std::optional<PlanetaryRegionalSource>
 Simulation::scan_planetary_region_source(PlayerId owner,EntityId ship,
