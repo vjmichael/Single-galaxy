@@ -72,17 +72,16 @@ int main(int argc,char** argv){
         for(const char* suffix:{"","-wal","-shm"}) {
             std::error_code ec;fs::remove(reopen+suffix,ec);
         }
-        {
-            PersistentWorld version136(reopen,Simulation::from_snapshot(candidate));
-            CHECK(version136.world().total_ore()==mass);
-            CHECK(version136.world().canonical_state()==candidate);
-        }
+        // A nonzero-tick snapshot cannot become a new genesis world.
+        // Recover the original SQLite journal, with its existing mass fence.
+        PersistentWorld::recover_copy(db,reopen);
         {
             PersistentWorld recovered(reopen,Simulation(0xD7));
-            CHECK(recovered.world().canonical_state()==candidate);
+            CHECK(recovered.generation()==world.generation());
+            CHECK(recovered.world().canonical_state()==world.world().canonical_state());
             CHECK(recovered.world().total_ore()==mass);
         }
-        std::cout<<"S6-D7 original geological shuttle schema/denial/SQLite restart PASS\n";
+        std::cout<<"S6-D7 original geological shuttle schema/denial/original SQLite restart PASS\n";
         return 0;
     } catch(const std::exception& e){
         std::cerr<<"S6-D7 native regression FAILED: "<<e.what()<<'\n';
