@@ -18234,6 +18234,8 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                    home==result.entities_.end() ||
                    home->second.type!=EntityType::Ship ||
                    home->second.owner_id!=owner ||
+                   !result.ship_frames_.count(p.home_ship) ||
+                   result.ship_frames_.at(p.home_ship).anchor_body!=p.planet_body ||
                    !occupied_player_shuttles.insert(key).second ||
                    site==result.planetary_sites_.end() ||
                    flight==result.planetary_shuttles_.end() ||
@@ -18244,8 +18246,14 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                    flight->second.owner!=owner ||
                    flight->second.source_ship!=p.home_ship ||
                    !flight->second.pilot_npc ||
-                   (p.last_receipt &&
-                    !result.player_planet_receipts_.count(p.last_receipt)))
+                   !p.last_receipt ||
+                   !result.player_planet_receipts_.count(p.last_receipt) ||
+                   (p.planet_flight_receipt &&
+                    !result.shuttle_flight_request_ids_.count(p.planet_flight_receipt)) ||
+                   (p.planet_descent_receipt &&
+                    !result.shuttle_flight_request_ids_.count(p.planet_descent_receipt)) ||
+                   (p.planet_ascent_receipt &&
+                    !result.shuttle_flight_request_ids_.count(p.planet_ascent_receipt)))
                     throw std::runtime_error("snapshot: forged original player planetary custody");
                 const auto& sh=flight->second;
                 if(p.state==PlayerPersonState::PlanetaryTransit){
