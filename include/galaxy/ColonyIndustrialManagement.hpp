@@ -70,8 +70,9 @@ inline std::optional<Command> propose(const Simulation& sim,PlayerId owner,
             return std::nullopt;
         c.action=Action::BuildStationRefinery;break;
       case 7: case 8: case 9:
-        if(!habitat || habitat->residents>=habitat->capacity)
-            return std::nullopt;
+        // Physical food/water/oxygen are replenishable even when all beds
+        // are occupied; only real ship stock and room limit the original step.
+        if(!habitat)return std::nullopt;
         c.action=Action::TransferHabitatStock;c.amount=100;
         c.thrust_x=static_cast<int>(selector-6);break;
       case 10:
