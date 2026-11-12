@@ -645,7 +645,11 @@ static int run_host(int argc,char** argv){
           }
         }
         if(!applied && !choose_passenger && passenger_ready){
-          applied=dock_traffic.serve_one(world,local_station,kOwner,worker);
+          applied=dock_traffic.serve_one(world,local_station,kOwner,worker,
+              [&](std::uint64_t npc){
+                return dock_corridor.boarding_ready(
+                    world.world(),local_station,kOwner,npc);
+              });
           if(applied)++passengers;
         }
         if(!applied)break;
