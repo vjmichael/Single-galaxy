@@ -17509,7 +17509,7 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
             if(site.embodied_ore!=expected_installed)
                 throw std::runtime_error("snapshot: invalid regional module custody");
             if(site.extractor && !result.oasis_reserves_.count(site.region.body) &&
-               !(result.snapshot_version_>=129 &&
+               !(result.snapshot_version_>=128 &&
                  result.planetary_region_sources_.count(key)))
                 throw std::runtime_error("snapshot: extractor has no physical source");
             if(result.snapshot_version_>=78) {
