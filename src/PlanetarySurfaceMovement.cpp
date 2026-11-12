@@ -757,7 +757,7 @@ void Simulation::process_original_surface_survival() {
         if(snapshot_version_>=135 && physics->impact &&
            physics->impact_speed_mm_s>=planetary::vertical::kHardImpactMmS &&
            sv.suit_embodied_kg==10 && sv.suit_integrity>1)
-            sv.suit_integrity=std::max(1U,sv.suit_integrity-10);
+            sv.suit_integrity=sv.suit_integrity>10 ? sv.suit_integrity-10 : 1;
         const bool atmospheric_source=snapshot_version_>=135;
         const planetary::air::State atmosphere{
             source_body->atmosphere_pressure_pa,
