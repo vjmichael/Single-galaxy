@@ -473,8 +473,8 @@ static int run_planet_host(const std::string& save_utf8){
                 if(current){
                     const auto x=current->surface_pose.x_mm;
                     const auto z=current->surface_pose.z_mm;
-                    if(std::llabs(x-published_x)>=20000 ||
-                       std::llabs(z-published_z)>=20000){
+                    if(std::llabs(x-published_x)>=16000 ||
+                       std::llabs(z-published_z)>=16000){
                         publish_original_walking_patch(save_utf8,world,
                             kLocalOwner,ship,key,session);
                         published_x=x;published_z=z;

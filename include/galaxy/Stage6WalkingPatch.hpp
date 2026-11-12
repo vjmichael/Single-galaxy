@@ -20,7 +20,7 @@ inline std::optional<std::string> original_walking_patch(
        const PersistentWorld& world,PlayerId owner,EntityId ship,
        const PlanetarySiteKey& key) {
     namespace grid=planetary::continuous_surface;
-    constexpr std::int64_t kGridStepMm=5000;
+    constexpr std::int64_t kGridStepMm=4000;
     constexpr unsigned kGridWidth=17;
     const auto& original=world.world();
     const auto player=original.player_people().find(owner);

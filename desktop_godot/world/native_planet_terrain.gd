@@ -5,7 +5,7 @@ extends Node3D
 const GRID_WIDTH := 17
 const MAX_VERTICES := 289
 const MAX_TRIANGLE_INDICES := 1536
-const MAX_CENTER_DISTANCE_MM := 40000
+const MAX_CENTER_DISTANCE_MM := 32000
 var _source_path := ""
 var _digest := ""
 var _last_check_msec := 0
@@ -91,7 +91,7 @@ func _load_if_changed() -> void:
             return
     if data.get("schema","")!="SG-STAGE6-WALKPATCH-01" or \
        int(data.get("width",0))!=GRID_WIDTH or \
-       int(data.get("stride_mm",0))!=5000 or \
+       int(data.get("stride_mm",0))!=4000 or \
        int(data["owner"])!=7 or \
        int(data["body"])!=int(_pose.get("body",-1)) or \
        int(data["ship"])!=int(_pose.get("ship",-1)) or \
@@ -119,7 +119,7 @@ func _load_if_changed() -> void:
                 _mesh_instance.visible=false
                 return
         var point := Vector3(float(v[0]),float(v[1]),float(v[2]))
-        if absf(point.x)>40.01 or absf(point.z)>40.01 or \
+        if absf(point.x)>32.01 or absf(point.z)>32.01 or \
            absf(point.y)>1000.0:
             _mesh_instance.visible=false
             return
