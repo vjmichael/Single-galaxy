@@ -75,6 +75,8 @@ var _geometry_parent: Node3D
 var native_session
 var native_planet_surface_session
 var native_planet_terrain: Node3D
+var _planet_save_picker: FileDialog
+var _planet_requested_save := ""
 var native_player_session
 var native_station_session
 var refinery_terminal
@@ -161,6 +163,14 @@ func _ready() -> void:
 	native_planet_terrain=NATIVE_PLANET_TERRAIN.new()
 	native_planet_terrain.name="OriginalPlanetarySurfaceTerrain"
 	add_child(native_planet_terrain)
+	_planet_save_picker=FileDialog.new()
+	_planet_save_picker.title="Choose existing original planetary SQLite world"
+	_planet_save_picker.file_mode=FileDialog.FILE_MODE_OPEN_FILE
+	_planet_save_picker.access=FileDialog.ACCESS_FILESYSTEM
+	_planet_save_picker.filters=PackedStringArray(["*.sqlite ; Original SQLite world"])
+	_planet_save_picker.current_dir=OS.get_user_data_dir()
+	_planet_save_picker.file_selected.connect(_on_planet_save_selected)
+	add_child(_planet_save_picker)
 	_apply_visual_quality()
 	_build_hud()
 	_apply_technical_hud()
@@ -1106,11 +1116,16 @@ func _advance_native_handoff() -> void:
 	_handoff_target = ""
 	_handoff_pid = -1
 	if destination == "planet":
-		# Original live-colony save, not the station graybox fixture.
-		var save := OS.get_user_data_dir().path_join("single_galaxy_authoritative.sqlite")
-		if is_instance_valid(native_planet_terrain):
-			native_planet_terrain.set_source(save+".stage6.walkpatch.json")
-		native_planet_surface_session.start(save)
+		# Explicit owner-selected original save, never a guessed fixture.
+		var save := _planet_requested_save
+		_planet_requested_save=""
+		if save.is_absolute_path() and FileAccess.file_exists(save):
+			if is_instance_valid(native_planet_terrain):
+				native_planet_terrain.set_source(save+".stage6.walkpatch.json")
+			native_planet_surface_session.start(save)
+		else:
+			_on_native_player_status("Selected original planetary save missing")
+
 	elif destination == "station":
 		station_test_save_selected = true
 		last_station_player_state = -1 # only fresh native PERSON can unlock P
@@ -1124,6 +1139,21 @@ func _advance_native_handoff() -> void:
 		# after failed native startup. In isolated script-only tests, the
 		# original local-preview behavior remains explicit.
 		player.use_native_authority(_player_session_autoconnect)
+
+func _on_planet_save_selected(path: String) -> void:
+	if not path.is_absolute_path() or not FileAccess.file_exists(path) or \
+			not path.to_lower().ends_with(".sqlite") or not _handoff_target.is_empty():
+		_on_native_player_status("Choose an existing original .sqlite file")
+		return
+	_planet_requested_save=path
+	var old_pid := -1
+	if native_station_session != null and native_station_session.is_active():
+		old_pid=native_station_session.process_id()
+		native_station_session.stop("Releasing source writer for selected planet",true)
+	elif native_player_session != null and native_player_session.is_active():
+		old_pid=native_player_session.process_id()
+		native_player_session.stop("Releasing source writer for selected planet",true)
+	_schedule_native_handoff("planet",old_pid)
 
 func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventKey and event.pressed and not event.echo and event.keycode in [KEY_F2,KEY_F7]:
@@ -1149,21 +1179,15 @@ func _unhandled_input(event: InputEvent) -> void:
 		get_viewport().set_input_as_handled()
 		return
 	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_F9:
-		# Explicit original-world surface inspection/movement. Every other
-		# SGDX writer must exit before this same-SQLite original host starts.
-		if native_planet_surface_session.is_active():
+		# An explicit original-world file is required. The backend still
+		# validates player landing and obtains the shared OS writer lock.
+		if native_planet_surface_session != null and native_planet_surface_session.is_active():
 			_on_native_player_status("Original planetary movement already active")
-		else:
-			var old_pid := -1
-			if native_station_session != null and native_station_session.is_active():
-				old_pid = native_station_session.process_id()
-				native_station_session.stop("Handing original writer to planetary mode", true)
-			elif native_player_session != null and native_player_session.is_active():
-				old_pid = native_player_session.process_id()
-				native_player_session.stop("Handing original writer to planetary mode", true)
-			_schedule_native_handoff("planet", old_pid)
+		elif _handoff_target.is_empty() and is_instance_valid(_planet_save_picker):
+			_planet_save_picker.popup_centered_ratio(0.6)
 		get_viewport().set_input_as_handled()
 		return
+
 	if event is InputEventKey and event.pressed and not event.echo and event.keycode in [KEY_J,KEY_M]:
 		if native_player_session != null and native_player_session.is_active():
 			if event.keycode == KEY_J:
