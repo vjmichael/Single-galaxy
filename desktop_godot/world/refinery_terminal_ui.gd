@@ -6,6 +6,7 @@ signal unload_requested()
 signal industry_refresh_requested()
 signal industry_batch_requested(trade: int)
 signal industry_tick_requested()
+signal industry_transfer_requested(selector: int)
 signal terminal_closed()
 signal dock_status_requested()
 signal dock_worker_requested()
@@ -52,6 +53,7 @@ var _industry_jobs: Label
 var _industry_cut_button: Button
 var _industry_shape_button: Button
 var _industry_tick_button: Button
+var _industry_transfers: Array[Button] = []
 
 func _ready() -> void:
 	name = "ColonyInventoryAndOperations"
@@ -208,7 +210,7 @@ func _ready() -> void:
 	column.add_child(refresh_factory)
 	_industry_stocks = ItemList.new()
 	_industry_stocks.custom_minimum_size = Vector2(470, 150)
-	_industry_stocks.select_mode = ItemList.SELECT_DISABLED
+	# Native rows are read-only; item clicks do not grant transfer rights.
 	column.add_child(_industry_stocks)
 	_industry_jobs = Label.new()
 	_industry_jobs.text = "Native production jobs: no verified local workshop"
@@ -228,6 +230,19 @@ func _ready() -> void:
 	_industry_shape_button.tooltip_text = "Original approved workshop recipe only: 20 kg physical panels to 19 kg frames and 1 kg scrap"
 	_industry_shape_button.pressed.connect(func(): industry_batch_requested.emit(2))
 	job_buttons.add_child(_industry_shape_button)
+	var transfer_labels := [
+		"Move 20 kg aluminum: docked ship → warehouse",
+		"Move 20 kg aluminum: warehouse → workshop",
+		"Move 19 kg panels: workshop → warehouse",
+		"Move 19 kg frames: workshop → warehouse",
+		"Move 1 kg scrap: workshop → warehouse"]
+	for index in range(transfer_labels.size()):
+		var transfer := Button.new()
+		transfer.text = transfer_labels[index]
+		transfer.disabled = true
+		transfer.pressed.connect(_on_industry_transfer_pressed.bind(index+1))
+		column.add_child(transfer)
+		_industry_transfers.append(transfer)
 	_industry_tick_button = Button.new()
 	_industry_tick_button.text = "Advance original production tick"
 	_industry_tick_button.disabled = true
@@ -363,6 +378,21 @@ func _on_review_pressed() -> void:
 func show_waiting() -> void:
 	visible = true
 	_current.clear()
+	_industry_state.clear()
+	if is_instance_valid(_industry_stocks):
+		_industry_stocks.clear()
+	if is_instance_valid(_industry_status):
+		_industry_status.text = "Contacting original colony-local factory inventory..."
+	if is_instance_valid(_industry_jobs):
+		_industry_jobs.text = "Original workforce and production status pending"
+	if is_instance_valid(_industry_cut_button):
+		_industry_cut_button.disabled=true
+	if is_instance_valid(_industry_shape_button):
+		_industry_shape_button.disabled=true
+	if is_instance_valid(_industry_tick_button):
+		_industry_tick_button.disabled=true
+	for transfer in _industry_transfers:
+		transfer.disabled=true
 	if is_instance_valid(_lots):
 		_lots.clear()
 	if is_instance_valid(_status):
@@ -386,6 +416,15 @@ func report_error(message: String) -> void:
 	if is_instance_valid(_unload_button):
 		_unload_button.disabled = true
 
+func _on_industry_transfer_pressed(selector: int) -> void:
+	if selector<1 or selector>_industry_transfers.size():
+		return
+	var button := _industry_transfers[selector-1]
+	if button.disabled:
+		return
+	button.disabled = true
+	industry_transfer_requested.emit(selector)
+
 func set_industry(snapshot: Dictionary) -> void:
 	# Never merge warehouse, workshop, refinery or escrow stock into a second
 	# account balance. Every amount is a native source-tagged observation.
@@ -405,14 +444,24 @@ func set_industry(snapshot: Dictionary) -> void:
 		int(snapshot.get("hangar_ore_t",0)),escrow,
 		"\nOnly the original workshop job approval was committed." if result==1 else
 		"\nOriginal workshop declined that approval." if result==2 else
-		"\nOne native production tick completed; see actual stock and batches." if result==3 else ""]
+		"\nOne native production tick completed; see actual stock and batches." if result==3 else
+		"\nOriginal world committed a physical local stock transfer." if result==4 else
+		"\nOriginal world refused this stock transfer." if result==5 else ""]
 	_industry_stocks.clear()
+	var available := {}
 	for stock in snapshot.get("stocks",[]):
-		var source := "Refinery concentrate" if stock.get("kind","")=="R" else \
-			"Workshop buffer" if stock.get("kind","")=="W" else \
+		var kind := str(stock.get("kind",""))
+		var code := str(stock.get("code",""))
+		var source := "Refinery concentrate" if kind=="R" else \
+			"Workshop buffer" if kind=="W" else \
+			"Docked founding ship" if kind=="H" else \
+			"Original hull modules" if kind=="C" else \
 			"Warehouse bin #%d" % int(stock.get("bin",0))
-		_industry_stocks.add_item("%s | %s | %d kg" % [
-			source,str(stock.get("code","")),int(stock.get("kg",0))])
+		var units := "items" if kind=="C" else "kg"
+		_industry_stocks.add_item("%s | %s | %d %s" % [
+			source,code,int(stock.get("kg",0)),units])
+		var stock_key := "%s/%d/%s" % [kind,int(stock.get("bin",0)),code]
+		available[stock_key]=int(stock.get("kg",0))
 	if _industry_stocks.item_count==0:
 		_industry_stocks.add_item("No original industrial stock at this colony")
 	if bool(snapshot.get("truncated",false)):
@@ -446,6 +495,16 @@ func set_industry(snapshot: Dictionary) -> void:
 	_industry_cut_button.disabled=not cut_ready
 	_industry_shape_button.disabled=not shape_ready
 	_industry_tick_button.disabled=not active
+	var transfer_requirements := [
+		"H/0/good/aluminum",
+		"S/0/good/aluminum",
+		"W/0/good/aluminum_panels",
+		"W/0/good/aluminum_frames",
+		"W/0/good/aluminum_scrap"]
+	var quantities := [20,20,19,19,1]
+	for index in range(_industry_transfers.size()):
+		var enough := int(available.get(transfer_requirements[index],0))>=quantities[index]
+		_industry_transfers[index].disabled=not (store and workshop and enough)
 
 func present(snapshot: Dictionary) -> void:
 	# NEVER render optimistic ore or assign a local amount to inventory.
