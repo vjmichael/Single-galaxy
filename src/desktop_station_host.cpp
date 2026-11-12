@@ -155,9 +155,10 @@ static int run_host(int argc,char** argv){
    const bool industrial_view=f.size()==5&&f[0]=="INDVIEW";
    const bool industrial_approve=f.size()==5&&f[0]=="INDAPPROVE";
    const bool industrial_step=f.size()==5&&f[0]=="INDSTEP";
+   const bool industrial_run=f.size()==5&&f[0]=="INDRUN";
    const bool industrial_move=f.size()==5&&f[0]=="INDMOVE";
    const bool industrial_action=industrial_view||industrial_approve||
-                                industrial_step||industrial_move;
+                                industrial_step||industrial_move||industrial_run;
    // DOCK-08: local owner-controlled original industrial facility and staff.
    const bool management_view=f.size()==5&&f[0]=="IMVIEW";
    const bool management_apply=f.size()==5&&f[0]=="IMAPPLY";
@@ -239,7 +240,7 @@ static int run_host(int argc,char** argv){
     // approved recipes, workers, materials and outcomes remain kernel-owned.
     const EntityId station=person.physical_station;
     if(!colony_industry::local_resident(world.world(),kOwner,station) ||
-       ((industrial_view||industrial_step) && ship!=station)){
+       ((industrial_view||industrial_step||industrial_run) && ship!=station)){
       deny(req,"industry-is-local-to-current-colony");continue;
     }
     int result=0;
@@ -306,6 +307,28 @@ static int run_host(int argc,char** argv){
       result=applied.result==Outcome::Applied?4:5;
       if(result==4 && applied.transferred!=c.amount)
         throw std::runtime_error("original storage transfer amount mismatch");
+    }else if(industrial_run){
+      // DOCK-09: one deliberately selected, bounded original-world work
+      // window. Do not synthesize a batch, skip admission checks or grant
+      // outputs: all sixteen real durable STEPs execute existing workers.
+      const auto* shop=world.world().workshop(station);
+      if(!colony_industry::native_workshop_at(world.world(),station,kOwner) ||
+         !shop || (!shop->approved_jobs[0].command_id &&
+                   !shop->approved_jobs[1].command_id)){
+        deny(req,"no-original-approved-workshop-program");continue;
+      }
+      const auto before_panels=shop->completed_batches;
+      const auto before_frames=shop->finisher_batches;
+      const auto before_mass=world.world().total_material_kg();
+      world.steps(16);
+      galaxy::server_dx::committed_breadcrumb(
+          world.world().tick(),world.generation());
+      const auto* current=world.world().workshop(station);
+      if(!current || world.world().total_material_kg()!=before_mass)
+        throw std::runtime_error("original factory work window mass custody mismatch");
+      const bool produced=current->completed_batches>before_panels ||
+                          current->finisher_batches>before_frames;
+      result=produced?6:7; // distinguish actual goods from stalled time
     }else if(industrial_step){
       const auto* shop=world.world().workshop(station);
       if(!colony_industry::native_workshop_at(world.world(),station,kOwner) ||
