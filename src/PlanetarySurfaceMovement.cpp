@@ -86,11 +86,20 @@ bool Simulation::planetary_surface_move(PlayerId owner,EntityId ship,
     const auto env=planetary_physical_environment_.find(key);
     const auto contact=original_ground_contact(*observed,
         env==planetary_physical_environment_.end()?nullptr:&env->second,x,z);
-    if(!contact || !contact->safe_to_walk ||
+    if(!contact)return false;
+    const bool severe_hazard=!contact->safe_to_walk ||
        facility->second.ecology_last_hazard==planetary::PhysicalHazard::Cold ||
        facility->second.ecology_last_hazard==planetary::PhysicalHazard::Heat ||
-       facility->second.ecology_last_hazard==planetary::PhysicalHazard::Flood)
-        return false;
+       facility->second.ecology_last_hazard==planetary::PhysicalHazard::Flood;
+    // A newly hazardous surface does not arbitrarily strand the original
+    // human/NPC: only retreat towards the existing shuttle hatch is allowed.
+    // Actual injury/air/thermal consumption is separate native survival work.
+    if(severe_hazard){
+        const auto old_d=position->x_mm*position->x_mm+
+                         position->z_mm*position->z_mm;
+        const auto new_d=x*x+z*z;
+        if(new_d>=old_d)return false;
+    }
     // Native original-person-to-person contact. Legacy original NPCs without
     // a committed foot-position receipt do not gain fabricated coordinates.
     // Already-overlapping characters may only move farther apart.
