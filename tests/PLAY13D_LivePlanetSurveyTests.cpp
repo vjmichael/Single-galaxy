@@ -30,6 +30,30 @@ int main() {
       const auto first=world.world().scan_planetary_geography(7,ship,planet,17,22);
       CHECK(first.has_value());
       original=*first;
+      const auto before=world.world().state_hash();
+      const auto mass_before=world.world().total_material_kg();
+      CHECK(!world.world().scan_planetary_seasons(8,ship,planet,17,22));
+      CHECK(!world.world().scan_planetary_seasons(7,ship,planet,36,22));
+      CHECK(!world.world().scan_planetary_seasons(7,ship,planet,17,72));
+      CHECK(!world.world().scan_planetary_seasons(7,ship,planet+500000,17,22));
+      const auto seasonal=world.world().scan_planetary_seasons(
+          7,ship,planet,17,22);
+      CHECK(seasonal.has_value());
+      CHECK(seasonal->key.body==original.key.body);
+      CHECK(seasonal->key.revision==original.key.revision);
+      CHECK(seasonal->model_revision==1);
+      std::uint32_t precip=0,evap=0;
+      for(unsigned q=0;q<4;++q) {
+          const auto& c=seasonal->quarters[q];
+          CHECK(c.local_runoff<=c.catchment_discharge);
+          CHECK(c.evaporation<=c.precipitation);
+          CHECK(!c.candidate_liquid||c.temperature_c>0);
+          precip+=c.precipitation;evap+=c.evaporation;
+      }
+      CHECK(seasonal->annual_precipitation==precip);
+      CHECK(seasonal->annual_evaporation==evap);
+      CHECK(world.world().state_hash()==before);
+      CHECK(world.world().total_material_kg()==mass_before);
       SurveyArchive saved(archive);
       CHECK(saved.record_planetary_region(7,1,original,world.world().tick()+1));
       const auto known=saved.known_planetary_region(7,1,planet,17,22,1);
@@ -55,6 +79,21 @@ int main() {
       PersistentWorld world(db.string(),Simulation(777,1));
       const auto recovered=world.world().scan_planetary_geography(7,ship,planet,17,22);
       CHECK(recovered.has_value());
+      const auto seasonal=world.world().scan_planetary_seasons(
+          7,ship,planet,17,22);
+      CHECK(seasonal.has_value() && seasonal->key.body==planet);
+      for(unsigned q=0;q<4;++q) {
+          const auto& a=seasonal->quarters[q];
+          const auto latest=world.world().scan_planetary_seasons(
+              7,ship,planet,17,22);
+          CHECK(latest.has_value());
+          const auto& b=latest->quarters[q];
+          CHECK(a.temperature_c==b.temperature_c);
+          CHECK(a.precipitation==b.precipitation);
+          CHECK(a.catchment_discharge==b.catchment_discharge);
+          CHECK(a.snowpack_end==b.snowpack_end);
+      }
+      CHECK(!world.world().scan_planetary_seasons(9,ship,planet,17,22));
       SurveyArchive saved(archive);
       const auto known=saved.known_planetary_region(7,1,planet,17,22,1);
       CHECK(known.has_value());
