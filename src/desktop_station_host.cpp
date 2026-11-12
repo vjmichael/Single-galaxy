@@ -4,6 +4,7 @@
 // PLAY-STATION-02 development-native station spawn and boarding bridge.
 // Real person, original SQLite world and exact berth custody; fixture-only hull.
 #include "galaxy/Persistence.hpp"
+#include "galaxy/PlanetaryGenesisBootstrap.hpp"
 #include "galaxy/DockLogistics.hpp"
 #include "galaxy/Dock04Traffic.hpp"
 #include "galaxy/Dock05Voyage.hpp"
@@ -93,7 +94,13 @@ static int run_host(int argc,char** argv){
   // Default production collection/refinery uses original source custody
   // (v123+), not the deferred v126 two-tonne mining-module prototype.
   seed.enable_station_ore_provenance();
+  // Stage6-C: the desktop game receives the same finite, physical
+  // new-world planetary geology as the native colony host. Existing
+  // SQLite worlds ignore this genesis candidate; they are NEVER seeded.
+  (void)stage6::provision_first_planet_seed(seed);
   PersistentWorld world(save_utf8,std::move(seed));
+  // Idempotent v127 zero-material migration of pre-Stage6 saves.
+  world.ensure_planetary_genesis_manifest();
   if(fresh){
    // One genuine original ship docking command and transition in the
    // persisted simulation, not a Godot-side dock state or second hull.
