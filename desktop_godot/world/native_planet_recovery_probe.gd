@@ -53,7 +53,7 @@ static func parse_frame(line: String) -> Dictionary:
             site==0 or (state==5 and phase not in [0,2]) or \
             (state==6 and phase not in [1,3])):
         return {}
-    if role==4 and (state!=7 or ship==0 or body==0 or site==0 or phase!=2):
+    if role==4 and (state!=7 or ship==0 or body=="0" or site==0 or phase!=2):
         return {}
     return {"role":role,"state":state,"ship":ship,"body":body,
         "lat":lat,"lon":lon,"site":site,"phase":phase,
