@@ -4,6 +4,7 @@
 // a terrain authority, a player-spawn grant, or a collision-to-world conversion.
 #include "galaxy/Stage6PlanetTiles.hpp"
 #include "galaxy/Stage6AuthorizedLanding.hpp"
+#include "galaxy/PlanetaryContinuousSurface.hpp"
 #include <cmath>
 #include <iomanip>
 #include <optional>
@@ -60,6 +61,22 @@ inline std::optional<std::string> original_godot_mesh_packet(
        <<"\"native_surface_z_mm\":\""<<(player_pose?player_pose->z_mm:0)<<"\","
        <<"\"native_surface_move_receipt\":\""
        <<(player_pose?player_pose->last_move_receipt:0)<<"\","
+       <<"\"native_geodetic_verified\":"
+       <<((player_pose&&native.world().continuous_native_planet_surface())?"true":"false")<<","
+       <<"\"native_latitude_pdeg\":\""
+       <<((player_pose&&native.world().continuous_native_planet_surface())?
+          player_pose->latitude_pdeg:0)<<"\","
+       <<"\"native_longitude_pdeg\":\""
+       <<((player_pose&&native.world().continuous_native_planet_surface())?
+          player_pose->longitude_pdeg:0)<<"\","
+       <<"\"native_current_lat\":"
+       <<((player_pose&&native.world().continuous_native_planet_surface())?
+          planetary::continuous_surface::source_region({
+              player_pose->latitude_pdeg,player_pose->longitude_pdeg}).latitude:0)<<","
+       <<"\"native_current_lon\":"
+       <<((player_pose&&native.world().continuous_native_planet_surface())?
+          planetary::continuous_surface::source_region({
+              player_pose->latitude_pdeg,player_pose->longitude_pdeg}).longitude:0)<<","
        <<"\"player_disembark_receipt\":\""
        <<(player_landed?player_landed->player_disembark_receipt:0)<<"\","
        <<"\"original_descent_receipt\":\""
