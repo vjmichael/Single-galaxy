@@ -1,6 +1,7 @@
 #include "galaxy/Stage6GodotPacket.hpp"
 #include "galaxy/PlanetarySurfaceMovement.hpp"
 #include "galaxy/PlanetaryBodyGravity.hpp"
+#include "galaxy/PlanetaryVerticalPhysics.hpp"
 #include <algorithm>
 #include <chrono>
 #include <filesystem>
