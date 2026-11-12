@@ -11548,9 +11548,8 @@ bool Simulation::transfer_planetary_shuttle_visitor(PlayerId owner,EntityId ship
         if(dependent.guardian_id==npc)return false;
     }
     if(reboard && person->second.surface_pose.last_move_receipt &&
-       !planetary::surface_motion::near_shuttle_hatch(
-           person->second.surface_pose.x_mm,
-           person->second.surface_pose.z_mm))return false;
+       !near_original_shuttle_hatch(person->second.surface_pose,key))
+        return false;
     // Legal settlers cannot bypass the original consent-and-departure
     // receipt path by requesting an ordinary shuttle reboard.
     if(reboard && person->second.legal_residence()==transport::Endpoint{
@@ -11688,8 +11687,7 @@ bool Simulation::planetary_player_shuttle_action(PlayerId owner,EntityId ship,
         if(!at_key || person.state!=PlayerPersonState::AtPlanetarySurface ||
            phase!=2 || !person.planet_descent_receipt ||
            shuttle->second.descent_receipt!=person.planet_descent_receipt ||
-           !planetary::surface_motion::near_shuttle_hatch(
-               person.surface_pose.x_mm,person.surface_pose.z_mm))
+           !near_original_shuttle_hatch(person.surface_pose,key))
             return false;
         person.state=PlayerPersonState::InPlanetaryShuttle;
         person.surface_pose={};
@@ -11853,13 +11851,11 @@ bool Simulation::launch_planetary_shuttle(PlayerId owner,EntityId ship,
     if(ascend){
         const auto& pilot_pose=pilot->second.surface_pose;
         if(pilot_pose.last_move_receipt &&
-           !planetary::surface_motion::near_shuttle_hatch(
-               pilot_pose.x_mm,pilot_pose.z_mm))return false;
+           !near_original_shuttle_hatch(pilot_pose,key))return false;
         for(const auto id:sh->second.passenger_ids){
             const auto& pos=npcs_.at(id).surface_pose;
             if(pos.last_move_receipt &&
-               !planetary::surface_motion::near_shuttle_hatch(
-                   pos.x_mm,pos.z_mm))return false;
+               !near_original_shuttle_hatch(pos,key))return false;
         }
     }
     // One kg of physically loaded water is the simplified water propellant
