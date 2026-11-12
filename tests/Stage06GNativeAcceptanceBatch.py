@@ -21,6 +21,7 @@ CORE=(
     "galaxy_stage06_finite_planet_genesis",
     "galaxy_stage06_physical_environment",
     "galaxy_stage06_authorized_source",
+    "galaxy_stage06d7_geological_freight",
     "galaxy_stage06_ecology_industry",
     "galaxy_stage06g_consolidated_migration",
 )
@@ -37,6 +38,7 @@ SURFACE=(
     "galaxy_stage6f5f_original_shuttle_roundtrip",
     "galaxy_stage6f6_original_role_reconciliation",
     "galaxy_stage06g_original_world_audit_matrix",
+    "galaxy_stage06g_original_named_npc_movement",
     "galaxy_stage6f5c_original_planet_host_refusal",
 )
 INDUSTRY=(
