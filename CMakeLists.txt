@@ -2303,6 +2303,13 @@ if(BUILD_TESTING AND Python3_Interpreter_FOUND)
       $<TARGET_FILE:galaxy_desktop_player_host>)
   set_tests_properties(galaxy_stage6f5f_original_shuttle_roundtrip
     PROPERTIES TIMEOUT 420 LABELS "stage6;native;sqlite;shuttle;crash-recovery")
+  add_test(NAME galaxy_stage6f6_original_role_reconciliation
+    COMMAND ${Python3_EXECUTABLE}
+      ${CMAKE_CURRENT_SOURCE_DIR}/tests/STAGE6F6_RecoveryPreflightTests.py
+      $<TARGET_FILE:galaxy_stage6f5e_planet_host_fixture>
+      $<TARGET_FILE:galaxy_desktop_player_host>)
+  set_tests_properties(galaxy_stage6f6_original_role_reconciliation
+    PROPERTIES TIMEOUT 450 LABELS "stage6;native;sqlite;recovery;one-writer")
 endif()
 if(BUILD_TESTING AND Python3_Interpreter_FOUND)
   add_test(NAME galaxy_stage6f5c_original_planet_host_refusal
