@@ -1435,6 +1435,12 @@ if(BUILD_TESTING)
         --script res://tests/stage6f5f_transfer_panel_smoke.gd)
     set_tests_properties(galaxy_stage6f5f_godot_shuttle_source
       PROPERTIES TIMEOUT 45 LABELS "stage6;godot;shuttle-source-only")
+    add_test(NAME galaxy_stage6f6_godot_recovery_source
+      COMMAND ${SG_STAGE6F5E_GODOT} --headless
+        --path ${CMAKE_CURRENT_SOURCE_DIR}/desktop_godot
+        --script res://tests/stage6f6_recovery_probe_smoke.gd)
+    set_tests_properties(galaxy_stage6f6_godot_recovery_source
+      PROPERTIES TIMEOUT 45 LABELS "stage6;godot;recovery-source-only")
   endif()
   find_program(SG_STAGE6F5_NODE NAMES node node.exe)
   if(SG_STAGE6F5_NODE)
