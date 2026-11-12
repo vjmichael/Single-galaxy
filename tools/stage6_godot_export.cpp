@@ -7,6 +7,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -24,6 +25,29 @@ std::uint8_t decimal_byte(const std::string& part) {
     const auto n=std::stoul(part);
     if(n>255)throw std::invalid_argument("tile coordinate exceeds byte range");
     return static_cast<std::uint8_t>(n);
+}
+std::uint64_t decimal_identity(const std::string& value) {
+    if(value.empty() || !std::all_of(value.begin(),value.end(),
+        [](unsigned char ch){return ch>='0'&&ch<='9';}))
+        throw std::invalid_argument("world identity must be unsigned decimal");
+    const auto result=std::stoull(value);
+    if(!result)throw std::invalid_argument("original world identity must be positive");
+    return result;
+}
+galaxy::PlanetarySiteKey parse_landing(
+    std::uint64_t body,const std::string& selection) {
+    const auto a=selection.find(',');
+    const auto b=a==std::string::npos?a:selection.find(',',a+1);
+    if(a==std::string::npos || b==std::string::npos ||
+       selection.find(',',b+1)!=std::string::npos)
+        throw std::invalid_argument("landing site format is LAT,LON,REV");
+    const auto lat=decimal_byte(selection.substr(0,a));
+    const auto lon=decimal_byte(selection.substr(a+1,b-a-1));
+    const auto revision=decimal_byte(selection.substr(b+1));
+    if(lat>=galaxy::planetary::kWatershedRows ||
+       lon>=galaxy::planetary::kWatershedColumns || revision!=1)
+        throw std::invalid_argument("landing site outside original region/revision");
+    return galaxy::PlanetarySiteKey{body,lat,lon,revision};
 }
 galaxy::stage6::RenderTileAddress parse_tile(const std::string& value) {
     const auto a=value.find(',');
@@ -60,42 +84,69 @@ void publish_packet(const fs::path& destination,const std::string& content) {
 } // namespace
 int main(int argc,char** argv) {
     try {
-        if(argc<6 || argc>10)throw std::invalid_argument(
+        if(argc<6 || argc>11)throw std::invalid_argument(
             "usage: stage6_godot_export <existing_world.sqlite> <owner> "
-            "<ship_id> <original_body_id> <out.json> [LAT,LON,STRIDE ... up to 4]");
+            "<ship_id> <original_body_id> <out.json> "
+            "[LAT,LON,STRIDE ... up to 4] [--landed=LAT,LON,REV]");
         const fs::path source=argv[1], output=argv[5];
         if(!fs::is_regular_file(source))
             throw std::runtime_error("original SQLite world is missing");
-        // Never truncate the ORIGINAL database (including aliases or hardlinks)
-        // or its transactional sidecars while exporting a visual packet.
+        // Never truncate the ORIGINAL database, its sidecars, or an alias.
         const auto canonical_source=fs::weakly_canonical(source);
         const auto canonical_output=fs::weakly_canonical(output);
         fs::path wal=canonical_source,shm=canonical_source,journal=canonical_source;
-        wal += "-wal";
-        shm += "-shm";
-        journal += "-journal";
+        wal += "-wal"; shm += "-shm"; journal += "-journal";
         if(canonical_source==canonical_output ||
            (fs::exists(output) && fs::equivalent(source,output)) ||
            canonical_output==wal || canonical_output==shm ||
            canonical_output==journal)
             throw std::invalid_argument("refusing to overwrite original SQLite data");
-        const auto owner=static_cast<galaxy::PlayerId>(std::stoull(argv[2]));
-        const auto ship=static_cast<galaxy::EntityId>(std::stoull(argv[3]));
-        const auto body=std::stoull(argv[4]);
+        const auto owner=static_cast<galaxy::PlayerId>(decimal_identity(argv[2]));
+        const auto ship=static_cast<galaxy::EntityId>(decimal_identity(argv[3]));
+        const auto body=decimal_identity(argv[4]);
         std::vector<galaxy::stage6::RenderTileAddress> selected;
-        if(argc==6)selected={{0,0,1},{0,1,1},{0,2,2},{0,3,2}};
-        else for(int i=6;i<argc;++i)selected.push_back(parse_tile(argv[i]));
-        // The original native authority validates every tile address, body,
-        // ship, owner and the common exact tick/generation/hash. A batch is
-        // bounded to four tiles; independent requests page the real survey.
-        galaxy::PersistentWorld world(source.string(),galaxy::Simulation(1));
+        std::optional<galaxy::PlanetarySiteKey> landed;
+        for(int i=6;i<argc;++i) {
+            const std::string choice(argv[i]);
+            if(choice.rfind("--landed=",0)==0) {
+                if(landed)throw std::invalid_argument("duplicate landing observation");
+                landed=parse_landing(body,choice.substr(9));
+            }else{
+                selected.push_back(parse_tile(choice));
+            }
+        }
+        if(selected.empty()) {
+            if(landed) {
+                // A genuine original shuttle descent chooses the displayed
+                // regional band. This is NOT a player-spawn authorization.
+                const auto lat=std::get<1>(*landed);
+                const auto lon=std::get<2>(*landed);
+                selected.push_back({std::uint8_t(lat/7),
+                                    std::uint8_t(lon/6),1});
+            }else selected={{0,0,1},{0,1,1},{0,2,2},{0,3,2}};
+        }
+        if(selected.size()>galaxy::stage6::kMaxTilesPerRequest)
+            throw std::invalid_argument("at most four verified tiles per batch");
+        // Read a recovered, generation-consistent COPY. Never open the live
+        // original save through a potentially mutating PersistentWorld writer.
+        const auto unique=std::chrono::steady_clock::now().
+            time_since_epoch().count();
+        const fs::path scratch=fs::temp_directory_path()/
+            ("sg-stage6f-"+std::to_string(unique));
+        fs::create_directory(scratch);
+        struct CleanupCopy {fs::path path;~CleanupCopy(){
+            std::error_code ec;fs::remove_all(path,ec);
+        }} cleanup{scratch};
+        const auto copy=(scratch/"source-copy.sqlite").string();
+        galaxy::PersistentWorld::recover_copy(source.string(),copy);
+        galaxy::PersistentWorld world(copy,galaxy::Simulation(1));
         const auto packet=galaxy::stage6::original_godot_mesh_packet(
-            world,owner,ship,body,selected);
+            world,owner,ship,body,selected,landed);
         if(!packet)throw std::runtime_error(
-            "owner/body/terrain tile selection not authorized in original world");
+            "original owner/scanner/body or completed shuttle descent not verified");
         publish_packet(output,*packet);
-        std::cout<<"STAGE6-D original-owner bounded tile batch published atomically; "
-                    "no world mutation or player landing\n";
+        std::cout<<"S6-F original-owner source tiles published from recovered copy; "
+                    "shuttle descent observational only; no player landing or cargo change\n";
         return 0;
     }catch(const std::exception& e){
         std::cerr<<"STAGE6-D: "<<e.what()<<'\n';return 1;
