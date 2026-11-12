@@ -20180,7 +20180,9 @@ std::int64_t Simulation::total_ore() const {
                 throw std::overflow_error("invalid shuttle pilot custody");
         }
         total+=v.dry_mass_ore+2*v.housing_module;
-        const auto held=v.water_kg+v.food_kg+v.nutrients_kg+v.oxygen_kg;
+        const auto held=v.water_kg+v.food_kg+v.nutrients_kg+v.oxygen_kg+
+            v.regional_geology_kg[0]+v.regional_geology_kg[1]+
+            v.regional_geology_kg[2];
         if(held>1000000000LL-life_mass_kg)
             throw std::overflow_error("invalid shuttle held stock");
         life_mass_kg+=held;
