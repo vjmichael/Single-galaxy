@@ -1,4 +1,4 @@
-#include "galaxy/Stage6AuthorizedLanding.hpp"
+#include "galaxy/Stage6GodotPacket.hpp"
 #include <chrono>
 #include <filesystem>
 #include <iostream>
@@ -104,6 +104,23 @@ try {
               world.world().planetary_sites().at(key).surface_location &&
           landed->surveyed.original_body_id==selected.body &&
           landed->still_current(world));
+    // S6-F: the actual landed NPC shuttle may be OBSERVED in a bounded
+    // Godot tile packet; owner/body/region are never a new player travel grant.
+    const galaxy::stage6::RenderTileAddress landing_tile{
+        static_cast<std::uint8_t>(selected.lat/7),
+        static_cast<std::uint8_t>(selected.lon/6),1};
+    const auto packet=stage6::original_godot_mesh_packet(
+        world,7,ship,selected.body,{landing_tile},key);
+    CHECK(packet &&
+          packet->find(R"("landing_verified":true)")!=std::string::npos &&
+          packet->find(R"("original_descent_receipt":"81234")")!=std::string::npos &&
+          packet->find(R"("shuttle_pilot_npc":")!=std::string::npos &&
+          packet->find(R"("surface_location":")!=std::string::npos);
+    CHECK(!stage6::original_godot_mesh_packet(
+        world,8,ship,selected.body,{landing_tile},key));
+    CHECK(!stage6::original_godot_mesh_packet(
+        world,7,ship,selected.body,{landing_tile},
+        PlanetarySiteKey{selected.body,selected.lat,selected.lon,2}));
     CHECK(world.world().total_ore()==ore);
     const auto copy=(dir/"recovered.sqlite").string();
     PersistentWorld::recover_copy(db,copy);
@@ -121,6 +138,8 @@ try {
     CHECK(world.launch_planetary_shuttle(7,ship,key,81235,true));
     CHECK(!landed->still_current(world));
     CHECK(!stage6::observe_native_landed_shuttle(world,7,ship,key));
+    CHECK(!stage6::original_godot_mesh_packet(
+        world,7,ship,selected.body,{landing_tile},key));
     world.steps(3);
     CHECK(world.world().planetary_shuttles().at(key).flight_phase==0);
     CHECK(!stage6::observe_native_landed_shuttle(world,7,ship,key));
