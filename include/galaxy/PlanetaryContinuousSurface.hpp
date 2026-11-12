@@ -213,8 +213,9 @@ inline bool within_radius(GeoPoint a,GeoPoint b,
     // boundary precision in that extreme case.
     const auto scale=std::max<std::uint64_t>(
         1,(allowed+999999999ULL)/1000000000ULL);
-    const auto lat=lat_diff/scale,lon=lon_projected/scale,
-               limit=allowed/scale;
+    const std::uint64_t lat=lat_diff/scale;
+    const std::uint64_t lon=lon_projected/scale;
+    const std::uint64_t limit=allowed/scale;
     return lat*lat+lon*lon<=limit*limit;
 }
 template<class Fetch>
