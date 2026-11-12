@@ -1412,6 +1412,8 @@ public:
     void ensure_planetary_genesis_manifest();
     // S6-D v128: zero-new-mass opt-in; never regenerated after activation.
     void enable_physical_planetary_environment();
+    // v129 first-class receipt schema, zero-new-mass historic upgrade.
+    void enable_planetary_source_custody();
     bool physical_planetary_environment_enabled() const {return snapshot_version_>=128;}
     const std::map<PlanetarySiteKey,planetary::PhysicalEnvironment>& planetary_physical_environment() const {
         return planetary_physical_environment_;

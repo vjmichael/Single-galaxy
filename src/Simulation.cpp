@@ -7559,6 +7559,15 @@ void Simulation::enable_physical_planetary_environment() {
         throw std::logic_error("physical phase initialization minted material");
     swap(next);
 }
+void Simulation::enable_planetary_source_custody() {
+    if(snapshot_version_<128)enable_physical_planetary_environment();
+    if(snapshot_version_>=129)return;
+    auto next=*this;
+    next.snapshot_version_=129; // zero local geology; no forged transfers
+    if(next.total_ore()!=total_ore())
+        throw std::logic_error("planetary source custody migration changed matter");
+    swap(next);
+}
 void Simulation::process_physical_planetary_environment() {
     if(snapshot_version_<128 ||
        tick_%planetary::kPhysicalEnvironmentCycleTicks)return;

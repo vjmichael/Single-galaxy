@@ -11381,6 +11381,18 @@ void PersistentWorld::ensure_physical_planetary_environment(FailPoint fail) {
     world_.swap(next);
     ++generation_;
 }
+void PersistentWorld::ensure_planetary_source_custody(FailPoint fail) {
+    auto next=world_;
+    const auto before=world_.total_ore();
+    next.enable_planetary_source_custody();
+    if(next.total_ore()!=before || next.total_ore()!=resource_origin_)
+        throw std::logic_error("S6-D5 migration added original matter");
+    if(next.canonical_state()==world_.canonical_state())return;
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);
+    ++generation_;
+}
 void PersistentWorld::ensure_physical_celestial_systems() {
     auto next=world_;
     next.ensure_physical_celestial_systems();

@@ -2211,6 +2211,7 @@ int main(int argc,char** argv){
         // to old worlds and preserves their physical oasis stocks.
         world.ensure_planetary_genesis_manifest();
         world.ensure_physical_planetary_environment();
+        world.ensure_planetary_source_custody();
         // PLAY-13C.2B: migrate current ships to durable legacy-local frames.
         world.ensure_ship_frame_registry();
         // PLAY-13C.4: durable, idempotent region seeding for pre-v73 arrivals.
