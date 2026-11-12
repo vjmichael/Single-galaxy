@@ -163,10 +163,15 @@ int main(int argc,char** argv){
                 trainee,WorkshopTrade::Cut));
             manage(w,seq,station,17);
             CHECK(w.world().workshop(station)->supervisor_npc_id==trainee);
-            manage(w,seq,station,21);
+            // The player's actual I-panel approves batches only with a
+            // native shift. Start one original bounded shift rather than
+            // bypassing the operator's real schedule.
+            manage(w,seq,station,19);
             const auto* shop=w.world().workshop(station);
             CHECK(shop->operator_npc_id>0 &&
                   shop->operator_npc_id!=trainee);
+            CHECK(shop->shifts[0].command_id &&
+                  shop->shifts[0].in_effect(w.world().tick()));
             // Replenish native cut machine with another original 20kg,
             // never credit the workshop for its own purchased goods.
             perform(w,seq,ship,Action::TransferStorageStack,station,20,0,0);
