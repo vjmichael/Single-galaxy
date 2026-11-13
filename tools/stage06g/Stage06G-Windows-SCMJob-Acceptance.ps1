@@ -125,7 +125,7 @@ try {
               physical_pc_verified=(-not [bool]$HostedSmoke);
               cycles=$results;installed_gameplay_tested=$false;radeon_tested=$false}
     $receipt|ConvertTo-Json -Depth 8|Set-Content -LiteralPath (Join-Path $folder 'scm-acceptance.json') -Encoding UTF8
-    Write-Host "PASS $passedStatus: two SCM lifetimes, native Job descendants and stop/restart; evidence: $folder"
+    Write-Host "PASS ${passedStatus}: two SCM lifetimes, native Job descendants and stop/restart; evidence: $folder"
 }
 finally {
     if($created){

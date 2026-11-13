@@ -27,7 +27,7 @@ def call(argv, timeout=25, required=True):
     return p
 
 def property_of(unit, prop):
-    return call(["systemctl","show",unit,"--property="+prop,"--value"]).stdout.strip()
+    return call(["systemctl","show",unit,"--property="+prop,"--value"],required=False).stdout.strip()
 
 def dead(pid):
     stat=Path(f"/proc/{pid}/stat")
