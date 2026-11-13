@@ -2075,6 +2075,12 @@ if(BUILD_TESTING)
     COMMAND galaxy_wo3_planetary_utility_tests --d7)
   set_tests_properties(galaxy_stage06d7_positive_geological_freight
     PROPERTIES TIMEOUT 360)
+  # Fast independent adversarial verifier of original command receipts:
+  # exact ID/tick/Applied required; stale, duplicate and mixed-denial refused.
+  add_test(NAME galaxy_stage06d7_receipt_contract
+    COMMAND galaxy_wo3_planetary_utility_tests --receipt-contract)
+  set_tests_properties(galaxy_stage06d7_receipt_contract
+    PROPERTIES TIMEOUT 15 LABELS "stage6;geology;freight;receipt")
   add_test(NAME galaxy_stage06e6_positive_staffed_ecology
     COMMAND galaxy_wo3_planetary_utility_tests --e6)
   set_tests_properties(galaxy_stage06e6_positive_staffed_ecology
