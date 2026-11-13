@@ -209,6 +209,7 @@ int main(int argc,char** argv) {
     const auto bulk=seed.add_asteroid({2000,0},150);
     const auto silicate=seed.add_geological_asteroid({1000,0},
         AsteroidClass::Silicate,30,2500);
+    const auto fitting_station=d7 ? seed.add_station({0,0}) : EntityId{0};
     seed.ensure_physical_celestial_systems();
     seed.ensure_ship_frame_registry();
     if(advanced) {
@@ -219,6 +220,12 @@ int main(int argc,char** argv) {
             galactic::Point{{0,100000},{0,100000},{0,100000}}}});
     }
     if(d7) {
+        // v126 physically fitted one-tonne mining is mandatory before v127
+        // source genesis. This finite starter stock pays for one real drill.
+        seed.enable_station_ore_provenance();
+        seed.enable_ship_mining_equipment();
+        seed.provision_mining_test_refined_stock(ship);
+        CHECK(seed.register_player_person(7,ship));
         // A distinct, actual funded v127 source from the ORIGINAL immutable
         // planet at genesis. This is the only geological inventory available
         // to the later legitimate Shape-qualified on-site extractor.
@@ -233,7 +240,21 @@ int main(int argc,char** argv) {
     }
     const auto initial_mass=seed.total_ore();
     PersistentWorld w(db,std::move(seed));
-    act(w,ship,1,Action::Mine,bulk,80);
+    if(d7) {
+        // Fit and power the actual v126 mine on the original docked ship.
+        act(w,ship,71001,Action::RequestDock,fitting_station);
+        w.steps(Simulation::kDockTransitionTicks);
+        CHECK(w.world().find(ship)->dock_state==DockState::Docked);
+        act(w,ship,71002,Action::FabricateModule,0,1);
+        act(w,ship,71003,Action::ConfigureMiningTool,0,1);
+        CHECK(w.world().find(ship)->fitting.mining_tool());
+        act(w,ship,71004,Action::RequestUndock,fitting_station);
+        w.steps(Simulation::kDockTransitionTicks);
+        CHECK(w.world().find(ship)->dock_state==DockState::InSpace);
+        act(w,ship,71005,Action::SetHardpointPower,0,1);
+        for(std::uint64_t i=0;i<80;++i)
+            act(w,ship,72000+i,Action::Mine,bulk,1);
+    } else act(w,ship,1,Action::Mine,bulk,80);
     act(w,ship,2,Action::RefineOre,0,80);
     act(w,ship,3,Action::FabricateModule,0,20);
     act(w,ship,4,Action::ConstructOutpost);
@@ -246,7 +267,10 @@ int main(int argc,char** argv) {
     act(w,ship,14,Action::AssignUtilityTechnicians,orbital,1);
     act(w,ship,15,Action::TransferUtilitySpares,orbital,5);
     act(w,ship,16,Action::SetUtilityMaintenance,orbital,1);
-    act(w,ship,19,Action::Mine,silicate,30);
+    if(d7) {
+        for(std::uint64_t i=0;i<30;++i)
+            act(w,ship,73000+i,Action::Mine,silicate,1);
+    } else act(w,ship,19,Action::Mine,silicate,30);
     act(w,ship,20,Action::RefineMineral,10,12000);
     act(w,ship,21,Action::TransferWorkshopFeed,orbital,1000);
     auto slots=workforce02::plan_original_workshop(w.world(),7,ship,orbital);
