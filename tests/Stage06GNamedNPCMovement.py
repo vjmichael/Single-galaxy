@@ -115,6 +115,23 @@ def main():
             await_frame(pending,"DENY|1|4|planet-request-replayed")
             assert int(ack[4])==npc and int(ack[9])>0
             assert int(ack[8])>before[1]
+            # F5/F6 positive cross-feature reconciliation: the SAME original
+            # source-owned player remains ashore after a named-NPC move.
+            # Native vertical WAIT advances actual physics and one durable
+            # SQLite STEP, never Godot-local height or a fabricated clock.
+            time.sleep(0.075)
+            proc.stdin.write(f"PSTEP|{session}|5|WAIT\n")
+            proc.stdin.flush()
+            vertical=await_frame(pending,f"PFRAME|1|{session}|5|")
+            assert int(vertical[4])==int(p[4]) and vertical[5]==p[5]
+            assert int(vertical[15])>int(ack[7])
+            assert int(vertical[16])>int(ack[8])
+            assert int(vertical[26])==int(vertical[15])
+            assert int(vertical[27])>0 and int(vertical[27])!=int(ack[9])
+            assert int(vertical[17])==int(p[17])
+            proc.stdin.write(f"PSTEP|{session}|5|WAIT\n")
+            proc.stdin.flush()
+            await_frame(pending,"DENY|1|5|planet-request-replayed")
         finally:
             if proc.poll() is None:
                 proc.stdin.write("QUIT\n")
@@ -133,6 +150,9 @@ def main():
         try:
             restarted=await_frame(pending2,"PFRAME|1|")
             assert int(restarted[2])!=session
+            assert restarted[5]==p[5] and int(restarted[4])==int(p[4])
+            assert int(restarted[15])>=int(vertical[15]) and int(restarted[16])>=int(vertical[16])
+            assert int(restarted[26])>=int(vertical[26])
             new_roster=await_frame(pending2,"NROSTER|1|")
             assert npc in [int(x) for x in new_roster[5:]]
             proc2.stdin.write(f"NMOVE|{session}|3|{npc}|200|0\n")
