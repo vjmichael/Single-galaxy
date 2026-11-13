@@ -149,7 +149,9 @@ jobs:
             --capture-dir original-evidence/sqlite \
             --source-sha '${{ matrix.source_sha }}' \
             --consumer original-evidence/current/galaxy_stage06h4_historical_recovery_tests \
-            --executed-tests-successful \
+            --test-junit original-evidence/original-native-tests.xml \
+            --observer original-evidence/libsg_h4_observer.so \
+            --producer-executables "${EXE[@]}" \
             --output original-evidence/vintage-to-current-recovery.json
       - name: Retain original historical SQLite, manifests, failure logs
         if: always()
