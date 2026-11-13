@@ -55,6 +55,13 @@ INDUSTRY=(
     "galaxy_dock08_colony_facility_workforce",
     "galaxy_dock09_original_colony_industry_vertical",
 )
+# Genuine original SQLite world with four independent supervised native cell
+# processes, 1,024 committed ticks, 32 host restarts, recovery and rollback.
+# Separate from one-world 1,024-step environmental migration.
+MULTICELL=(
+    "galaxy_native_galactic_supervisor_1024",
+    "galaxy_native_cell_process_stress",
+)
 GODOT=(
     "galaxy_stage6f5e_godot_tile_window",
     "galaxy_stage6f5f_godot_shuttle_source",
@@ -71,6 +78,7 @@ GROUPS={
     "environment_and_migration": CORE+SOURCE_SURVEY,
     "surface_and_native_recovery": SURFACE,
     "industry_and_logistics": INDUSTRY,
+    "multicell_original_custody": MULTICELL,
     "godot_source_only": GODOT,
 }
 
@@ -169,7 +177,7 @@ def main():
         report["blocker"]="Invalid CTest JSON: "+str(e)
         receipt(dest,report)
         return 2
-    required=set(CORE+SOURCE_SURVEY+SURFACE+INDUSTRY)
+    required=set(CORE+SOURCE_SURVEY+SURFACE+INDUSTRY+MULTICELL)
     missing=sorted(required-registered)
     report["missing_native_tests"]=missing
     if missing:

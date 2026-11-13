@@ -66,12 +66,12 @@ jobs:
         if: runner.os == 'Linux'
         shell: bash
         run: |
-          cmake -S . -B build/stage06g -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON -DBUILD_BENCHMARKS=OFF
+          cmake -S . -B build/stage06g -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON -DBUILD_BENCHMARKS=OFF -DSPACE_ENABLE_1024_ENDURANCE=ON
       - name: Configure exact Windows original world
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          cmake -S . -B build/stage06g -G "Visual Studio 17 2022" -A x64 "-DCMAKE_TOOLCHAIN_FILE=$env:SG_TOOLCHAIN" -DBUILD_TESTING=ON -DBUILD_BENCHMARKS=OFF
+          cmake -S . -B build/stage06g -G "Visual Studio 17 2022" -A x64 "-DCMAKE_TOOLCHAIN_FILE=$env:SG_TOOLCHAIN" -DBUILD_TESTING=ON -DBUILD_BENCHMARKS=OFF -DSPACE_ENABLE_1024_ENDURANCE=ON
           if($LASTEXITCODE -ne 0){throw 'Windows original C++ configuration failed'}
       - name: Reproduce and attest original historical v85 SQLite from pinned native producer
         shell: bash
