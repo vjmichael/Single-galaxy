@@ -76,7 +76,9 @@ std::wstring utf16(const std::string& input){
 bool execute(const std::string& executable,const CellProcessTask& task,
     std::chrono::milliseconds deadline,std::string& output) {
     const auto binary=utf16(executable);
-    if(binary.empty() || binary.find(L'"')!=std::wstring::npos)return false;
+    if(binary.empty() || binary.find(L'"')!=std::wstring::npos){
+        output="Win32-invalid-executable-path";return false;
+    }
     const auto args=std::string("--cell-read-v1 ")+task.scope+" "+
         hex_worker(task.worker)+" "+std::to_string(task.original_generation)+" "+
         std::to_string(task.original_hash)+" "+
@@ -92,12 +94,18 @@ bool execute(const std::string& executable,const CellProcessTask& task,
     const auto close=[](HANDLE& handle) {
         if(handle){CloseHandle(handle);handle=nullptr;}
     };
-    if(!CreatePipe(&readpipe,&writepipe,&attrs,0))return false;
+    if(!CreatePipe(&readpipe,&writepipe,&attrs,0)){
+        output="Win32-CreatePipe:"+std::to_string(GetLastError());return false;
+    }
     if(!SetHandleInformation(readpipe,HANDLE_FLAG_INHERIT,0)){
+        output="Win32-SetHandleInformation:"+std::to_string(GetLastError());
         close(readpipe);close(writepipe);return false;
     }
     job=CreateJobObjectW(nullptr,nullptr);
-    if(!job){close(readpipe);close(writepipe);return false;}
+    if(!job){
+        output="Win32-CreateJobObject:"+std::to_string(GetLastError());
+        close(readpipe);close(writepipe);return false;
+    }
     JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits{};
     limits.BasicLimitInformation.LimitFlags=
         JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE |
@@ -105,6 +113,7 @@ bool execute(const std::string& executable,const CellProcessTask& task,
     limits.ProcessMemoryLimit=256ULL*1024*1024;
     if(!SetInformationJobObject(job,JobObjectExtendedLimitInformation,
                                &limits,sizeof(limits))){
+        output="Win32-SetJobLimits:"+std::to_string(GetLastError());
         close(job);close(readpipe);close(writepipe);return false;
     }
     // Never inherit arbitrary original host/SQLite/IPC handles.
@@ -114,11 +123,13 @@ bool execute(const std::string& executable,const CellProcessTask& task,
         FILE_SHARE_READ|FILE_SHARE_WRITE,&attrs,OPEN_EXISTING,
         FILE_ATTRIBUTE_NORMAL,nullptr);
     if(input==INVALID_HANDLE_VALUE){
+        output="Win32-NUL-input:"+std::to_string(GetLastError());
         close(job);close(readpipe);close(writepipe);return false;
     }
     SIZE_T bytes=0;
     (void)InitializeProcThreadAttributeList(nullptr,1,0,&bytes);
     if(!bytes){
+        output="Win32-HandleListSize:"+std::to_string(GetLastError());
         close(input);close(job);close(readpipe);close(writepipe);return false;
     }
     std::vector<unsigned char> backing(bytes);
@@ -131,6 +142,7 @@ bool execute(const std::string& executable,const CellProcessTask& task,
     startup.lpAttributeList=
         reinterpret_cast<LPPROC_THREAD_ATTRIBUTE_LIST>(backing.data());
     if(!InitializeProcThreadAttributeList(startup.lpAttributeList,1,0,&bytes)){
+        output="Win32-InitializeHandleList:"+std::to_string(GetLastError());
         close(input);close(job);close(readpipe);close(writepipe);return false;
     }
     HANDLE allowed[2]={writepipe,input};
@@ -141,18 +153,25 @@ bool execute(const std::string& executable,const CellProcessTask& task,
         CreateProcessW(binary.c_str(),writable.data(),nullptr,nullptr,TRUE,
             CREATE_NO_WINDOW|CREATE_SUSPENDED|EXTENDED_STARTUPINFO_PRESENT,
             nullptr,nullptr,&startup.StartupInfo,&child)!=FALSE;
+    const DWORD creation_error=restricted?GetLastError():0;
     DeleteProcThreadAttributeList(startup.lpAttributeList);
     close(input);
     close(writepipe);
-    if(!started){close(job);close(readpipe);return false;}
+    if(!started){
+        output=restricted?"Win32-CreateProcess:"+std::to_string(creation_error):
+            "Win32-RestrictHandleList:"+std::to_string(creation_error);
+        close(job);close(readpipe);return false;
+    }
     const bool assigned=AssignProcessToJobObject(job,child.hProcess)!=FALSE;
     if(!assigned){
+        output="Win32-AssignProcessJob:"+std::to_string(GetLastError());
         TerminateProcess(child.hProcess,1);
         WaitForSingleObject(child.hProcess,INFINITE);
         close(child.hThread);close(child.hProcess);
         close(job);close(readpipe);return false;
     }
     if(ResumeThread(child.hThread)==static_cast<DWORD>(-1)){
+        output="Win32-ResumeWorker:"+std::to_string(GetLastError());
         TerminateJobObject(job,1);
         WaitForSingleObject(child.hProcess,INFINITE);
         close(child.hThread);close(child.hProcess);
@@ -164,7 +183,11 @@ bool execute(const std::string& executable,const CellProcessTask& task,
     DWORD code=1;
     const bool success=wait==WAIT_OBJECT_0 &&
         GetExitCodeProcess(child.hProcess,&code) && code==0;
-    if(!success)TerminateJobObject(job,1);
+    if(!success){
+        output="Win32-WorkerExitOrTimeout:"+std::to_string(wait)+":"+
+               std::to_string(code);
+        TerminateJobObject(job,1);
+    }
     WaitForSingleObject(child.hProcess,INFINITE);
     // Closing the job terminates any descendant retaining stdout. No child
     // can prolong the caller's post-exit read by keeping its pipe open.
@@ -340,7 +363,8 @@ CellProcessOutcome run_cell_process(const std::string& executable,
     try{
         std::string actual;
         if(!execute(executable,task,deadline,actual))
-            return {false,"OS worker failed, timed out or was terminated"};
+            return {false,actual.empty()?
+                "OS worker failed, timed out or was terminated":actual};
         if(actual!=expected_output(task))
             return {false,"worker returned stale or forged original-world report"};
         return {true,{}};

@@ -352,9 +352,19 @@ static void cross_system_ship_destruction_custody(){
     const auto separation=galactic::nearby_displacement(
         world.find(attacker)->physical_galactic,
         world.find(near_drone)->physical_galactic);
-    CHECK(separation && std::llabs(separation->x_mm)<12000 &&
-          std::llabs(separation->y_mm)<12000 &&
-          std::llabs(separation->z_mm)<12000);
+    if(!separation || std::llabs(separation->x_mm)>=12000 ||
+       std::llabs(separation->y_mm)>=12000 ||
+       std::llabs(separation->z_mm)>=12000){
+        std::cerr<<"SPACE05K original post-gate separation diagnostic: "
+                 <<"ship system="<<world.find(attacker)->system_id
+                 <<" drone system="<<world.find(near_drone)->system_id
+                 <<" separation_mm="<<(separation?std::to_string(separation->x_mm):"overflow")
+                 <<","<<(separation?std::to_string(separation->y_mm):"overflow")
+                 <<","<<(separation?std::to_string(separation->z_mm):"overflow")
+                 <<" ship_local_x="<<world.find(attacker)->position.x
+                 <<" drone_local_x="<<world.find(near_drone)->position.x<<"\n";
+        CHECK(false && "cross-system physical separation not within weapon reach");
+    }
     const auto ore=world.total_ore();
     const auto entities=world.entities().size();
     const auto npcs=world.npc_records().size();
@@ -787,7 +797,9 @@ int main(int argc,char** argv){
         CHECK(argc==3 && argv[1] && argv[2]);
         const spatial::CellProcessTask task{
             "spatial/v2/s1/q0,0,0/c0,0,0","worker-A",1,1234567,2,1};
-        CHECK(spatial::run_cell_process(argv[1],task).passed);
+        const auto first_probe=spatial::run_cell_process(argv[1],task);
+        if(!first_probe.passed)throw std::runtime_error(
+            "initial native cell worker: "+first_probe.detail);
         CHECK(!spatial::run_cell_process(argv[2],task,
             std::chrono::milliseconds(50)).passed);
         galaxy_and_probes(root);

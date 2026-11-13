@@ -124,7 +124,10 @@ def main():
             proc.stdin.flush()
             vertical=await_frame(pending,f"PFRAME|1|{session}|5|")
             assert int(vertical[4])==int(p[4]) and vertical[5]==p[5]
-            assert int(vertical[15])>int(ack[7])
+            # Native PSTEP is a receipt at an already-committed source
+            # tick; it must NOT be made to advance the autonomous clock.
+            # SQLite generation and one-use receipt do advance.
+            assert int(vertical[15])>=int(ack[7])
             assert int(vertical[16])>int(ack[8])
             assert int(vertical[26])==int(vertical[15])
             assert int(vertical[27])>0 and int(vertical[27])!=int(ack[9])

@@ -39,7 +39,8 @@ int main(int argc,char** argv){
                         static_cast<std::uint8_t>(id%3)};
                     const auto result=run_cell_process(
                         binary,request,std::chrono::milliseconds(2000));
-                    CHECK(result.passed);
+                    if(!result.passed)throw std::runtime_error(
+                        "native four-cell worker: "+result.detail);
                     return std::chrono::duration<double,std::milli>(
                         std::chrono::steady_clock::now()-start).count();
                 }));

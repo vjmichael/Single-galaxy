@@ -80,7 +80,9 @@ static void up(PersistentWorld& w,EntityId ship,const PlanetarySiteKey& key,
 int main(int argc,char** argv) {
  try {
     const bool d7=argc==2 && std::string(argv[1])=="--d7";
-    if(argc!=1 && !d7)return 2;
+    const bool e6=argc==2 && std::string(argv[1])=="--e6";
+    const bool advanced=d7 || e6;
+    if(argc!=1 && !advanced)return 2;
     const auto chosen=choose(d7);
     const PlanetarySiteKey key{chosen.body,chosen.lat,chosen.lon,1};
     const auto folder=fs::temp_directory_path()/
@@ -101,6 +103,13 @@ int main(int argc,char** argv) {
         AsteroidClass::Silicate,30,2500);
     seed.ensure_physical_celestial_systems();
     seed.ensure_ship_frame_registry();
+    if(advanced) {
+        // v127+ snapshots require every original entity to have its immutable
+        // v120 galactic position. Do this on the SAME world before enabling
+        // planetary source/ecology, never bypass entity validation.
+        seed.enable_native_galactic_physics({{chosen.system,
+            galactic::Point{{0,100000},{0,100000},{0,100000}}}});
+    }
     if(d7) {
         // A distinct, actual funded v127 source from the ORIGINAL immutable
         // planet at genesis. This is the only geological inventory available
@@ -110,6 +119,13 @@ int main(int argc,char** argv) {
             chosen.body,{6000,12000,16000,4000});
         seed.place_planetary_region_genesis(
             chosen.body,chosen.lat,chosen.lon,{6000,12000,16000,4000});
+        seed.enable_physical_planetary_environment();
+        seed.enable_planetary_source_custody();
+        seed.enable_planetary_ecology();
+    } else if(e6) {
+        // Indoor production consumes the real site/shuttle water and
+        // nutrients, not synthetic geological water in a second ledger.
+        seed.ensure_planetary_genesis_manifest();
         seed.enable_physical_planetary_environment();
         seed.enable_planetary_source_custody();
         seed.enable_planetary_ecology();
@@ -409,7 +425,7 @@ int main(int argc,char** argv) {
     CHECK(w.start_planetary_surface_utility(7,ship,key,81400,builder));
     CHECK(!w.start_planetary_surface_utility(7,ship,key,81400,builder));
     CHECK(w.world().total_ore()==initial_mass);
-    CHECK(d7 || w.world().canonical_state().rfind("galaxy-kernel-v110|",0)==0);
+    CHECK(advanced || w.world().canonical_state().rfind("galaxy-kernel-v110|",0)==0);
     w.steps(10);
     CHECK(w.pause_planetary_surface_utility(7,ship,key,true));
     const auto progress=w.world().planetary_sites().at(key).utility_progress;
@@ -420,7 +436,7 @@ int main(int argc,char** argv) {
     const auto before_handover=w.world().planetary_sites().at(key);
     CHECK(before_handover.utility_phase==1);
     const auto historical_v110=w.world().canonical_state();
-    CHECK(d7 || historical_v110.rfind("galaxy-kernel-v110|",0)==0);
+    CHECK(advanced || historical_v110.rfind("galaxy-kernel-v110|",0)==0);
     CHECK(Simulation::from_snapshot(historical_v110).canonical_state()==
           historical_v110);
     // Native backward-compatibility: a pre-relief v110 utility job remains
@@ -497,7 +513,7 @@ int main(int argc,char** argv) {
     replay.actor=ship;
     replay.action=Action::Thrust;
     CHECK(!w.submit(replay)); // host cannot reuse immutable relief proof
-    CHECK(d7 || w.world().canonical_state().rfind("galaxy-kernel-v112|",0)==0);
+    CHECK(advanced || w.world().canonical_state().rfind("galaxy-kernel-v112|",0)==0);
     CHECK(Simulation::from_snapshot(w.world().canonical_state()).state_hash()==
           w.world().state_hash());
     // A forged last replacement without its real chain must be rejected.
@@ -603,7 +619,7 @@ int main(int argc,char** argv) {
         CHECK(service.world().planetary_sites().at(key).housing_modules==0);
         CHECK(service.world().total_ore()==mass_before);
         const auto begun=service.world().canonical_state();
-        CHECK(d7 || begun.rfind("galaxy-kernel-v117|",0)==0);
+        CHECK(advanced || begun.rfind("galaxy-kernel-v117|",0)==0);
         CHECK(Simulation::from_snapshot(begun).canonical_state()==begun);
         service.steps(12);
         CHECK(service.pause_planetary_service_build(
@@ -979,7 +995,7 @@ int main(int argc,char** argv) {
           pending_farm->production_progress[0]==0 &&
           pending_farm->production_order_ids[0]==81800 &&
           pending_farm->production_phases[1]==0);
-    CHECK(d7 || w.world().canonical_state().rfind("galaxy-kernel-v113|",0)==0);
+    CHECK(advanced || w.world().canonical_state().rfind("galaxy-kernel-v113|",0)==0);
     CHECK(Simulation::from_snapshot(w.world().canonical_state()).state_hash()==
           w.world().state_hash());
     const auto mid_copy=(folder/"production_midbuild.sqlite").string();
@@ -1042,7 +1058,7 @@ int main(int argc,char** argv) {
           changed_supervisor->production_order_ids[0]==81800 &&
           changed_supervisor->production_handover_count[0]==1 &&
           changed_supervisor->production_last_handover_id[0]==81900);
-    CHECK(d7 || w.world().canonical_state().rfind("galaxy-kernel-v114|",0)==0);
+    CHECK(advanced || w.world().canonical_state().rfind("galaxy-kernel-v114|",0)==0);
     CHECK(w.world().state_hash()==twin.world().state_hash());
     // Inactive visitor duty never resumes; the real replacement supervises.
     w.steps(28);twin.steps(28);
@@ -1208,6 +1224,7 @@ int main(int argc,char** argv) {
                     "shuttle, ascent, ship goods and SQLite replay PASS\n";
         return 0;
     }
+    if(e6) {
     // E6: now exercise the ACTUAL fully built/staffed farm in its original
     // SQLite world. A copied journal isolates new v130 ecological migration
     // from the historical WO3 source-contract checks above.
@@ -1272,6 +1289,7 @@ int main(int argc,char** argv) {
               restarted.world().total_ore()==conserved &&
               restarted.world().planetary_sites().at(key).
                   ecology_controlled_batches==after.ecology_controlled_batches);
+    }
     }
     std::cout<<"WO3-C/D original qualified utility and physical farm construction/SQLite PASS\n";
     return 0;
