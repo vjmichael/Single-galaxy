@@ -63,6 +63,14 @@ INDUSTRY=(
 MULTICELL=(
     "galaxy_native_galactic_supervisor_1024",
     "galaxy_native_cell_process_stress",
+    # 4 independent real OS process lanes x 1000 starts; not merely
+    # the 80-launch smoke test. This is custody load, not four DB writers.
+    "galaxy_native_cell_process_long_stress",
+)
+CUSTODY=(
+    "galaxy_server_dx_supervisor",
+    "galaxy_server_dx_sqlite_recovery",
+    "galaxy_sgdx03_godot_native_bridge",
 )
 GODOT=(
     "galaxy_stage6f5e_godot_tile_window",
@@ -81,6 +89,9 @@ GROUPS={
     "surface_and_native_recovery": SURFACE,
     "industry_and_logistics": INDUSTRY,
     "multicell_original_custody": MULTICELL,
+    # The ordinary Stage 6 native receipt must not appear green when the
+    # real OS guardian / process-tree / original SQLite bridge fails later.
+    "process_custody_and_recovery": CUSTODY,
     "godot_source_only": GODOT,
 }
 
@@ -123,8 +134,8 @@ def main():
             "status":"blocked","source":str(src),"build":str(build),
             "config":args.config,"limitations":[
                 "No installed Windows human or physical Radeon acceptance",
-                "No independent Windows SCM/Job kernel or Linux cgroup proof",
-                "No full multi-cell server/long-duration production acceptance",
+                "Hosted SGDX/Job/process-tree tests are not physical SCM or delegated Linux cgroup proof",
+                "No full multi-cell production server/load or release acceptance",
                 "A CTest PASS is native evidence only, not release authorization",
             ],"phases":{}}
     if not (src/"CMakeLists.txt").is_file() or not (build/"CMakeCache.txt").is_file():
@@ -179,7 +190,7 @@ def main():
         report["blocker"]="Invalid CTest JSON: "+str(e)
         receipt(dest,report)
         return 2
-    required=set(CORE+SOURCE_SURVEY+SURFACE+INDUSTRY+MULTICELL)
+    required=set(CORE+SOURCE_SURVEY+SURFACE+INDUSTRY+MULTICELL+CUSTODY)
     missing=sorted(required-registered)
     report["missing_native_tests"]=missing
     if missing:

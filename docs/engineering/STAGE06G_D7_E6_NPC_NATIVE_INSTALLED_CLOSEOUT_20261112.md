@@ -1,5 +1,16 @@
 # ACTIVE STAGE 6 FEATURE-CLOSEOUT PLAN — 2026-11-12
 
+## 2026-11-13 D7/E6/F/G original acceptance reconciliation (newer evidence)
+
+- Original run [#43476579404](https://github.com/vjmichael/Single-galaxy/actions/runs/43476579404) at exact SHA `db3ebe89321c1336783583d95d50cc615478a15b`: **Linux original-source native batch passed all mandatory groups**, including D7 full 1,000kg two-voyage freight, E6 staffed ecology, F named-NPC movement and SQLite/1,024-tick four-cell supervisor endurance. The original v85 historical-producer/SQLite attestation succeeded. This is native source acceptance, **not installed gameplay/physical GPU acceptance**.
+- The separate Linux SGDX-03 guardian/Godot bridge then failed because `tests/SGDX03GodotInteractiveTests.py` ignored the now-mandatory original `ONBOARD` read-only production frame. Two other SGDX checks passed; no worker-escape or SQLite custody failure was shown. The Windows job at `db3ebe8` was **cancelled**, so do not infer cross-platform completion.
+- Repair [`ee07b42`](https://github.com/vjmichael/Single-galaxy/commit/ee07b42d03100389305d2cec402a1fa5ea4bb92d) parses exactly one `ONBOARD` frame for the correct request/session/ship/tick/generation, rejects duplicates, and checks read-only inventory/source flags. Nothing about the original kernel writer, release authorization or security policy was weakened.
+- G acceptance script now requires not just the 1,024 original-world ticks, but the real **4 x 1,000 OS process launches**, native SGDX guardian/crash/restart, original SQLite restart and Godot/native pipe bridge in its **single machine-readable exact-SHA receipt**. A native `PASS` without those tests is forbidden. Worker-stress 300-second suite limit is aggregate only; per-worker deadlines remain strict.
+- Remaining Stage 6 gates: successful matching **Windows and Linux** native + SGDX/SQLite original receipts at the **same final SHA**; Linux delegated cgroup containment and genuine physical-Windows SCM/Job evidence beyond hosted per-worker tests; production-scale cross-cell load/OS crash/recovery; separate installed/UI/physical Radeon when appropriate. E6/F feature source can advance without repeated physical GPU validation.
+- No merge, release, unsigned NSIS installation or physical GPU acceptance authorized.
+
+
+
 ## 2026-11-13 evidence update (supersedes the earlier provisional native status)
 
 The original run [#53](https://github.com/vjmichael/Single-galaxy/actions/runs/43455824013) on source `64f3c6a` compiled on Windows and Linux; each ran **38/39 native tests successfully**. The sole failure was D7's positive freight scenario before mining completed: original command ID 1, tick 1, `InvalidArgument`. It was a legacy 80-tonne `Mine` request against snapshot v126's mandatory one-tonne mining, not a missing receipt. The **current repair** is committed on the same Stage 6 branch at `b1272a2`, with finite fitted drill and onboard pilot and unique one-tonne requests. D7 new native outcome remains pending; independent receipt-contract CTest is mandatory in consolidated batch. Original historical v85 SQLite, E6, F, G and native worker custody gates passed at the prior SHA but **must reconcile at a single new SHA**. Installed-human and physical GPU gates remain separate; no repeated Radeon check blocks feature work.

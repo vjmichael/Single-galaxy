@@ -2189,7 +2189,7 @@ if(BUILD_TESTING)
       $<TARGET_FILE:galaxy_native_cell_fork_fence_worker>
       1000)
   set_tests_properties(galaxy_native_cell_process_long_stress
-    PROPERTIES TIMEOUT 120)
+    PROPERTIES TIMEOUT 300 LABELS "stage6;space;native;process;custody;endurance")
 endif()
 
 # SPACE-04C/04D/05B: native high-order coordinates, 3D probes and bounded
