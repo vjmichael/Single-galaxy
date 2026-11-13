@@ -140,12 +140,35 @@ void audit(const fs::path& temp,const std::string& source,bool old){
 }
 int main(int argc,char** argv){
  try{
-  CHECK(argc==2 && argv[1] &&
-       (std::string(argv[1])=="--current" || fs::is_regular_file(argv[1])));
+  CHECK(argv[1] &&
+       ((argc==2 && (std::string(argv[1])=="--current" ||
+                    fs::is_regular_file(argv[1]))) ||
+        (argc==3 && std::string(argv[1])=="--source-produced" &&
+         argv[2] && fs::is_regular_file(argv[2]))));
   const auto temp=fs::temp_directory_path()/("s6h4_"+std::to_string(
        std::chrono::steady_clock::now().time_since_epoch().count()));
   fs::create_directories(temp);Cleanup cleanup{temp};
-  if(std::string(argv[1])!="--current")audit(temp,argv[1],true);
+  if(argc==3) {
+   // SOURCE-AUTHENTICATED historical v86..v135 path. The caller MUST first
+   // verify the original producer SHA, executable, native-test outcomes and
+   // recorded SQLite hash using Stage06H4NativeCompatibility.py. This narrow
+   // entry point refuses fabricated version 85 or modern v136+ masquerading
+   // as vintage compatibility evidence.
+   const std::string path=argv[2];
+   const auto sample=inspect(path);
+   const std::string prefix="galaxy-kernel-v";
+   CHECK(sample.canonical.compare(0,prefix.size(),prefix)==0);
+   const auto delimiter=sample.canonical.find('|',prefix.size());
+   CHECK(delimiter!=std::string::npos && delimiter-prefix.size()<=3 &&
+         delimiter>prefix.size());
+   for(std::size_t i=prefix.size();i<delimiter;++i)
+    CHECK(sample.canonical[i]>='0' && sample.canonical[i]<='9');
+   const int version=std::stoi(sample.canonical.substr(
+       prefix.size(),delimiter-prefix.size()));
+   CHECK(version>=86 && version<=135);
+   audit(temp,path,false);
+   CHECK(inspect(path).canonical==sample.canonical);
+  }else if(std::string(argv[1])!="--current")audit(temp,argv[1],true);
   else{
    const auto name=(temp/"current.sqlite").string();
    {
