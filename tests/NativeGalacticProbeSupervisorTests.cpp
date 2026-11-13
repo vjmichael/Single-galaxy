@@ -635,31 +635,64 @@ static void multi_cell_supervision(const fs::path& root,
 // failpoint/recovery and repeated supervisor restarts. It must not describe
 // itself as four independent parallel physical simulation writers.
 static void sustained_multi_cell_endurance(const fs::path& root,
-    const std::string& native_worker, int endurance_ticks){
+    const std::string& native_worker, int endurance_ticks,
+    bool multiple_systems=false){
     CHECK(endurance_ticks==256 || endurance_ticks==1024);
-    const auto db=(root/"endurance.sqlite").string();
+    const auto db=(root/(multiple_systems?
+        "multisystem-endurance.sqlite":"endurance.sqlite")).string();
     Simulation simulation(77113);
     std::vector<EntityId> ships;
     for(int i=0;i<4;++i){
-        const auto ship=simulation.add_colony_ship(
-            static_cast<PlayerId>(20+i),
-            {static_cast<std::int64_t>(i)*200000000,0},100,8);
-        // Prove finite ore and NPC identities through 256 or 1024 ticks;
-        // provide enough ordinary life support that this regression tests
-        // worker conservation, not intentionally induced starvation.
-        simulation.provision_colony_genesis(
-            ship,100000,100000,100000,100000,100000);
-        simulation.add_asteroid(
-            {static_cast<std::int64_t>(i)*200000000+1000,0},100);
+        EntityId ship=0;
+        if(multiple_systems && i>0){
+            // Separate original star systems share ONE original SQLite
+            // world, but have distinct physically stationed ship actors.
+            // These are authentic genesis assets, not synthetic worker
+            // projections or separate save files.
+            const auto system=static_cast<std::uint32_t>(i+1);
+            simulation.add_system(system);
+            const auto station=simulation.add_station_in_system(system,{0,0});
+            ship=simulation.spawn_ship_docked(
+                static_cast<PlayerId>(20+i),station,100,100);
+            simulation.add_asteroid_in_system(system,{1000,0},100);
+        }else{
+            ship=simulation.add_colony_ship(
+                static_cast<PlayerId>(20+i),
+                {static_cast<std::int64_t>(i)*200000000,0},100,8);
+            // A genuine finite life-support founder remains one of the
+            // four authoritative cell occupants throughout the test.
+            simulation.provision_colony_genesis(
+                ship,100000,100000,100000,100000,100000);
+            simulation.add_asteroid(
+                {static_cast<std::int64_t>(i)*200000000+1000,0},100);
+        }
         ships.push_back(ship);
     }
     PersistentWorld w(db,std::move(simulation));
     w.enable_native_3d_physics();
-    CHECK(galactic::register_original_system(db,w,1,
-        galactic::Point{{12,1234},{34,5678},{56,9012}},
-        "space-05g-original-star",true));
+    if(multiple_systems){
+        for(int i=0;i<4;++i){
+            const auto system=static_cast<std::uint32_t>(i+1);
+            const galactic::Point origin{
+                {12+i,1234},{34+i,5678},{56+i,9012}};
+            CHECK(galactic::register_original_system(db,w,system,origin,
+                "space-05g-multisystem-"+std::to_string(system),true));
+        }
+    }else{
+        CHECK(galactic::register_original_system(db,w,1,
+            galactic::Point{{12,1234},{34,5678},{56,9012}},
+            "space-05g-original-star",true));
+    }
     w.enable_native_galactic_physics(db);
     w.enable_native_3d_probes();
+    std::set<std::uint32_t> original_systems;
+    for(const auto ship:ships){
+        const auto* physical=w.world().find(ship);
+        CHECK(physical && physical->type==EntityType::Ship);
+        original_systems.insert(physical->system_id);
+        CHECK(galactic::original_ship_galactic_position(db,w,ship));
+    }
+    CHECK(original_systems.size()==(multiple_systems?4U:1U));
     const auto baseline_ore=w.world().total_ore();
     const auto baseline_npcs=w.world().npc_records().size();
     const auto baseline_entities=w.world().entities().size();
@@ -754,7 +787,8 @@ static void sustained_multi_cell_endurance(const fs::path& root,
         // Checkpointed independent native SQLite recovery while the
         // original supervisor continues to serve other cells.
         if((i+1)%64==0){
-            const auto copy=(root/("endurance-"+std::to_string(i)+".sqlite")).string();
+            const auto copy=(root/((multiple_systems?"multisystem-recovery-":
+                "endurance-")+std::to_string(i)+".sqlite")).string();
             PersistentWorld::recover_copy(db,copy);
             ++independently_recovered;
             PersistentWorld recovered(copy,Simulation(1));
@@ -773,12 +807,25 @@ static void sustained_multi_cell_endurance(const fs::path& root,
     }
     CHECK(selected_cells.size()==4);
     for(const auto& item:selected_cells)CHECK(item.second>0);
+    if(multiple_systems){
+        std::set<std::uint32_t> selected_systems;
+        for(const auto& [name,count]:selected_cells){
+            CHECK(count>0);
+            const auto parsed=spatial::parse_scope(name);
+            CHECK(parsed && parsed->hierarchical);
+            selected_systems.insert(parsed->system);
+        }
+        CHECK(selected_systems==original_systems &&
+              selected_systems.size()==4);
+    }
     CHECK(restarted_hosts==static_cast<std::size_t>((endurance_ticks-1)/32));
     CHECK(independently_recovered==static_cast<std::size_t>(endurance_ticks/64));
     CHECK(deliberate_rollbacks==
           static_cast<std::size_t>((endurance_ticks-1-17)/37+1));
     std::sort(tick_ms.begin(),tick_ms.end());
-    std::cout<<"SPACE-05G original four-cell sustained native tick count="
+    std::cout<<(multiple_systems?"SPACE-05K original four-system shared-SQLite "
+                      "native tick count=":
+                      "SPACE-05G original four-cell sustained native tick count=")
              <<tick_ms.size()<<" p50_ms="<<tick_ms[tick_ms.size()/2]
              <<" p95_ms="<<tick_ms[tick_ms.size()*95/100]
              <<" max_ms="<<tick_ms.back()
@@ -820,6 +867,10 @@ int main(int argc,char** argv){
             endurance_ticks=(value=="1024")?1024:256;
         }
         sustained_multi_cell_endurance(root,argv[1],endurance_ticks);
+        if(const char* selected=std::getenv("SPACE_MULTISYSTEM_TICKS")){
+            CHECK(std::string(selected)=="256");
+            sustained_multi_cell_endurance(root,argv[1],256,true);
+        }
         std::cout<<"PASS exact original galactic 3D, probe persistence and "
                     "durable multi-cell single-writer supervision\n";
         return 0;

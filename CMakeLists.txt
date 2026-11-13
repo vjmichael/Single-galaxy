@@ -2205,6 +2205,18 @@ if(BUILD_TESTING)
            COMMAND galaxy_native_galactic_supervisor_tests
              $<TARGET_FILE:galaxy_native_cell_worker>
              $<TARGET_FILE:galaxy_native_cell_hang_worker>)
+  # S6-H1: four separately registered real star systems, their own original
+  # physically occupied cells, one shared PersistentWorld SQLite writer.
+  # This asserts durable cross-system scheduling and cannot imply four
+  # independent mutable galaxy writers, interstellar travel, or GPU play.
+  add_test(NAME galaxy_native_galactic_supervisor_multisystem_256
+           COMMAND galaxy_native_galactic_supervisor_tests
+             $<TARGET_FILE:galaxy_native_cell_worker>
+             $<TARGET_FILE:galaxy_native_cell_hang_worker>)
+  set_tests_properties(galaxy_native_galactic_supervisor_multisystem_256
+    PROPERTIES ENVIRONMENT "SPACE_MULTISYSTEM_TICKS=256"
+               TIMEOUT 600
+               LABELS "space;original-world;multi-system;sqlite;endurance")
   if(SPACE_ENABLE_1024_ENDURANCE)
     add_test(NAME galaxy_native_galactic_supervisor_1024
              COMMAND galaxy_native_galactic_supervisor_tests
