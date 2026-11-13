@@ -5,6 +5,7 @@
 #include "galaxy/Persistence.hpp"
 #include "galaxy/NpcAppearanceGenome.hpp"
 #include "galaxy/RegionalModeAuthority.hpp"
+#include "galaxy/GalacticSystemRegistry.hpp""
 #include <sqlite3.h>
 #include <chrono>
 #include <filesystem>
@@ -81,8 +82,8 @@ int main(int argc,char** argv) {
  try {
     const bool d7=argc==2 && std::string(argv[1])=="--d7";
     const bool e6=argc==2 && std::string(argv[1])=="--e6";
-    const bool advanced=d7 || e6;
-    if(argc!=1 && !advanced)return 2;
+    const bool advanced=d7;
+    if(argc!=1 && !d7 && !e6)return 2;
     const auto chosen=choose(d7);
     const PlanetarySiteKey key{chosen.body,chosen.lat,chosen.lon,1};
     const auto folder=fs::temp_directory_path()/
@@ -119,13 +120,6 @@ int main(int argc,char** argv) {
             chosen.body,{6000,12000,16000,4000});
         seed.place_planetary_region_genesis(
             chosen.body,chosen.lat,chosen.lon,{6000,12000,16000,4000});
-        seed.enable_physical_planetary_environment();
-        seed.enable_planetary_source_custody();
-        seed.enable_planetary_ecology();
-    } else if(e6) {
-        // Indoor production consumes the real site/shuttle water and
-        // nutrients, not synthetic geological water in a second ledger.
-        seed.ensure_planetary_genesis_manifest();
         seed.enable_physical_planetary_environment();
         seed.enable_planetary_source_custody();
         seed.enable_planetary_ecology();
@@ -1232,8 +1226,21 @@ int main(int argc,char** argv) {
         const auto ecology_db=(folder/"e6_original_positive_farm.sqlite").string();
         PersistentWorld::recover_copy(db,ecology_db);
         PersistentWorld ecology(ecology_db,Simulation(9316));
-        const auto conserved=ecology.world().total_ore();
+        const auto original_mass=ecology.world().total_ore();
+        const auto original_npcs=ecology.world().npc_records().size();
+        ecology.enable_native_3d_physics();
+        const galactic::Point source_star{{0,100000},{0,100000},{0,100000}};
+        CHECK(galactic::register_original_system(
+            ecology_db,ecology,chosen.system,source_star,
+            "s6e6-original-star-migration",true));
+        ecology.enable_native_galactic_physics(ecology_db);
+        ecology.ensure_planetary_genesis_manifest();
+        ecology.ensure_physical_planetary_environment();
+        ecology.ensure_planetary_source_custody();
         ecology.ensure_planetary_ecology();
+        CHECK(ecology.world().total_ore()==original_mass &&
+              ecology.world().npc_records().size()==original_npcs);
+        const auto conserved=ecology.world().total_ore();
         CHECK(ecology.world().planetary_ecology_enabled());
         CHECK(ecology.world().planetary_sites().at(key).farm);
         const auto before=ecology.world().planetary_sites().at(key);
@@ -1291,7 +1298,8 @@ int main(int argc,char** argv) {
                   ecology_controlled_batches==after.ecology_controlled_batches);
     }
     }
-    std::cout<<"WO3-C/D original qualified utility and physical farm construction/SQLite PASS\n";
+    std::cout<<(e6?"S6-E6 original staffed real-resource farm/SQLite PASS":
+                 "WO3-C/D original qualified utility and physical farm construction/SQLite PASS")<<"\n";
     return 0;
  }catch(const std::exception& e){std::cerr<<e.what()<<"\n";return 1;}
 }
