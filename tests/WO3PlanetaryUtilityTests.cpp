@@ -5,7 +5,7 @@
 #include "galaxy/Persistence.hpp"
 #include "galaxy/NpcAppearanceGenome.hpp"
 #include "galaxy/RegionalModeAuthority.hpp"
-#include "galaxy/GalacticSystemRegistry.hpp""
+#include "galaxy/GalacticSystemRegistry.hpp"
 #include <sqlite3.h>
 #include <chrono>
 #include <filesystem>
@@ -59,14 +59,38 @@ static Choice choose(bool require_geology=false) {
     }
     throw std::runtime_error("missing real buildable site");
 }
+// Match the authoritative receipt for THIS command in THIS committed tick.
+// The original simulation may produce additional NPC/host events, so its last
+// global event is not necessarily the player's command. Never accept a stale
+// historical receipt or a non-Applied outcome.
+static void step_applied(PersistentWorld& w,std::uint64_t command_id) {
+    const auto before=w.world().events().size();
+    const auto due_tick=w.world().tick()+1;
+    w.step();
+    const auto& events=w.world().events();
+    CHECK(events.size()>=before);
+    unsigned matches=0;
+    std::string delta;
+    for(std::size_t i=before;i<events.size();++i) {
+        const auto& e=events[i];
+        delta+=" [id="+std::to_string(e.command_id)+
+               ",tick="+std::to_string(e.tick)+
+               ",result="+std::to_string(static_cast<int>(e.result))+"]";
+        if(e.command_id==command_id && e.tick==due_tick &&
+           e.result==Outcome::Applied)++matches;
+    }
+    if(matches!=1)
+        throw std::runtime_error("WO3/D7 original command "+
+            std::to_string(command_id)+" at tick "+
+            std::to_string(due_tick)+" has "+std::to_string(matches)+
+            " exact Applied receipt(s); new journal events:"+delta);
+}
 static void act(PersistentWorld& w,EntityId ship,std::uint64_t id,Action kind,
                 EntityId target=0,std::int64_t amount=1,int opt=0) {
     Command c{};c.id=id;c.sequence=id;c.execute_tick=w.world().tick()+1;
     c.issuer=7;c.actor=ship;c.target=target;c.action=kind;
     c.amount=amount;c.thrust_x=opt;
-    CHECK(w.submit(c));w.step();
-    CHECK(w.world().events().back().command_id==id &&
-          w.world().events().back().result==Outcome::Applied);
+    CHECK(w.submit(c));step_applied(w,id);
 }
 static void down(PersistentWorld& w,EntityId ship,const PlanetarySiteKey& key,
                  std::uint64_t id) {
@@ -147,8 +171,8 @@ int main(int argc,char** argv) {
     auto operator_id=slots[0].suggested_npc;
     auto assignment=workforce02::approved_original_assignment(
         w.world(),7,ship,orbital,false,operator_id,22,true);
-    CHECK(assignment && w.submit(*assignment));w.step();
-    CHECK(w.world().events().back().result==Outcome::Applied);
+    CHECK(assignment && w.submit(*assignment));
+    step_applied(w,assignment->id);
     // Physically conserve original mined ore through the downstream
     // housing/shuttle/utility module construction, not a free rack.
     act(w,ship,23,Action::FabricateModule,0,16);
@@ -164,8 +188,8 @@ int main(int argc,char** argv) {
         // Diagnose REAL WO2 practice admission: distinguish missing
         // original workshop/crew/power from SQLite command refusal.
         CHECK(training);
-        CHECK(w.submit(*training));w.step();
-        CHECK(w.world().events().back().result==Outcome::Applied);
+        CHECK(w.submit(*training));
+        step_applied(w,training->id);
     }
     CHECK(w.world().workshop_trade_certified(builder,WorkshopTrade::Shape));
     // The original WO2 practice gate REQUIRES the named trainee to be an
@@ -195,8 +219,8 @@ int main(int argc,char** argv) {
         // Diagnose REAL WO2 practice admission: distinguish missing
         // original workshop/crew/power from SQLite command refusal.
         CHECK(training);
-        CHECK(w.submit(*training));w.step();
-        CHECK(w.world().events().back().result==Outcome::Applied);
+        CHECK(w.submit(*training));
+        step_applied(w,training->id);
     }
     CHECK(w.world().workshop_trade_certified(
         trained_partner,WorkshopTrade::Shape));
@@ -219,8 +243,8 @@ int main(int argc,char** argv) {
         // Diagnose REAL WO2 practice admission: distinguish missing
         // original workshop/crew/power from SQLite command refusal.
         CHECK(training);
-        CHECK(w.submit(*training));w.step();
-        CHECK(w.world().events().back().result==Outcome::Applied);
+        CHECK(w.submit(*training));
+        step_applied(w,training->id);
     }
     CHECK(w.world().workshop_trade_certified(
         trained_visitor,WorkshopTrade::Shape));
