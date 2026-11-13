@@ -2283,7 +2283,8 @@ bool Simulation::submit(const Command& c) {
     if(c.action==Action::RefineOre || c.action==Action::FabricateModule ||
        c.action==Action::ConstructOutpost || c.action==Action::RefineMineral ||
        c.action==Action::FabricateMaterialModule) {
-        if(c.thrust_x!=0 || c.thrust_y!=0 || c.amount<1 ||
+        if((c.thrust_x!=0 && !(c.action==Action::RefineMineral && c.thrust_x==1)) ||
+           c.thrust_y!=0 || c.amount<1 ||
            (c.action==Action::RefineMineral ? c.amount>100000 : c.amount>1000) ||
            (c.action==Action::ConstructOutpost && c.amount!=1) ||
            (c.action==Action::RefineMineral ? mineral_name(c.target)==nullptr ||
@@ -6172,12 +6173,38 @@ Event Simulation::execute(const Command& c) {
                 if(!phase || c.target==9 || c.amount<1 || c.amount>100000){result.result=Outcome::InvalidArgument;return result;}
                 const auto recipe=separation(phase);
                 if(!recipe.a){result.result=Outcome::InvalidArgument;return result;}
-                auto& source=industry.minerals_kg[phase];
-                if(source<c.amount){result.result=Outcome::NoResources;return result;}
+                // Source choice is explicit in the owner's submitted command:
+                // 0 = traditional mineral cargo already aboard this ship;
+                // 1 = the original built, owned station refinery at this
+                // exact docked hull. Never silently take material from a
+                // separate physical station to cover a ship stock shortage.
+                std::map<std::string,std::int64_t>* stock=&industry.minerals_kg;
+                if(c.thrust_x==1){
+                    const auto station=actor.dock_station;
+                    const auto plant=station_refineries_.find(station);
+                    const auto person=player_people_.find(c.issuer);
+                    if(actor.dock_state!=DockState::Docked || !station ||
+                       !built_outposts_.count(station) ||
+                       built_outposts_.at(station).source_colony_ship!=c.actor ||
+                       plant==station_refineries_.end() ||
+                       plant->second.owner!=c.issuer ||
+                       plant->second.source_ship!=c.actor ||
+                       plant->second.assigned_workers<1 ||
+                       person==player_people_.end() ||
+                       person->second.state!=PlayerPersonState::AtStation ||
+                       person->second.physical_station!=station){
+                        result.result=Outcome::Unauthorized;return result;
+                    }
+                    stock=&plant->second.mineral_kg;
+                }
+                auto source_it=stock->find(phase);
+                if(source_it==stock->end() || source_it->second<c.amount){
+                    result.result=Outcome::NoResources;return result;
+                }
                 const auto first=c.amount*recipe.a_permille/1000;
                 const auto second=c.amount*recipe.b_permille/1000;
-                source-=c.amount;
-                if(!source)industry.minerals_kg.erase(phase);
+                source_it->second-=c.amount;
+                if(!source_it->second)stock->erase(source_it);
                 industry.goods_kg[recipe.a]+=first;
                 if(recipe.b)industry.goods_kg[recipe.b]+=second;
                 industry.tailings_kg+=c.amount-first-second;

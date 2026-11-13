@@ -1,5 +1,11 @@
 # S6-D7 — exact command-receipt repair (2026-11-13)
 
+## Original v123+ station-mineral custody integration (2026-11-13)
+
+The original simulation source proves that v123+ geological `Mine` creates tagged physical ore lots rather than the pre-v123 direct ship-mineral credit. Therefore the v127 D7 test's legacy `RefineMineral(12000kg plagioclase)` could not be authorized from newly mined silicate. Source now tests a real existing `BuildStationRefinery` with original modules, technicians and power, original docking/unloading of 30 independently mined tonnes, 30 tagged `RefineStationOre` batches with cooldown, original 12000kg plagioclase inventory and an explicit owner-requested station-source `RefineMineral` operation. The source-mode flag `thrust_x=1` requires a physically docked owner ship, its own commissioned refinery and the registered player at that station; it debits that refinery once before crediting ship goods, never silently consumes unrelated inventory. Legacy `thrust_x=0` ship mineral processing is unchanged. The fitting station is placed outside the original new-outpost 2.5m exclusion radius.
+
+**Verification:** GCC C++20 syntax-only checks of the modified C++ fixture and simulation each passed locally; native linking/CTest and original material conservation/recovery are still pending. This is not Stage 6 acceptance.
+
 ## Native-run reconciliation — 2026-11-13
 
 - Original Windows/Linux Actions run [#53](https://github.com/vjmichael/Single-galaxy/actions/runs/43455824013), **same source SHA `64f3c6a9c584c72dc058baabf6d759fe09e16c4d`**, both compiled; native acceptance was **38/39 on each OS**, with only `galaxy_stage06d7_positive_geological_freight` failing.

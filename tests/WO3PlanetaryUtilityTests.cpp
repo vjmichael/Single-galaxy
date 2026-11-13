@@ -209,7 +209,7 @@ int main(int argc,char** argv) {
     const auto bulk=seed.add_asteroid({2000,0},150);
     const auto silicate=seed.add_geological_asteroid({1000,0},
         AsteroidClass::Silicate,30,2500);
-    const auto fitting_station=d7 ? seed.add_station({0,0}) : EntityId{0};
+    const auto fitting_station=d7 ? seed.add_station({-2000,0}) : EntityId{0};
     seed.ensure_physical_celestial_systems();
     seed.ensure_ship_frame_registry();
     if(advanced) {
@@ -264,15 +264,54 @@ int main(int argc,char** argv) {
     act(w,ship,9,Action::ConstructHabitat,orbital);
     for(int i=1;i<=3;++i)act(w,ship,9+i,Action::TransferHabitatStock,orbital,100,i);
     act(w,ship,13,Action::AssignHabitatResidents,orbital,2);
-    act(w,ship,14,Action::AssignUtilityTechnicians,orbital,1);
+    act(w,ship,14,Action::AssignUtilityTechnicians,orbital,d7?2:1);
     act(w,ship,15,Action::TransferUtilitySpares,orbital,5);
     act(w,ship,16,Action::SetUtilityMaintenance,orbital,1);
     if(d7) {
         for(std::uint64_t i=0;i<30;++i)
             act(w,ship,73000+i,Action::Mine,silicate,1);
-    } else act(w,ship,19,Action::Mine,silicate,30);
-    act(w,ship,20,Action::RefineMineral,10,12000);
-    act(w,ship,21,Action::TransferWorkshopFeed,orbital,1000);
+        // v123+ ore retains exact source/owner/lot custody. The old direct
+        // ship mineral grant no longer exists. A real installed station plant
+        // must consume all 30 tagged silicate tonnes with worker and power.
+        act(w,ship,74001,Action::RequestDock,orbital);
+        w.steps(Simulation::kDockTransitionTicks);
+        CHECK(w.world().find(ship)->dock_state==DockState::Docked);
+        act(w,ship,74002,Action::BuildStationRefinery,orbital);
+        act(w,ship,74003,Action::UnloadOre,orbital,30);
+        CHECK(w.station_player_action(7,orbital,ship,
+            StationPlayerAction::Disembark,0,0,74004));
+        w.steps(35); // real technician and utility-power generation
+        std::vector<std::uint64_t> source_lots;
+        for(const auto& [lot_id,lot]:w.world().station_ore_lots()) {
+            if(lot.rock==silicate && lot.owner==7 &&
+               lot.source_ship==ship && lot.station==orbital &&
+               lot.tonnes==1 && lot.unload_receipt==74003)
+                source_lots.push_back(lot_id);
+        }
+        CHECK(source_lots.size()==30);
+        for(std::size_t i=0;i<source_lots.size();++i) {
+            act(w,ship,75000+static_cast<std::uint64_t>(i),
+                Action::RefineStationOre,orbital,
+                static_cast<std::int64_t>(source_lots[i]));
+            w.steps(4); // original plant cooldown; no free instant output
+        }
+        CHECK(w.world().station_refinery(orbital)->mineral_kg.at(
+            "plagioclase")==12000);
+        // Explicit station-source option: debits actual refinery plagioclase
+        // before original recipe credits 2400kg usable ship aluminum.
+        act(w,ship,20,Action::RefineMineral,10,12000,1);
+        CHECK(w.world().colony_ship(ship)->goods_kg.at("aluminum")==2400);
+        act(w,ship,21,Action::TransferWorkshopFeed,orbital,1000);
+        CHECK(w.station_player_action(7,orbital,ship,
+            StationPlayerAction::Board,0,0,74005));
+        act(w,ship,74006,Action::RequestUndock,orbital);
+        w.steps(Simulation::kDockTransitionTicks);
+        CHECK(w.world().find(ship)->dock_state==DockState::InSpace);
+    } else {
+        act(w,ship,19,Action::Mine,silicate,30);
+        act(w,ship,20,Action::RefineMineral,10,12000);
+        act(w,ship,21,Action::TransferWorkshopFeed,orbital,1000);
+    }
     auto slots=workforce02::plan_original_workshop(w.world(),7,ship,orbital);
     CHECK(slots[0].can_offer_assignment());
     auto operator_id=slots[0].suggested_npc;
