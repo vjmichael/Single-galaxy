@@ -51,6 +51,9 @@ static void seeded(const std::string& db) {
         ship=seed.add_colony_ship(7,{0,0},50,5);
         seed.provision_starter_exploration_scanner(ship);
         seed.ensure_physical_celestial_systems();
+        // v127 may only seal a physically anchored original galaxy.
+        seed.enable_native_galactic_physics({
+            {1,galactic::Point{{0,100000},{0,100000},{0,100000}}}});
         body=first_planet(seed);
         seed.ensure_planetary_genesis_manifest();
         CHECK(seed.planetary_genesis().count(body));
@@ -162,12 +165,30 @@ static void seeded(const std::string& db) {
 }
 static void migration(const std::string& db) {
     cleanup(db);
+    // An old unanchored save must refuse v127, not invent a galaxy frame
+    // from an arbitrary coordinate or manufacture original matter.
+    const auto unanchored=db+".unanchored";
+    cleanup(unanchored);
+    {
+        Simulation old(810,1);
+        old.add_colony_ship(7,{0,0},50,5);
+        old.ensure_physical_celestial_systems();
+        PersistentWorld missing_origin(unanchored,std::move(old));
+        const auto hash=missing_origin.world().state_hash();
+        const auto generation=missing_origin.generation();
+        CHECK(rejects([&]{missing_origin.ensure_planetary_genesis_manifest();}));
+        CHECK(missing_origin.world().state_hash()==hash);
+        CHECK(missing_origin.generation()==generation);
+    }
+    cleanup(unanchored);
     std::int64_t baseline=0;
     std::string historical;
     {
         Simulation legacy(810,1);
         legacy.add_colony_ship(7,{0,0},50,5);
         legacy.ensure_physical_celestial_systems();
+        legacy.enable_native_galactic_physics({
+            {1,galactic::Point{{0,100000},{0,100000},{0,100000}}}});
         CHECK(legacy.planetary_genesis().empty());
         PersistentWorld original(db,std::move(legacy));
         original.steps(3);

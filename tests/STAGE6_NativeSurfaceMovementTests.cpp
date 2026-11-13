@@ -4,6 +4,7 @@
 #include "galaxy/PlanetaryVerticalPhysics.hpp"
 #include "galaxy/PlanetaryAtmosphere.hpp"
 #include "galaxy/Stage6WalkingPatch.hpp"
+#include "galaxy/Stage6ConsolidatedAdmission.hpp"
 #include <algorithm>
 #include <chrono>
 #include <filesystem>
@@ -65,6 +66,9 @@ try {
     seed.ensure_ship_frame_registry();
     seed.enable_native_galactic_physics({
         {selected.system,galactic::Point{{0,100000},{0,100000},{0,100000}}}});
+    // Every v127+ snapshot must carry the complete immutable planet
+    // catalogue before any transport/ground state can promote the schema.
+    seed.ensure_planetary_genesis_manifest();
     const auto origin=seed.total_ore();
     PersistentWorld world(db,std::move(seed));
     CHECK(world.register_player_person(7,ship));
@@ -93,6 +97,8 @@ try {
     CHECK(world.build_planetary_shuttle(7,ship,key));
     CHECK(world.assign_planetary_shuttle_pilot(7,ship,key,crew[2]));
     CHECK(world.load_planetary_shuttle(7,ship,key,ShuttleCargo::Water,10));
+    // Admit original v128-v135 source manifests before native on-foot actions.
+    (void)stage6::consolidated::admit(world);
     // No original player was transported just because an NPC pilot exists.
     CHECK(!world.planetary_surface_move(7,ship,key,0,300,0,82001));
     CHECK(!world.planetary_surface_move(8,ship,key,crew[0],250,0,82001));
@@ -141,7 +147,8 @@ try {
     CHECK(expected_native);
     CHECK(onfoot.surface_pose.latitude_pdeg==expected_native->latitude_pdeg);
     CHECK(onfoot.surface_pose.longitude_pdeg==expected_native->longitude_pdeg);
-    CHECK(world.world().canonical_state().find("galaxy-kernel-v133|")==0);
+    CHECK(world.world().continuous_native_planet_surface());
+    CHECK(world.world().original_surface_atmosphere_enabled());
     const stage6::RenderTileAddress mesh_tile{
         static_cast<std::uint8_t>(std::min<unsigned>(selected.lat/7,4)),
         static_cast<std::uint8_t>(selected.lon/6),1};

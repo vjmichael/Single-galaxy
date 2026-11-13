@@ -21,7 +21,14 @@ static Event perform(PersistentWorld& w,std::uint64_t& seq,EntityId ship,
     c.amount=amount;c.thrust_x=x;c.thrust_y=y;
     CHECK(w.submit(c));w.step();
     const auto result=w.world().events().back();
-    CHECK(result.command_id==c.id&&result.result==Outcome::Applied);
+    if(result.command_id!=c.id||result.result!=Outcome::Applied)
+        throw std::runtime_error(
+            "DOCK09 source action failed: kind="+
+            std::to_string(static_cast<unsigned>(action))+
+            " target="+std::to_string(target)+
+            " amount="+std::to_string(amount)+
+            " receipt="+std::to_string(c.id)+
+            " outcome="+std::to_string(static_cast<unsigned>(result.result)));
     return result;
 }
 static Event select(PersistentWorld& w,std::uint64_t& seq,EntityId ship,
