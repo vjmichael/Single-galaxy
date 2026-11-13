@@ -137,6 +137,20 @@ jobs:
             --output original-evidence/historical-corpus.json \
             --test-names '${{ matrix.test_regex }}' \
             --producer-executables "${EXE[@]}"
+      - name: Independent modern canonical and WAL recovery of historical native SQLite
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          cmake -S . -B original-evidence/current -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON 2>&1 | tee original-evidence/modern-consumer-configure.log
+          cmake --build original-evidence/current --parallel 3 --target galaxy_stage06h4_historical_recovery_tests 2>&1 | tee original-evidence/modern-consumer-build.log
+          python3 tests/Stage06H4NativeCompatibility.py \
+            --manifest original-evidence/historical-corpus.json \
+            --capture-dir original-evidence/sqlite \
+            --source-sha '${{ matrix.source_sha }}' \
+            --consumer original-evidence/current/galaxy_stage06h4_historical_recovery_tests \
+            --executed-tests-successful \
+            --output original-evidence/vintage-to-current-recovery.json
       - name: Retain original historical SQLite, manifests, failure logs
         if: always()
         uses: actions/upload-artifact@v4
@@ -146,6 +160,9 @@ jobs:
             original-evidence/historical-source-sha.txt
             original-evidence/observer-source-sha.txt
             original-evidence/historical-corpus.json
+            original-evidence/vintage-to-current-recovery.json
+            original-evidence/modern-consumer-configure.log
+            original-evidence/modern-consumer-build.log
             original-evidence/sqlite/*.sqlite
             original-evidence/native-original.log
             original-evidence/original-native-tests.xml
