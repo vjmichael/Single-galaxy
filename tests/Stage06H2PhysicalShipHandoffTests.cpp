@@ -45,6 +45,59 @@ static std::pair<std::uint64_t,std::uint64_t> enroll_region(
     const auto state=authority.enroll();
     return {state.generation,state.checkpoint_revision};
 }
+static void retained_source_worker(const fs::path& root,const char* executable){
+    const auto db=(root/"source-retained.sqlite").string();
+    Simulation initial(77116);
+    const auto moving=initial.add_colony_ship(7,{0,0},100,8);
+    const auto resident=initial.add_colony_ship(8,{-50000,0},100,8);
+    initial.provision_colony_genesis(moving,10000,10000,10000,10000,10000);
+    initial.provision_colony_genesis(resident,10000,10000,10000,10000,10000);
+    PersistentWorld w(db,std::move(initial));
+    w.enable_native_3d_physics();
+    constexpr auto edge=galactic::kSectorEdgeMm;
+    CHECK(galactic::register_original_system(db,w,1,
+        galactic::Point{{12,edge-100},{34,1000},{56,1000}},
+        "h2-retain-source",true));
+    w.enable_native_galactic_physics(db);
+    w.enable_native_3d_probes();
+    const auto source_cell=spatial::ship_cell(w.world(),moving);
+    CHECK(source_cell && spatial::ship_cell(w.world(),resident)==source_cell);
+    const auto source=enroll(db,*source_cell,"h2-still-occupied-worker");
+    spatial::NativeMultiCellSupervisor host(db,w);
+    host.register_worker(source);
+    host.use_native_process_workers(executable);
+    Command motion{};motion.id=920001;motion.sequence=920001;
+    motion.execute_tick=w.world().tick()+1;
+    motion.issuer=7;motion.actor=moving;motion.action=Action::Thrust;
+    motion.thrust_x=1;
+    CHECK(host.submit_original_command(motion,"h2-retained-source-thrust"));
+    host.run_next_tick("h2-retained-source-motion");
+    const auto destination=spatial::ship_cell(w.world(),moving);
+    CHECK(destination && !(*destination==*source_cell));
+    CHECK(spatial::ship_cell(w.world(),resident)==source_cell);
+    const auto region=enroll_region(db,*destination);
+    const auto proof=host.reconcile_ship_handoff(moving,*source_cell,*destination,
+        "h2-new-cell-worker",0,region.first,region.second,
+        "h2-occupied-source-transfer",true);
+    CHECK(!proof.source_retired && host.worker_count()==2);
+    CHECK(spatial::worker_may_simulate_cell(db,*source_cell,
+          source.worker,source.epoch,source.region_generation,
+          source.checkpoint_revision));
+    CHECK(spatial::worker_may_simulate_cell(db,*destination,
+          proof.destination.worker,proof.destination.epoch,
+          proof.destination.region_generation,proof.destination.checkpoint_revision));
+    const auto ore=w.world().total_ore();
+    host.run_next_tick("h2-two-original-cells-continue");
+    CHECK(w.world().find(moving) && w.world().find(resident) &&
+          w.world().total_ore()==ore);
+    const auto copy=(root/"source-retained-copy.sqlite").string();
+    PersistentWorld::recover_copy(db,copy);
+    PersistentWorld reopened(copy,Simulation(1));
+    CHECK(reopened.world().canonical_state()==w.world().canonical_state());
+    CHECK(spatial::worker_may_simulate_cell(copy,*source_cell,
+          source.worker,source.epoch,source.region_generation,
+          source.checkpoint_revision));
+}
 static void real_cross_system_arrival(const fs::path& root,const char* executable){
     const auto db=(root/"crosssystem.sqlite").string();
     Simulation initial(77115);
@@ -227,6 +280,7 @@ int main(int argc,char** argv){
         CHECK(count(check,"SELECT COUNT(*) FROM sg_spatial_native_ship")==1);
         CHECK(count(check,"SELECT COUNT(*) FROM sg_spatial_native_transfer WHERE from_scope<>''")>=1);
         sqlite3_close(check);
+        retained_source_worker(root,argv[1]);
         real_cross_system_arrival(root,argv[1]);
         std::cout<<"S6-H2 PASS native 250mm sector-crossing, original-world "
                  "immutable migration, crash-rollback, one-lease handoff, "

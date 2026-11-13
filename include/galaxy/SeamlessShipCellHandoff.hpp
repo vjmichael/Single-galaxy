@@ -154,6 +154,16 @@ inline ShipCellHandoff reconcile_committed_ship_handoff(
            src.integer(2)!=static_cast<sqlite3_int64>(source.region_generation) ||
            src.integer(3)!=static_cast<sqlite3_int64>(source.checkpoint_revision))
             throw std::runtime_error("H2 source worker epoch stale or missing");
+        // Source worker must still be current under its regional authority.
+        // No new destination permission follows from a stale lease row.
+        detail::Statement source_region(db,"SELECT generation,checkpoint_revision,phase "
+            "FROM sg_regional_mode_authority WHERE scope=?");
+        source_region.text(1,from);
+        if(!source_region.row() ||
+           source_region.integer(0)!=static_cast<sqlite3_int64>(source.region_generation) ||
+           source_region.integer(1)!=static_cast<sqlite3_int64>(source.checkpoint_revision) ||
+           source_region.integer(2)!=0)
+            throw std::runtime_error("H2 retiring source region authority stale");
         detail::Statement region(db,"SELECT generation,checkpoint_revision,phase "
             "FROM sg_regional_mode_authority WHERE scope=?");
         region.text(1,to);
