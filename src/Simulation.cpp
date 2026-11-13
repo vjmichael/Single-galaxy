@@ -14616,12 +14616,17 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
             std::int64_t total=0;
             for(std::size_t i=0;i<4;++i) {
                 source.stock_kg[i]=i64(f[5+i]);
+                // Original v127 deposits are allocated in whole tonnes. From
+                // v128 onward, conserved watershed water/sediment flows
+                // and source operations move literal kilograms between
+                // already-funded regional accounts. Rejecting non-tonne
+                // balances would make a valid committed STEP unrecoverable.
                 if(source.stock_kg[i]<0 || source.stock_kg[i]>100000000 ||
-                   source.stock_kg[i]%1000)
+                   (result.snapshot_version_<128 && source.stock_kg[i]%1000))
                     throw std::runtime_error("snapshot: invalid planetary source stock");
                 total+=source.stock_kg[i];
             }
-            if((!total && result.snapshot_version_<129) ||
+            if((!total && result.snapshot_version_<128) ||
                !result.planetary_region_sources_.emplace(
                    PlanetarySiteKey{body,static_cast<std::uint16_t>(lat),
                        static_cast<std::uint16_t>(lon),
@@ -18500,7 +18505,19 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
             }
             const auto& cell=cached_watershed->at(source.region.latitude,
                                                    source.region.longitude);
-            if((cell.ocean && (source.stock_kg[1] || source.stock_kg[2])) ||
+            // Ocean genesis cannot be seeded with soil or minerals. Once the
+            // v128 physical cycle runs, a real watershed may deposit
+            // *sediment* into an existing ocean source; do not reject
+            // that recovered original mass as fabricated topsoil.
+            const auto physical=result.planetary_physical_environment_.find(key);
+            const bool deposited_sediment=
+                result.snapshot_version_>=128 &&
+                physical!=result.planetary_physical_environment_.end() &&
+                physical->second.soil_kg[0]==0 &&
+                physical->second.soil_kg[1]==source.stock_kg[1];
+            if((cell.ocean &&
+                (source.stock_kg[2] ||
+                 (source.stock_kg[1] && !deposited_sediment))) ||
                (!gen.envelope.water_coverage && source.stock_kg[0]))
                 throw std::runtime_error("snapshot: planetary regional geology contradicts terrain");
             auto& stock=assigned[body];
