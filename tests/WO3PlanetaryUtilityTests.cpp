@@ -59,31 +59,78 @@ static Choice choose(bool require_geology=false) {
     }
     throw std::runtime_error("missing real buildable site");
 }
-// Match the authoritative receipt for THIS command in THIS committed tick.
-// The original simulation may produce additional NPC/host events, so its last
-// global event is not necessarily the player's command. Never accept a stale
-// historical receipt or a non-Applied outcome.
-static void step_applied(PersistentWorld& w,std::uint64_t command_id) {
-    const auto before=w.world().events().size();
-    const auto due_tick=w.world().tick()+1;
-    w.step();
-    const auto& events=w.world().events();
-    CHECK(events.size()>=before);
-    unsigned matches=0;
+// Inspect only receipts produced by this committed world tick. An unrelated
+// NPC/host event may be the last event, but neither that event nor a historical
+// receipt can stand in for the submitted command. Any duplicate or unsuccessful
+// same-ID receipt (even alongside an Applied receipt) must fail closed.
+static void require_applied_receipt(const std::vector<Event>& events,
+                                    std::size_t before,
+                                    std::uint64_t command_id,
+                                    std::uint64_t due_tick) {
+    std::size_t matching_id=0;
+    std::size_t exact_applied=0;
     std::string delta;
+    if(before>events.size())
+        throw std::runtime_error("WO3/D7 journal event count regressed for command "+
+            std::to_string(command_id)+" at tick "+std::to_string(due_tick));
     for(std::size_t i=before;i<events.size();++i) {
         const auto& e=events[i];
         delta+=" [id="+std::to_string(e.command_id)+
                ",tick="+std::to_string(e.tick)+
                ",result="+std::to_string(static_cast<int>(e.result))+"]";
-        if(e.command_id==command_id && e.tick==due_tick &&
-           e.result==Outcome::Applied)++matches;
+        if(e.command_id==command_id) {
+            ++matching_id;
+            if(e.tick==due_tick && e.result==Outcome::Applied)
+                ++exact_applied;
+        }
     }
-    if(matches!=1)
-        throw std::runtime_error("WO3/D7 original command "+
-            std::to_string(command_id)+" at tick "+
-            std::to_string(due_tick)+" has "+std::to_string(matches)+
-            " exact Applied receipt(s); new journal events:"+delta);
+    if(matching_id!=1 || exact_applied!=1)
+        throw std::runtime_error("WO3/D7 expected command "+
+            std::to_string(command_id)+" tick "+std::to_string(due_tick)+
+            " exactly once with Applied; observed "+std::to_string(matching_id)+
+            " same-ID receipt(s), "+std::to_string(exact_applied)+
+            " exact Applied receipt(s); new journal events:"+
+            (delta.empty()?" (none)":delta));
+}
+static void step_applied(PersistentWorld& w,std::uint64_t command_id) {
+    const auto before=w.world().events().size();
+    const auto due_tick=w.world().tick()+1;
+    w.step();
+    require_applied_receipt(w.world().events(),before,command_id,due_tick);
+}
+// Independent adversarial contract: proves which original journal receipts
+// are eligible without mutating a production or synthetic physical world.
+static void test_d7_receipt_contract() {
+    constexpr std::uint64_t id=42001,tick=71;
+    const Event applied{tick,id,Outcome::Applied,0};
+    const Event irrelevant{tick,id+1,Outcome::Applied,0};
+    const Event denied{tick,id,Outcome::InvalidArgument,0};
+    const Event stale{tick-1,id,Outcome::Applied,0};
+    const auto accepts=[](const std::vector<Event>& events,std::size_t before) {
+        require_applied_receipt(events,before,id,tick);
+    };
+    const auto rejects=[](const std::vector<Event>& events,std::size_t before) {
+        bool rejected=false;
+        try {require_applied_receipt(events,before,id,tick);}
+        catch(const std::runtime_error& e) {
+            rejected=true;
+            const std::string msg=e.what();
+            CHECK(msg.find(std::to_string(id))!=std::string::npos);
+            CHECK(msg.find(std::to_string(tick))!=std::string::npos);
+            CHECK(msg.find("journal events")!=std::string::npos);
+        }
+        CHECK(rejected);
+    };
+    accepts({applied},0);
+    accepts({applied,irrelevant},0); // last global event is not ours
+    accepts({stale,applied,irrelevant},1); // preexisting history is excluded
+    rejects({},0); // missing
+    rejects({irrelevant},0); // wrong command
+    rejects({stale},0); // wrong tick within new journal delta
+    rejects({denied},0); // rejected result
+    rejects({applied,applied},0); // duplicate successes
+    rejects({applied,denied},0); // never mask a refusal with a success
+    rejects({stale,applied},0); // never mask a new stale-ID receipt
 }
 static void act(PersistentWorld& w,EntityId ship,std::uint64_t id,Action kind,
                 EntityId target=0,std::int64_t amount=1,int opt=0) {
@@ -106,8 +153,16 @@ int main(int argc,char** argv) {
  try {
     const bool d7=argc==2 && std::string(argv[1])=="--d7";
     const bool e6=argc==2 && std::string(argv[1])=="--e6";
+    const bool receipt_contract=argc==2 &&
+        std::string(argv[1])=="--receipt-contract";
+    if(argc!=1 && !d7 && !e6 && !receipt_contract)return 2;
+    if(receipt_contract) {
+        test_d7_receipt_contract();
+        std::cout<<"S6-D7 authoritative command receipt contract PASS\\n";
+        return 0;
+    }
+    if(d7)test_d7_receipt_contract();
     const bool advanced=d7;
-    if(argc!=1 && !d7 && !e6)return 2;
     const auto chosen=choose(d7);
     const PlanetarySiteKey key{chosen.body,chosen.lat,chosen.lon,1};
     const auto folder=fs::temp_directory_path()/
