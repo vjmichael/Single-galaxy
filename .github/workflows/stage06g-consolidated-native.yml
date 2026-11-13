@@ -204,6 +204,7 @@ jobs:
           # top-level main.gd otherwise masks the original script error.
           "$G" --headless --path desktop_godot --check-only --script res://world/sgdx_process_launch.gd >stage06g-godot/sgdx-launch-parse.log 2>&1 || true
           "$G" --headless --path desktop_godot --check-only --script res://world/native_player_session.gd >stage06g-godot/native-player-parse.log 2>&1 || true
+          "$G" --headless --path desktop_godot --check-only --script res://tests/stage6g_native_terrain_installed.gd >stage06g-godot/stage6g-native-terrain-parse.log 2>&1
           timeout --signal=TERM --kill-after=8s 160s "$G" --headless --path desktop_godot --editor --quit >stage06g-godot/editor.log 2>&1
           timeout --signal=TERM --kill-after=8s 100s "$G" --headless --path desktop_godot --quit-after 5 >stage06g-godot/scene.log 2>&1
           if grep -E 'SCRIPT ERROR:|ERROR: Failed to load script|Parse Error:' stage06g-godot/*.log; then

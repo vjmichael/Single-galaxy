@@ -40,13 +40,13 @@ func _run() -> void:
     terrain.set_source(atlas)
     terrain.accept_pose(pose)
     var mesh: MeshInstance3D=terrain.get_node("OriginalNativeTerrainTileWindow_NO_COLLISION")
-    var accepted := terrain.tile_count()==9 and mesh.visible and mesh.mesh!=null and \
+    var accepted: bool= terrain.tile_count()==9 and mesh.visible and mesh.mesh!=null and \
         mesh.mesh.get_surface_count()==1 and \
         mesh.mesh.surface_get_array_len(0)==9*289
     var stale: Dictionary=pose.duplicate(true)
     stale["session"]=int(pose["session"])+1
     terrain.accept_pose(stale)
-    var denied := not mesh.visible and terrain.tile_count()==0
+    var denied: bool= not mesh.visible and terrain.tile_count()==0
     terrain.clear()
     terrain.queue_free()
     if not accepted or not denied:
