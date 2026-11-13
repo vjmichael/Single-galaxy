@@ -9,6 +9,7 @@
 #include <string>
 namespace fs=std::filesystem;
 using namespace galaxy;
+static const char* s6c_stage="initialization";
 #define CHECK(x) do{if(!(x))throw std::runtime_error("S6C line "+std::to_string(__LINE__)+": " #x);}while(false)
 static void cleanup(const std::string& name) {
     for(const char* suffix:{"","-wal","-shm"}) {
@@ -55,6 +56,7 @@ static void seeded(const std::string& db) {
         seed.enable_native_galactic_physics({
             {1,galactic::Point{{0,100000},{0,100000},{0,100000}}}});
         body=first_planet(seed);
+        s6c_stage="planetary-manifest";
         seed.ensure_planetary_genesis_manifest();
         CHECK(seed.planetary_genesis().count(body));
         CHECK(seed.planetary_genesis().at(body).original_kg==
@@ -68,6 +70,7 @@ static void seeded(const std::string& db) {
                 9999999,{1000,0,0,0});}));
         // No split before original finite stock. Four physical goods
         // classes have independent mass and their own immutable identity.
+        s6c_stage="funded-original-body";
         seed.provision_planetary_body_genesis(
             body,{4000,6000,8000,2000});
         CHECK(seed.total_ore()==previous_mass+20);
@@ -75,18 +78,22 @@ static void seeded(const std::string& db) {
             seed.provision_planetary_body_genesis(
                 body,{1000,0,0,0});}));
         const auto& gen=seed.planetary_genesis().at(body);
+        s6c_stage="first-land";
         first=land(gen);
+        s6c_stage="second-land";
         second=land(gen,true);
         CHECK(first!=second);
         CHECK(rejects([&]{
             seed.place_planetary_region_genesis(
                 body,first.first,first.second,{5000,0,0,0});}));
+        s6c_stage="first-regional-source";
         seed.place_planetary_region_genesis(
             body,first.first,first.second,{3000,4000,5000,1000});
         CHECK(seed.total_ore()==previous_mass+20);
         CHECK(rejects([&]{
             seed.place_planetary_region_genesis(
                 body,first.first,first.second,{1000,0,0,0});}));
+        s6c_stage="second-regional-source";
         seed.place_planetary_region_genesis(
             body,second.first,second.second,{1000,2000,3000,1000});
         CHECK(seed.total_ore()==previous_mass+20);
@@ -119,6 +126,7 @@ static void seeded(const std::string& db) {
         }
         CHECK(checked_unallocated);
         initial_world=seed.canonical_state();
+        s6c_stage="canonical-reparse";
         const auto direct=Simulation::from_snapshot(initial_world);
         CHECK(direct.canonical_state()==initial_world);
         CHECK(direct.total_ore()==seed.total_ore());
@@ -133,6 +141,7 @@ static void seeded(const std::string& db) {
         CHECK(tail!=std::string::npos && tail>start);
         bad.replace(tail+1,end-tail-1,"2000"); // old volatile 1000
         CHECK(rejects([&]{(void)Simulation::from_snapshot(bad);}));
+        s6c_stage="original-SQLite-open";
         PersistentWorld world(db,std::move(seed));
         CHECK(world.world().total_ore()==previous_mass+20);
         const auto generation=world.generation();
@@ -164,6 +173,7 @@ static void seeded(const std::string& db) {
     cleanup(db);
 }
 static void migration(const std::string& db) {
+    s6c_stage="historical-migration";
     cleanup(db);
     // An old unanchored save must refuse v127, not invent a galaxy frame
     // from an arbitrary coordinate or manufacture original matter.
@@ -232,7 +242,8 @@ int main(int argc,char** argv) {
         std::cout<<"S6-C original finite planetary genesis + v127 migration source PASS\n";
         return 0;
     }catch(const std::exception& e) {
-        std::cerr<<"S6-C staged native regression failed: "<<e.what()<<'\n';
+        std::cerr<<"S6-C staged native regression failed at "
+                 <<s6c_stage<<": "<<e.what()<<'\n';
         cleanup(db);
         return 1;
     }

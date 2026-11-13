@@ -365,7 +365,19 @@ CellProcessOutcome run_cell_process(const std::string& executable,
         if(!execute(executable,task,deadline,actual))
             return {false,actual.empty()?
                 "OS worker failed, timed out or was terminated":actual};
-        if(actual!=expected_output(task))
+        const auto canonical=expected_output(task);
+        bool exact=actual==canonical;
+#ifdef _WIN32
+        // Windows MSVC iostreams may emit CRT text-mode CRLF.
+        // Admit only this ONE exact alternative; never trim or normalize
+        // arbitrary source identity, fields, newline count or whitespace.
+        if(!exact) {
+            auto windows_text=canonical;
+            windows_text.insert(windows_text.end()-1,'\r');
+            exact=actual==windows_text;
+        }
+#endif
+        if(!exact)
             return {false,"worker returned stale or forged original-world report"};
         return {true,{}};
     }catch(const std::exception& e){
