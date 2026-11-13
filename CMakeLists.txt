@@ -2069,6 +2069,12 @@ if(BUILD_TESTING)
   target_link_libraries(galaxy_wo3_planetary_utility_tests PRIVATE galaxy_kernel)
   add_test(NAME galaxy_wo3_planetary_utility COMMAND galaxy_wo3_planetary_utility_tests)
   set_tests_properties(galaxy_wo3_planetary_utility PROPERTIES TIMEOUT 300)
+  # Genuine v129 source extraction, original landed shuttle hold, actual
+  # ascent/orbital unload and SQLite restart, not a synthetic freight seed.
+  add_test(NAME galaxy_stage06d7_positive_geological_freight
+    COMMAND galaxy_wo3_planetary_utility_tests --d7)
+  set_tests_properties(galaxy_stage06d7_positive_geological_freight
+    PROPERTIES TIMEOUT 360)
 endif()
 
 

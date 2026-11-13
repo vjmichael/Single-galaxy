@@ -19,22 +19,40 @@ namespace fs=std::filesystem;
 #define CHECK(x) do{if(!(x))throw std::runtime_error(\
     "WO3-C native line "+std::to_string(__LINE__)+": " #x);}while(0)
 struct Choice {std::uint32_t system;std::uint64_t body;std::uint16_t lat,lon;};
-static Choice choose() {
+static Choice choose(bool require_geology=false) {
     for(std::uint32_t sys=1;sys<=2000;++sys) {
         Simulation p(613,sys);
         const auto ship=p.add_colony_ship(7,{0,0},200,8);
         p.provision_starter_exploration_scanner(ship);
         p.ensure_physical_celestial_systems();
+        if(require_geology)p.ensure_planetary_genesis_manifest();
         for(const auto& b:p.physical_celestial_systems().at(sys)) {
             if(b.kind!=CelestialKind::Planet && b.kind!=CelestialKind::Moon)continue;
+            if(require_geology &&
+               !p.planetary_genesis().at(b.id).envelope.water_coverage)continue;
             for(const auto [lat,lon]:std::vector<std::pair<unsigned,unsigned>>{
                  {17,36},{17,18},{18,46},{16,60},{14,4},{20,32},
                  {10,27},{26,52},{7,15},{28,8},{12,40},{24,55}}) {
                 const auto region=p.scan_planetary_geography(
                     7,ship,b.id,std::uint16_t(lat),std::uint16_t(lon));
                 if(region && !region->landscape.region.surface_water &&
-                   region->landscape.region.farming_possible)
+                   region->landscape.region.farming_possible) {
+                    if(require_geology) {
+                        const auto& gen=p.planetary_genesis().at(b.id);
+                        const auto watershed=planetary::generate_watersheds(
+                            gen.key,gen.envelope);
+                        const auto seasons=planetary::generate_seasonal_climate(
+                            watershed,gen.key,gen.envelope);
+                        bool safe=true;
+                        for(unsigned q=0;q<planetary::kPlanetaryQuarters;++q) {
+                            const auto w=seasons.at(q,lat,lon);
+                            if(w.temperature_c<=-35 || w.temperature_c>=48 ||
+                               w.environmental_risk==3)safe=false;
+                        }
+                        if(!safe)continue;
+                    }
                     return {sys,b.id,std::uint16_t(lat),std::uint16_t(lon)};
+                }
             }
         }
     }
@@ -59,9 +77,11 @@ static void up(PersistentWorld& w,EntityId ship,const PlanetarySiteKey& key,
     CHECK(w.launch_planetary_shuttle(7,ship,key,id,true));w.steps(3);
     CHECK(w.world().planetary_shuttles().at(key).flight_phase==0);
 }
-int main() {
+int main(int argc,char** argv) {
  try {
-    const auto chosen=choose();
+    const bool d7=argc==2 && std::string(argv[1])=="--d7";
+    if(argc!=1 && !d7)return 2;
+    const auto chosen=choose(d7);
     const PlanetarySiteKey key{chosen.body,chosen.lat,chosen.lon,1};
     const auto folder=fs::temp_directory_path()/
         ("wo3_utility_"+std::to_string(std::chrono::steady_clock::now().
@@ -81,6 +101,19 @@ int main() {
         AsteroidClass::Silicate,30,2500);
     seed.ensure_physical_celestial_systems();
     seed.ensure_ship_frame_registry();
+    if(d7) {
+        // A distinct, actual funded v127 source from the ORIGINAL immutable
+        // planet at genesis. This is the only geological inventory available
+        // to the later legitimate Shape-qualified on-site extractor.
+        seed.ensure_planetary_genesis_manifest();
+        seed.provision_planetary_body_genesis(
+            chosen.body,{6000,12000,16000,4000});
+        seed.place_planetary_region_genesis(
+            chosen.body,chosen.lat,chosen.lon,{6000,12000,16000,4000});
+        seed.enable_physical_planetary_environment();
+        seed.enable_planetary_source_custody();
+        seed.enable_planetary_ecology();
+    }
     const auto initial_mass=seed.total_ore();
     PersistentWorld w(db,std::move(seed));
     act(w,ship,1,Action::Mine,bulk,80);
@@ -376,7 +409,7 @@ int main() {
     CHECK(w.start_planetary_surface_utility(7,ship,key,81400,builder));
     CHECK(!w.start_planetary_surface_utility(7,ship,key,81400,builder));
     CHECK(w.world().total_ore()==initial_mass);
-    CHECK(w.world().canonical_state().rfind("galaxy-kernel-v110|",0)==0);
+    CHECK(d7 || w.world().canonical_state().rfind("galaxy-kernel-v110|",0)==0);
     w.steps(10);
     CHECK(w.pause_planetary_surface_utility(7,ship,key,true));
     const auto progress=w.world().planetary_sites().at(key).utility_progress;
@@ -387,7 +420,7 @@ int main() {
     const auto before_handover=w.world().planetary_sites().at(key);
     CHECK(before_handover.utility_phase==1);
     const auto historical_v110=w.world().canonical_state();
-    CHECK(historical_v110.rfind("galaxy-kernel-v110|",0)==0);
+    CHECK(d7 || historical_v110.rfind("galaxy-kernel-v110|",0)==0);
     CHECK(Simulation::from_snapshot(historical_v110).canonical_state()==
           historical_v110);
     // Native backward-compatibility: a pre-relief v110 utility job remains
@@ -464,7 +497,7 @@ int main() {
     replay.actor=ship;
     replay.action=Action::Thrust;
     CHECK(!w.submit(replay)); // host cannot reuse immutable relief proof
-    CHECK(w.world().canonical_state().rfind("galaxy-kernel-v112|",0)==0);
+    CHECK(d7 || w.world().canonical_state().rfind("galaxy-kernel-v112|",0)==0);
     CHECK(Simulation::from_snapshot(w.world().canonical_state()).state_hash()==
           w.world().state_hash());
     // A forged last replacement without its real chain must be rejected.
@@ -528,11 +561,15 @@ int main() {
     CHECK(w.load_planetary_shuttle(7,ship,key,ShuttleCargo::Water,101));
     CHECK(w.load_planetary_shuttle(7,ship,key,ShuttleCargo::Food,100));
     CHECK(w.load_planetary_shuttle(7,ship,key,ShuttleCargo::Oxygen,100));
+    // E6 genuine original supply chain: deliver nutrients alongside real
+    // manufactured modules, water and oxygen on the same descent. The
+    // positive crop later debits this exact site-local supply, not a seed.
+    CHECK(w.load_planetary_shuttle(7,ship,key,ShuttleCargo::Nutrients,100));
     down(w,ship,key,82013);
     CHECK(w.world().planetary_shuttles().at(key).water_kg>=100);
     CHECK(w.transfer_planetary_housing_module(7,ship,key,false));
     for(const auto cargo:{ShuttleCargo::Water,ShuttleCargo::Food,
-                          ShuttleCargo::Oxygen})
+                          ShuttleCargo::Oxygen,ShuttleCargo::Nutrients})
         CHECK(w.unload_planetary_shuttle(7,ship,key,cargo,100));
     CHECK(w.world().planetary_sites().at(key).housing_modules==2);
     // WO3-D/v117: both additional facility families are built from this
@@ -566,7 +603,7 @@ int main() {
         CHECK(service.world().planetary_sites().at(key).housing_modules==0);
         CHECK(service.world().total_ore()==mass_before);
         const auto begun=service.world().canonical_state();
-        CHECK(begun.rfind("galaxy-kernel-v117|",0)==0);
+        CHECK(d7 || begun.rfind("galaxy-kernel-v117|",0)==0);
         CHECK(Simulation::from_snapshot(begun).canonical_state()==begun);
         service.steps(12);
         CHECK(service.pause_planetary_service_build(
@@ -942,7 +979,7 @@ int main() {
           pending_farm->production_progress[0]==0 &&
           pending_farm->production_order_ids[0]==81800 &&
           pending_farm->production_phases[1]==0);
-    CHECK(w.world().canonical_state().rfind("galaxy-kernel-v113|",0)==0);
+    CHECK(d7 || w.world().canonical_state().rfind("galaxy-kernel-v113|",0)==0);
     CHECK(Simulation::from_snapshot(w.world().canonical_state()).state_hash()==
           w.world().state_hash());
     const auto mid_copy=(folder/"production_midbuild.sqlite").string();
@@ -1005,7 +1042,7 @@ int main() {
           changed_supervisor->production_order_ids[0]==81800 &&
           changed_supervisor->production_handover_count[0]==1 &&
           changed_supervisor->production_last_handover_id[0]==81900);
-    CHECK(w.world().canonical_state().rfind("galaxy-kernel-v114|",0)==0);
+    CHECK(d7 || w.world().canonical_state().rfind("galaxy-kernel-v114|",0)==0);
     CHECK(w.world().state_hash()==twin.world().state_hash());
     // Inactive visitor duty never resumes; the real replacement supervises.
     w.steps(28);twin.steps(28);
@@ -1061,6 +1098,181 @@ int main() {
     PersistentWorld completed(completed_copy,Simulation(931));
     CHECK(completed.world().state_hash()==w.world().state_hash());
     CHECK(completed.world().total_ore()==initial_mass);
+    if(d7) {
+        // D7 FULL ORIGINAL MATERIAL CHAIN. The same original world already
+        // contains a certified Shape worker, constructed and powered site,
+        // a real piloted shuttle, a manufacturing project and a source ship.
+        // A second pair of real manufactured modules MUST make the miner;
+        // earlier farm modules were consumed, never copied.
+        up(w,ship,key,89010);
+        CHECK(w.transfer_planetary_housing_module(7,ship,key,true));
+        down(w,ship,key,89011);
+        CHECK(w.transfer_planetary_housing_module(7,ship,key,false));
+        up(w,ship,key,89012);
+        CHECK(w.transfer_planetary_housing_module(7,ship,key,true));
+        down(w,ship,key,89013);
+        CHECK(w.transfer_planetary_housing_module(7,ship,key,false));
+        CHECK(w.world().planetary_sites().at(key).housing_modules==2);
+        CHECK(w.start_planetary_production_build(
+            7,ship,key,false,89020,builder));
+        w.steps(45);
+        const auto& ready=w.world().planetary_sites().at(key);
+        CHECK(ready.production_projects[1].phase==2 &&
+              ready.extractor && ready.utility_phase==2 &&
+              ready.stored_electricity>0);
+        const auto source_before=
+            w.world().planetary_region_sources().at(key).stock_kg[2];
+        const auto site_before=ready.regional_geology_kg[1];
+        const auto unchanged=w.world().state_hash();
+        CHECK(!w.extract_planetary_regional_source(
+            8,ship,chosen.body,chosen.lat,chosen.lon,
+            PlanetaryResource::Mineral,0,1000,builder,89100));
+        CHECK(!w.extract_planetary_regional_source(
+            7,ship,chosen.body,chosen.lat,chosen.lon,
+            PlanetaryResource::Mineral,0,1000,9999999,89101));
+        CHECK(w.world().state_hash()==unchanged);
+        bool failed_extract=false;
+        try {
+            (void)w.extract_planetary_regional_source(
+                7,ship,chosen.body,chosen.lat,chosen.lon,
+                PlanetaryResource::Mineral,0,1000,builder,89102,
+                FailPoint::AfterSnapshotWrite);
+        }catch(const std::exception&){failed_extract=true;}
+        CHECK(failed_extract && w.world().state_hash()==unchanged);
+        CHECK(w.extract_planetary_regional_source(
+            7,ship,chosen.body,chosen.lat,chosen.lon,
+            PlanetaryResource::Mineral,0,1000,builder,89102));
+        CHECK(!w.extract_planetary_regional_source(
+            7,ship,chosen.body,chosen.lat,chosen.lon,
+            PlanetaryResource::Mineral,0,1000,builder,89102));
+        CHECK(w.world().planetary_region_sources().at(key).stock_kg[2]==
+              source_before-1000);
+        CHECK(w.world().planetary_sites().at(key).regional_geology_kg[1]==
+              site_before+1000);
+        CHECK(w.world().total_ore()==initial_mass);
+        CHECK(!w.load_planetary_geology_shuttle(
+            8,ship,key,PlanetaryResource::Mineral,1000,89103));
+        CHECK(!w.unload_planetary_geology_shuttle(
+            7,ship,key,PlanetaryResource::Mineral,1000,89104));
+        bool failed_load=false;
+        try{
+            (void)w.load_planetary_geology_shuttle(
+                7,ship,key,PlanetaryResource::Mineral,1000,89103,
+                FailPoint::AfterSnapshotWrite);
+        }catch(const std::exception&){failed_load=true;}
+        CHECK(failed_load);
+        CHECK(w.world().planetary_shuttles().at(key).regional_geology_kg[1]==0);
+        CHECK(w.load_planetary_geology_shuttle(
+            7,ship,key,PlanetaryResource::Mineral,1000,89103));
+        CHECK(w.world().planetary_shuttles().at(key).regional_geology_kg[1]==1000);
+        CHECK(w.world().planetary_sites().at(key).regional_geology_kg[1]==
+              site_before);
+        CHECK(!w.load_planetary_geology_shuttle(
+            7,ship,key,PlanetaryResource::Mineral,1000,89103));
+        // Physical ascent is the only path into original orbital cargo.
+        up(w,ship,key,89105);
+        const auto in_orbit=w.world().state_hash();
+        CHECK(!w.unload_planetary_geology_shuttle(
+            8,ship,key,PlanetaryResource::Mineral,1000,89106));
+        CHECK(w.world().state_hash()==in_orbit);
+        bool failed_unload=false;
+        try{
+            (void)w.unload_planetary_geology_shuttle(
+                7,ship,key,PlanetaryResource::Mineral,1000,89106,
+                FailPoint::AfterSnapshotWrite);
+        }catch(const std::exception&){failed_unload=true;}
+        CHECK(failed_unload && w.world().state_hash()==in_orbit);
+        const auto before_goods=w.world().colony_ships().at(ship).goods_kg;
+        const auto old_goods=before_goods.count("planetary_mineral")?
+            before_goods.at("planetary_mineral"):0;
+        CHECK(w.unload_planetary_geology_shuttle(
+            7,ship,key,PlanetaryResource::Mineral,1000,89106));
+        CHECK(w.world().colony_ships().at(ship).
+              goods_kg.at("planetary_mineral")==old_goods+1000);
+        CHECK(w.world().planetary_shuttles().at(key).regional_geology_kg[1]==0);
+        CHECK(!w.unload_planetary_geology_shuttle(
+            7,ship,key,PlanetaryResource::Mineral,1000,89106));
+        CHECK(w.world().total_ore()==initial_mass);
+        const auto original=w.world().canonical_state();
+        CHECK(Simulation::from_snapshot(original).canonical_state()==original);
+        const auto copy=(folder/"d7_true_geology_restart.sqlite").string();
+        PersistentWorld::recover_copy(db,copy);
+        PersistentWorld recovered(copy,Simulation(89108));
+        CHECK(recovered.world().state_hash()==w.world().state_hash() &&
+              recovered.world().total_ore()==initial_mass &&
+              recovered.world().colony_ships().at(ship).
+                  goods_kg.at("planetary_mineral")==old_goods+1000 &&
+              recovered.world().planetary_region_sources().at(key).
+                  stock_kg[2]==source_before-1000);
+        std::cout<<"S6-D7 original qualified extraction to actual landed "
+                    "shuttle, ascent, ship goods and SQLite replay PASS\n";
+        return 0;
+    }
+    // E6: now exercise the ACTUAL fully built/staffed farm in its original
+    // SQLite world. A copied journal isolates new v130 ecological migration
+    // from the historical WO3 source-contract checks above.
+    {
+        const auto ecology_db=(folder/"e6_original_positive_farm.sqlite").string();
+        PersistentWorld::recover_copy(db,ecology_db);
+        PersistentWorld ecology(ecology_db,Simulation(9316));
+        const auto conserved=ecology.world().total_ore();
+        ecology.ensure_planetary_ecology();
+        CHECK(ecology.world().planetary_ecology_enabled());
+        CHECK(ecology.world().planetary_sites().at(key).farm);
+        const auto before=ecology.world().planetary_sites().at(key);
+        CHECK(before.utility_phase==2 &&
+              before.production_projects[0].phase==2 &&
+              before.nutrients_kg>=5 && before.water_kg>=10 &&
+              before.food_kg>=2 && before.oxygen_kg>=2 &&
+              before.stored_electricity>=2 &&
+              before.assigned_workers==2 &&
+              before.delegated_npcs.size()==2 &&
+              before.workforce_policy==0 &&
+              before.regional_geology_kg[0]==0);
+        for(const auto worker:before.delegated_npcs) {
+            const auto& npc=ecology.world().npc_records().at(worker);
+            CHECK(npc.home_ship==ship &&
+                  npc.location==before.surface_location &&
+                  npc.assigned_site==before.surface_location &&
+                  npc.role==NpcRole::PlanetarySurface &&
+                  ecology.world().npc_available_for_duty(worker));
+        }
+        CHECK(!ecology.cultivate_planetary_site(
+            8,ship,chosen.body,chosen.lat,chosen.lon,1));
+        const auto hash=ecology.world().state_hash();
+        const auto gen=ecology.generation();
+        bool rolled_back=false;
+        try {
+            (void)ecology.cultivate_planetary_site(
+                7,ship,chosen.body,chosen.lat,chosen.lon,1,
+                FailPoint::AfterSnapshotWrite);
+        }catch(const std::exception&) {rolled_back=true;}
+        CHECK(rolled_back && ecology.generation()==gen &&
+              ecology.world().state_hash()==hash);
+        CHECK(ecology.cultivate_planetary_site(
+            7,ship,chosen.body,chosen.lat,chosen.lon,1));
+        const auto& after=ecology.world().planetary_sites().at(key);
+        CHECK(after.water_kg==before.water_kg-10 &&
+              after.nutrients_kg==before.nutrients_kg-5 &&
+              after.food_kg==before.food_kg+11 &&
+              after.wastewater_kg==before.wastewater_kg+4 &&
+              after.stored_electricity==before.stored_electricity-2 &&
+              after.ecology_controlled_batches==before.ecology_controlled_batches+1 &&
+              after.harvest_cycles==before.harvest_cycles+1 &&
+              ecology.world().total_ore()==conserved);
+        CHECK(!ecology.cultivate_planetary_site(
+            7,ship,chosen.body,chosen.lat,chosen.lon,100));
+        const auto snapshot=ecology.world().canonical_state();
+        CHECK(Simulation::from_snapshot(snapshot).canonical_state()==snapshot);
+        const auto durable=(folder/"e6_original_positive_reopen.sqlite").string();
+        PersistentWorld::recover_copy(ecology_db,durable);
+        PersistentWorld restarted(durable,Simulation(9317));
+        CHECK(restarted.generation()==ecology.generation() &&
+              restarted.world().state_hash()==ecology.world().state_hash() &&
+              restarted.world().total_ore()==conserved &&
+              restarted.world().planetary_sites().at(key).
+                  ecology_controlled_batches==after.ecology_controlled_batches);
+    }
     std::cout<<"WO3-C/D original qualified utility and physical farm construction/SQLite PASS\n";
     return 0;
  }catch(const std::exception& e){std::cerr<<e.what()<<"\n";return 1;}
