@@ -177,6 +177,20 @@ def check_faults(root):
     await_dead(pid)
     assert not orphan.exists()
 
+def assert_original_onboard(row, ship):
+    """Validate DOCK-09's read-only original ship factory/colony telemetry.
+
+    Keep the same session, request, ship, tick and source generation as the
+    authoritative SHIP frame. This is a real native source observation, not
+    permission to accept uncorrelated extra output or synthetic resources.
+    """
+    assert len(row)==17 and row[:4]==[
+        "ONBOARD","1",ship[2],ship[3]],(row,ship)
+    assert row[4]==ship[6] and row[5:7]==ship[7:9],(row,ship)
+    assert all(int(n)>=0 for n in row[7:13]),row
+    assert all(n in ("0","1") for n in row[13:17]),row
+
+
 def send(p, payload, needs_rock=False):
     time.sleep(0.075)
     p.stdin.write(payload + "\n");p.stdin.flush()
@@ -187,9 +201,14 @@ def send(p, payload, needs_rock=False):
         # The original native clock can emit a ROCKNONE advisory between
         # authoritative ROCK and NAV receipts. Identify the exact request,
         # rather than treating a variable telemetry burst as a fixed tuple.
-        rock,nav=None,None
+        rock,nav,onboard=None,None,None
         for _ in range(20):
-            row=bounded_line(p, "same-request original ROCK/NAV").split("|")
+            row=bounded_line(p, "same-request original ONBOARD/ROCK/NAV").split("|")
+            if row[0]=="ONBOARD":
+                assert onboard is None,("duplicate original ONBOARD",row)
+                assert_original_onboard(row,first)
+                onboard=row
+                continue
             if row[0] in ("ROCK","ROCKNONE"):
                 assert row[2]==first[2],row
                 if row[3]==first[3] and (
@@ -201,7 +220,8 @@ def send(p, payload, needs_rock=False):
                 break
             # An unrelated zero-request sensor update remains read-only.
             assert row[0] in ("NAV","NAVNONE"),row
-        assert rock is not None and nav is not None,(rock,nav)
+        assert onboard is not None and rock is not None and nav is not None,(
+            onboard,rock,nav)
         assert len(nav)==11 and nav[:5]==["NAV","1",first[2],first[3],first[6]],nav
         assert nav[5:7]==first[7:9] and int(nav[7])>0,nav
         assert sum(int(v)**2 for v in nav[8:11])<=1000000000**2,nav
@@ -213,11 +233,15 @@ def start_original(save):
                          text=True,bufsize=1)
     pose=bounded_line(p, "original POSE").split("|")
     ship=bounded_line(p, "original SHIP").split("|")
-    rock,nav=None,None
+    rock,nav,onboard=None,None,None
     for _ in range(20):
-        row=bounded_line(p,"original initial ROCK/NAV").split("|")
+        row=bounded_line(p,"original initial ONBOARD/ROCK/NAV").split("|")
         assert row[2]==pose[2],row
-        if row[0] in ("ROCK","ROCKNONE"):
+        if row[0]=="ONBOARD":
+            assert onboard is None,("duplicate original ONBOARD",row)
+            assert_original_onboard(row,ship)
+            onboard=row
+        elif row[0] in ("ROCK","ROCKNONE"):
             if row[3]=="0" and (rock is None or row[0]=="ROCK"):
                 rock=row
         elif row[0] in ("NAV","NAVNONE"):
@@ -226,7 +250,8 @@ def start_original(save):
                 break
         else:
             raise AssertionError(f"Unexpected original ship telemetry {row}")
-    assert rock is not None and nav is not None,(rock,nav)
+    assert onboard is not None and rock is not None and nav is not None,(
+        onboard,rock,nav)
     assert len(nav)==11 and nav[:5]==["NAV","1",pose[2],"0",pose[10]],nav
     assert nav[5:7]==ship[7:9] and int(nav[7])>0,nav
     assert pose[:2] == ["POSE","1"] and ship[:2] == ["SHIP","1"] and rock[0] in (
@@ -285,6 +310,9 @@ def check_original_world(root):
            len(f)>8 and f[2]==token2 and f[3]=="0"]
     navs=[f for f in observed if f[0]=="NAV" and
           len(f)==11 and f[2]==token2 and f[3]=="0"]
+    onboard=[f for f in observed if f[0]=="ONBOARD"]
+    assert len(onboard)==1,(onboard,observed[:8])
+    assert_original_onboard(onboard[0],records[1].split("|"))
     assert rocks and navs,observed[:8]
     nav=navs[0]
     assert nav[:5]==["NAV","1",token2,"0",records[1].split("|")[6]],nav
