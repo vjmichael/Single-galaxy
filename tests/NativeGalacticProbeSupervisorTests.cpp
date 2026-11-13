@@ -799,7 +799,7 @@ int main(int argc,char** argv){
             "spatial/v2/s1/q0,0,0/c0,0,0","worker-A",1,1234567,2,1};
         const auto first_probe=spatial::run_cell_process(argv[1],task);
         if(!first_probe.passed)throw std::runtime_error(
-            "initial native cell worker: "+first_probe.detail);
+            "initial native cell worker: "+first_probe.reason);
         CHECK(!spatial::run_cell_process(argv[2],task,
             std::chrono::milliseconds(50)).passed);
         galaxy_and_probes(root);

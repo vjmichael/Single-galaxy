@@ -40,7 +40,7 @@ int main(int argc,char** argv){
                     const auto result=run_cell_process(
                         binary,request,std::chrono::milliseconds(2000));
                     if(!result.passed)throw std::runtime_error(
-                        "native four-cell worker: "+result.detail);
+                        "native four-cell worker: "+result.reason);
                     return std::chrono::duration<double,std::milli>(
                         std::chrono::steady_clock::now()-start).count();
                 }));
