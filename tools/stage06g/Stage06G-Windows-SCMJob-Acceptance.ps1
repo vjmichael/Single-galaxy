@@ -5,6 +5,7 @@ param(
     [Parameter(Mandatory=$true)][string]$SourceSha,
     [Parameter(Mandatory=$true)][string]$BuildDir,
     [switch]$ExecuteOneUse,
+    [switch]$HostedSmoke,
     [string]$EvidenceRoot = (Join-Path $env:ProgramData 'SingleGalaxy\S6GKernelGate')
 )
 Set-StrictMode -Version Latest
@@ -30,7 +31,7 @@ if(-not $ExecuteOneUse){
 $identity=[Security.Principal.WindowsIdentity]::GetCurrent()
 $principal=[Security.Principal.WindowsPrincipal]::new($identity)
 if(-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)){
-    throw 'A physical elevated Windows console is required for one-use SCM acceptance'
+    throw 'An elevated Windows console is required for one-use SCM acceptance'
 }
 if(Get-Service -Name $serviceName -ErrorAction SilentlyContinue){
     throw 'Existing service detected; never change or overwrite any pre-existing SCM service'
@@ -45,11 +46,31 @@ New-Item -ItemType Directory -Path $folder -Force | Out-Null
   'NT AUTHORITY\LOCAL SERVICE:(OI)(CI)M' `
   'NT AUTHORITY\SYSTEM:(OI)(CI)F' `
   'BUILTIN\Administrators:(OI)(CI)F' | Out-Null
-if($LASTEXITCODE -ne 0){throw 'Could not install restricted physical evidence ACL'}
+if($LASTEXITCODE -ne 0){throw 'Could not install restricted SCM evidence ACL'}
+# A LocalService process cannot be assumed to traverse the owner's checkout.
+# Stage EXACT compiled executables inside a private ACL-protected directory;
+# the service user gets RX only for binaries, not mutation authority.
+$binFolder=Join-Path $folder 'bin'
+New-Item -ItemType Directory -Path $binFolder | Out-Null
+& icacls.exe $binFolder /inheritance:r /grant:r `
+  'NT AUTHORITY\LOCAL SERVICE:(OI)(CI)RX' `
+  'NT AUTHORITY\SYSTEM:(OI)(CI)F' `
+  'BUILTIN\Administrators:(OI)(CI)F' | Out-Null
+if($LASTEXITCODE -ne 0){throw 'Could not protect staged SCM executables'}
+$stagedService=Join-Path $binFolder (Split-Path $serviceExe -Leaf)
+$stagedChild=Join-Path $binFolder (Split-Path $childExe -Leaf)
+Copy-Item -LiteralPath $serviceExe -Destination $stagedService -ErrorAction Stop
+Copy-Item -LiteralPath $childExe -Destination $stagedChild -ErrorAction Stop
+foreach($pair in @(@($serviceExe,$stagedService),@($childExe,$stagedChild))){
+    if((Get-FileHash -LiteralPath $pair[0] -Algorithm SHA256).Hash -cne
+       (Get-FileHash -LiteralPath $pair[1] -Algorithm SHA256).Hash){
+        throw 'Staged SCM executable differs from exact compiled source'
+    }
+}
 $created=$false
 $results=[System.Collections.Generic.List[object]]::new()
 try {
-    $binaryPath='"'+$serviceExe+'" --service --fault-child "'+$childExe+'" --evidence "'+$folder+'" --sha '+$SourceSha
+    $binaryPath='"'+$stagedService+'" --service --fault-child "'+$stagedChild+'" --evidence "'+$folder+'" --sha '+$SourceSha
     New-Service -Name $serviceName -BinaryPathName $binaryPath -StartupType Manual | Out-Null
     $created=$true
     & sc.exe config $serviceName obj= 'NT AUTHORITY\LocalService' password= '' | Out-Null
@@ -95,13 +116,16 @@ try {
     }
     $serviceBinaryHash=(Get-FileHash -LiteralPath $serviceExe -Algorithm SHA256).Hash.ToLowerInvariant()
     $faultChildHash=(Get-FileHash -LiteralPath $childExe -Algorithm SHA256).Hash.ToLowerInvariant()
-    $receipt=[pscustomobject]@{schema='SG-S6GK-PHYSICAL-WINDOWS-01';source_sha=$SourceSha;
+    $kind=if($HostedSmoke){'HOSTED'}else{'PHYSICAL'}
+    $passedStatus=if($HostedSmoke){'hosted_SCM_Job_two_cycles_passed_only'}else{'physical_SCM_Job_two_cycles_passed'}
+    $receipt=[pscustomobject]@{schema="SG-S6GK-$kind-WINDOWS-01";source_sha=$SourceSha;
               service_binary_sha256=$serviceBinaryHash;fault_child_sha256=$faultChildHash;
               os=[Environment]::OSVersion.VersionString;computer=$env:COMPUTERNAME;
-              sc_name=$serviceName;status='physical_SCM_Job_two_cycles_passed';
+              sc_name=$serviceName;status=$passedStatus;hosted_smoke_only=[bool]$HostedSmoke;
+              physical_pc_verified=(-not [bool]$HostedSmoke);
               cycles=$results;installed_gameplay_tested=$false;radeon_tested=$false}
-    $receipt|ConvertTo-Json -Depth 8|Set-Content -LiteralPath (Join-Path $folder 'physical-scm-acceptance.json') -Encoding UTF8
-    Write-Host "PASS physical Windows SCM, two service lifetimes, native Job descendants and stop/restart; evidence: $folder"
+    $receipt|ConvertTo-Json -Depth 8|Set-Content -LiteralPath (Join-Path $folder 'scm-acceptance.json') -Encoding UTF8
+    Write-Host "PASS $passedStatus: two SCM lifetimes, native Job descendants and stop/restart; evidence: $folder"
 }
 finally {
     if($created){

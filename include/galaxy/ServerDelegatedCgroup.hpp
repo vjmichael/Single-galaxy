@@ -80,16 +80,16 @@ public:
             if(::fstatfs(parent_,&info)!=0 ||
                static_cast<unsigned long>(info.f_type)!=CGROUP2_SUPER_MAGIC)
                 throw std::runtime_error("S6-GK: not a native cgroup-v2 mount");
-            // A broker-owned, writable cgroup kill file is mandatory. Do not
-            // fall back to kill(-pid) and mislabel that as kernel custody.
-            int fd=open_member(parent_,"cgroup.kill",O_WRONLY);closefd(fd);
+            // Only the newly owned LEAF needs cgroup.kill write authority.
+            // systemd does not delegate parent-unit cgroup.kill to service users;
+            // requiring it would demand excessive control over the outer unit.
             name_="sgdx-child-"+std::to_string(::getpid());
             if(::mkdirat(parent_,name_.c_str(),0700)!=0)
                 throw std::runtime_error("S6-GK: cannot create unique delegated leaf");
             established_=true;
             leaf_=::openat(parent_,name_.c_str(),O_RDONLY|O_DIRECTORY|O_CLOEXEC|O_NOFOLLOW);
             if(leaf_<0)throw std::runtime_error("S6-GK: cannot open created leaf");
-            fd=open_member(leaf_,"cgroup.procs",O_WRONLY);closefd(fd);
+            int fd=open_member(leaf_,"cgroup.procs",O_WRONLY);closefd(fd);
             fd=open_member(leaf_,"cgroup.kill",O_WRONLY);closefd(fd);
             if(populated(leaf_))throw std::runtime_error("S6-GK: leaf contains an unowned process");
         }catch(...){

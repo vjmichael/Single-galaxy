@@ -1,0 +1,105 @@
+name: Stage 6 GK independent delegated-Linux and hosted-Windows SCM custody
+# This independent workflow does not install the game or perform Radeon testing.
+# Hosted Windows service evidence is NOT the creator's physical-PC SCM receipt.
+on:
+  push:
+    branches: [sg/stage6f5e-installed-terrain-recovery-20261112]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: stage06g-gk-independent
+  cancel-in-progress: true
+jobs:
+  delegated-linux:
+    name: Real systemd-owned delegated Linux cgroup and guardian death
+    runs-on: ubuntu-24.04
+    timeout-minutes: 18
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Build genuine Linux native SGDX in isolation
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          cmake -S tests/sgdx02 -B build/sgdx-kernel -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build build/sgdx-kernel --parallel 4
+          ctest --test-dir build/sgdx-kernel --output-on-failure
+      - name: Prove owned delegated cgroup-v2 leaf, hostile migration and detached kill
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p stage06g-kernel-evidence
+          unit="sg-s6g-positive-$GITHUB_RUN_ID"
+          sudo systemctl is-system-running --wait || test "$(systemctl is-system-running)" = degraded
+          sudo systemd-run --unit="$unit" --wait --collect --pipe \
+            -p Type=exec -p Delegate=yes -p KillMode=control-group -p TasksMax=64 \
+            -p "User=$(id -un)" -p "Group=$(id -gn)" \
+            -p "AmbientCapabilities=CAP_SETUID CAP_SETGID" \
+            -p "CapabilityBoundingSet=CAP_SETUID CAP_SETGID" -p NoNewPrivileges=no \
+            /usr/bin/python3 "$PWD/tests/Stage06GDelegatedCgroupAcceptance.py" \
+            "$PWD/build/sgdx-kernel/galaxy_server_dx_supervisor" \
+            "$PWD/build/sgdx-kernel/galaxy_server_dx_fault_child" \
+            --delegated-root auto --worker-uid 65534 --worker-gid 65534 \
+            --source-sha "$GITHUB_SHA" \
+            --output "$PWD/stage06g-kernel-evidence/positive-cgroup.json"
+          test -s stage06g-kernel-evidence/positive-cgroup.json
+          sudo journalctl -u "$unit" --no-pager -n 160 > stage06g-kernel-evidence/positive-unit-journal.log
+      - name: Kill genuine systemd service MainPID; reconcile escaped descendant custody
+        shell: bash
+        run: |
+          set -euo pipefail
+          python tests/Stage06GKSystemdGuardianLoss.py \
+            --supervisor "$PWD/build/sgdx-kernel/galaxy_server_dx_supervisor" \
+            --child "$PWD/build/sgdx-kernel/galaxy_server_dx_fault_child" \
+            --source-sha "$GITHUB_SHA" \
+            --output stage06g-kernel-evidence/systemd-guardian-death.json
+      - name: Retain original kernel evidence only, not SQLite data
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage06g-gk-systemd-linux-evidence
+          path: stage06g-kernel-evidence/
+          if-no-files-found: warn
+          retention-days: 14
+  hosted-windows-scm:
+    name: Hosted Windows MSVC SCM and kernel Job smoke (NOT physical)
+    runs-on: windows-2022
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - name: Original Windows MSVC x64 SQLite build of exact SCM gate
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if((git rev-parse HEAD).Trim() -cne $env:GITHUB_SHA){throw 'wrong source SHA'}
+          $root=$env:VCPKG_INSTALLATION_ROOT
+          if(-not $root){$root='C:\vcpkg'}
+          & (Join-Path $root 'vcpkg.exe') install sqlite3:x64-windows --classic
+          if($LASTEXITCODE -ne 0){throw 'SQLite SDK install failed'}
+          $toolchain=Join-Path $root 'scripts\buildsystems\vcpkg.cmake'
+          cmake -S . -B build/sg-gk -G 'Visual Studio 17 2022' -A x64 "-DCMAKE_TOOLCHAIN_FILE=$toolchain" -DBUILD_TESTING=ON -DBUILD_BENCHMARKS=OFF
+          if($LASTEXITCODE -ne 0){throw 'native configure failed'}
+          cmake --build build/sg-gk --config Release --parallel 4 --target galaxy_stage6g_windows_scm_gate galaxy_server_dx_fault_child
+          if($LASTEXITCODE -ne 0){throw 'native SCM fixture build failed'}
+      - name: Hosted ephemeral SCM LocalService and Job Object two-cycle smoke
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $root=Join-Path $env:ProgramData 'SingleGalaxy\S6GHostedKernel'
+          & ./tools/stage06g/Stage06G-Windows-SCMJob-Acceptance.ps1 -SourceSha $env:GITHUB_SHA -BuildDir build/sg-gk -ExecuteOneUse -HostedSmoke -EvidenceRoot $root
+          if($LASTEXITCODE -ne 0){throw 'hosted SCM verification failed'}
+          New-Item -ItemType Directory -Force stage06g-kernel-evidence | Out-Null
+          Copy-Item -Path (Join-Path $root $env:GITHUB_SHA 'job-*.json') -Destination stage06g-kernel-evidence -ErrorAction Stop
+          Copy-Item -Path (Join-Path $root $env:GITHUB_SHA 'scm-acceptance.json') -Destination stage06g-kernel-evidence -ErrorAction Stop
+      - name: Retain original hosted Windows receipts (NOT physical PC)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage06g-gk-hosted-windows-evidence
+          path: stage06g-kernel-evidence/
+          if-no-files-found: warn
+          retention-days: 14
