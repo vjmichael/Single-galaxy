@@ -4637,7 +4637,7 @@ public:
         std::size_t life_transfers=0, farm_builds=0, farm_stock_transfers=0, habitat_builds=0, habitat_transfers=0,utility_builds=0,utility_repairs=0,utility_spare_transfers=0,community_builds=0,community_transfers=0,clinic_builds=0,clinic_transfers=0,reclaimer_builds=0,waterworks_builds=0,waterworks_transfers=0;
         std::size_t workshop_builds=0,workshop_feeds=0,workshop_outputs=0,workshop_finisher_builds=0,workshop_final_outputs=0,workshop_stacks=0,workshop_practice=0,storage_builds=0,storage_stacks=0,extra_storage_builds=0,extra_storage_stacks=0;
         std::size_t auto_transfers = 0, auto_storage_transfers=0, storage_link_builds=0, conveyor_cells=0, world_escrows=0, world_returns=0;
-        std::size_t probe_device_transfers=0;
+        std::size_t probe_device_transfers=0, mining_tool_transfers=0;
         std::vector<ActivityEvent> recorded_auto, recorded_storage_auto;
         for (const auto& a : restored.activity_events()) {
             if (a.kind == ActivityKind::AutoMiningTransfer) recorded_auto.push_back(a);
@@ -4680,6 +4680,29 @@ public:
                 if(!identity || sqlite_str(ledger.get(),4)!=(recovered?probe:ship) ||
                    sqlite_str(ledger.get(),5)!=(recovered?ship:probe))
                     throw std::runtime_error("SQLite: probe-device custody endpoint mismatch");
+            } else if (reason=="mining_tool_install_t" ||
+                       reason=="mining_tool_removal_t") {
+                ++mining_tool_transfers;
+                const auto id=parse_u64(sqlite3_column_text(ledger.get(),0));
+                const auto ev=event_by_id.find(id);
+                const auto cmd=journal_commands.find(id);
+                const bool install=reason=="mining_tool_install_t";
+                if(ev==event_by_id.end() || cmd==journal_commands.end() ||
+                   cmd->second.action!=Action::ConfigureMiningTool ||
+                   cmd->second.amount!=(install?1:-1) ||
+                   cmd->second.target || cmd->second.thrust_x ||
+                   cmd->second.thrust_y ||
+                   ev->second.result!=Outcome::Applied || amount!=2 ||
+                   ev->second.transferred!=2 ||
+                   ev->second.tick!=static_cast<std::uint64_t>(
+                       sqlite3_column_int64(ledger.get(),1)))
+                    throw std::runtime_error("SQLite: mining-tool custody receipt mismatch");
+                const auto ship=std::to_string(cmd->second.actor);
+                const auto module="modules:"+ship;
+                const auto installed="hardpoint:"+ship+":mining_tool";
+                if(sqlite_str(ledger.get(),4)!=(install?module:installed) ||
+                   sqlite_str(ledger.get(),5)!=(install?installed:module))
+                    throw std::runtime_error("SQLite: mining-tool physical endpoints mismatch");
             } else if (reason == "mining_transfer") {
                 ++transfers;
                 const auto id = parse_u64(sqlite3_column_text(ledger.get(), 0));
@@ -5229,6 +5252,7 @@ public:
         if (auto_transfers != recorded_auto.size())
             throw std::runtime_error("SQLite: missing auto mining resource ledger rows");
         std::size_t expected_probe_device_transfers=0;
+        std::size_t expected_mining_tool_transfers=0;
         std::size_t expected_transfers = 0;
         std::size_t expected_salvage_transfers = 0;
         std::size_t expected_hangar_transfers = 0;
@@ -5259,6 +5283,8 @@ public:
                        cmd->second.action==Action::LaunchGeologicalDrone ||
                        cmd->second.action==Action::RecoverSurveyProbe)
                 ++expected_probe_device_transfers;
+            else if (cmd->second.action == Action::ConfigureMiningTool)
+                ++expected_mining_tool_transfers;
             else if (cmd->second.action == Action::Mine) ++expected_transfers;
             else if (cmd->second.action == Action::SalvageWreck) ++expected_salvage_transfers;
             else if (cmd->second.action == Action::UnloadOre) ++expected_hangar_transfers;
@@ -5316,6 +5342,7 @@ public:
         }
         if (!saw_genesis ||
             probe_device_transfers!=expected_probe_device_transfers ||
+            mining_tool_transfers!=expected_mining_tool_transfers ||
             transfers != expected_transfers || salvage_transfers != expected_salvage_transfers ||
             hangar_transfers != expected_hangar_transfers ||
             load_transfers != expected_load_transfers || sale_transfers != expected_sale_transfers ||
