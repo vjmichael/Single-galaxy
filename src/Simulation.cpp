@@ -1655,7 +1655,8 @@ bool Simulation::submit(const Command& c) {
     }
     if((legacy_planetary_residence_import_ &&
         c.id==legacy_planetary_residence_import_->host_request_id) ||
-        planetary_family_booking_ids_.count(c.id))
+        planetary_family_booking_ids_.count(c.id) ||
+        planetary_geology_freight_request_ids_.count(c.id))
         return false; // immutable host and family approvals are not ship commands
     if(ship_status_.contains_id(c.id))return false;
     // WO3-E: an accepted original owner colony/site work or founder
@@ -11218,6 +11219,7 @@ bool Simulation::load_planetary_geology_shuttle(
        kg<=0 || kg>1000 || !request_id ||
        request_id>=(std::uint64_t{1}<<50) ||
        submitted_ids_.count(request_id) ||
+       planetary_geology_freight_request_ids_.count(request_id) ||
        shuttle_flight_request_ids_.count(request_id) ||
        planetary_family_booking_ids_.count(request_id) ||
        voyages_.count(request_id) ||
@@ -11259,7 +11261,7 @@ bool Simulation::load_planetary_geology_shuttle(
     if(src<kg || hold>1000-kg || used>1000-kg ||
        sh.housing_module) return false;
     src-=kg;hold+=kg;
-    submitted_ids_.insert(request_id);
+    planetary_geology_freight_request_ids_.insert(request_id);
     snapshot_version_=std::max(snapshot_version_,136);
     return true;
 }
@@ -11277,6 +11279,7 @@ bool Simulation::unload_planetary_geology_shuttle(
        kg<=0 || kg>1000 || !request_id ||
        request_id>=(std::uint64_t{1}<<50) ||
        submitted_ids_.count(request_id) ||
+       planetary_geology_freight_request_ids_.count(request_id) ||
        shuttle_flight_request_ids_.count(request_id) ||
        planetary_family_booking_ids_.count(request_id) ||
        voyages_.count(request_id) ||
@@ -11323,7 +11326,7 @@ bool Simulation::unload_planetary_geology_shuttle(
     // ship cargo credited; there is no direct surface-to-orbit teleport.
     held-=kg;
     carrier->second.goods_kg[code]=existing+kg;
-    submitted_ids_.insert(request_id);
+    planetary_geology_freight_request_ids_.insert(request_id);
     snapshot_version_=std::max(snapshot_version_,136);
     return true;
 }
@@ -13993,6 +13996,9 @@ std::string Simulation::canonical_state() const {
     if(snapshot_version_>=81)
         for(const auto id:shuttle_flight_request_ids_)
             out<<"planetflightreceipt|"<<id<<'\n';
+    if(snapshot_version_>=136)
+        for(const auto id:planetary_geology_freight_request_ids_)
+            out<<"planetgeofreightreceipt|"<<id<<'\n';
     if(snapshot_version_>=131)
         for(const auto id:player_planet_receipts_)
             out<<"playerplanetreceipt|"<<id<<'\n';
@@ -15235,6 +15241,13 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                result.player_planet_receipts_.size()>=100000 ||
                !result.player_planet_receipts_.insert(id).second)
                 throw std::runtime_error("snapshot: invalid player planetary action receipt");
+        } else if(f[0]=="planetgeofreightreceipt" && result.snapshot_version_>=136) {
+            require_fields(f,2);
+            const auto id=u64(f[1]);
+            if(!id || id>=(std::uint64_t{1}<<50) ||
+               result.planetary_geology_freight_request_ids_.size()>=100000 ||
+               !result.planetary_geology_freight_request_ids_.insert(id).second)
+                throw std::runtime_error("snapshot: invalid or duplicate geological freight receipt");
         } else if(f[0]=="planetflightreceipt" && result.snapshot_version_>=81) {
             require_fields(f,2);
             const auto id=u64(f[1]);
@@ -17118,7 +17131,9 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                   c.amount<1 || c.amount>1000 ||
                   (c.action==Action::ConstructOutpost && c.amount!=1))) ||
                 ((c.action==Action::RefineMineral || c.action==Action::FabricateMaterialModule) &&
-                 (result.snapshot_version_<9 || c.thrust_x || c.thrust_y ||
+                 (result.snapshot_version_<9 || c.thrust_y ||
+                   (c.thrust_x!=0 && !(c.action==Action::RefineMineral &&
+                      c.thrust_x==1 && result.snapshot_version_>=123)) ||
                    c.amount<1 || (c.action==Action::RefineMineral ?
                      (c.amount>100000 || !mineral_name(c.target) || c.target==9) :
                      (c.amount>1000 || (c.target!=1 && c.target!=2))))) ||
@@ -17683,6 +17698,23 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
             if(c.ems_treatment_units!=units || c.ems_treated_cases!=cases)
                 throw std::runtime_error("snapshot: clinic EMS treatment totals mismatch");
         }
+    }
+    // v136 direct geological freight transfers are authorized durable
+    // mutations, NOT queued commands. Keep their single-use request IDs
+    // distinct from the submitted-command/event receipt ledger.
+    for(const auto id:result.planetary_geology_freight_request_ids_) {
+        if(result.submitted_ids_.count(id) ||
+           result.shuttle_flight_request_ids_.count(id) ||
+           result.planetary_source_transfers_.count(id) ||
+           result.player_planet_receipts_.count(id) ||
+           result.surface_move_receipts_.count(id) ||
+           result.planetary_family_booking_ids_.count(id) ||
+           result.local_delivery_orders_.count(id) ||
+           result.intercolony_freight_.count(id) ||
+           result.pending_celestial_transits_.count(id) ||
+           result.completed_celestial_transits_.count(id) ||
+           result.voyages_.count(id))
+            throw std::runtime_error("snapshot: geological freight receipt aliases original command or transfer");
     }
     if (pending_ids.size() + event_ids.size() != result.submitted_ids_.size())
         throw std::runtime_error("snapshot: missing or extra command receipts");
@@ -20026,6 +20058,7 @@ void Simulation::swap(Simulation& other) noexcept {
     npc_flight_orders_.swap(other.npc_flight_orders_);
     player_people_.swap(other.player_people_); // preserve v98 person identity across atomic commit
     shuttle_flight_request_ids_.swap(other.shuttle_flight_request_ids_);
+    planetary_geology_freight_request_ids_.swap(other.planetary_geology_freight_request_ids_);
     player_planet_receipts_.swap(other.player_planet_receipts_);
     surface_move_receipts_.swap(other.surface_move_receipts_);
     planetary_family_booking_ids_.swap(other.planetary_family_booking_ids_);

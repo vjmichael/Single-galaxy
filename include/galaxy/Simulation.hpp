@@ -2101,6 +2101,7 @@ private:
     std::map<std::uint64_t,ShipyardCustomerOrder> shipyard_customer_orders_; // v93
     std::map<std::uint64_t,WorkDirective> work_directives_; // v94
     std::set<std::uint64_t> shuttle_flight_request_ids_; // v81 replay rejection
+    std::set<std::uint64_t> planetary_geology_freight_request_ids_; // v136 direct durable approvals, not STEP command events
     std::set<std::uint64_t> player_planet_receipts_; // v131 original action replay rejection
     std::set<std::uint64_t> surface_move_receipts_; // v132 exact native movement replay
     std::set<std::uint64_t> planetary_family_booking_ids_; // v116 immutable roster approvals

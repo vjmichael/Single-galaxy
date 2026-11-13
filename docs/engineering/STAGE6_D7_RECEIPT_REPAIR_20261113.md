@@ -1,3 +1,13 @@
+## 2026-11-13 D7 native closeout findings (post-v126)
+
+- Run [#43466540243](https://github.com/vjmichael/Single-galaxy/actions/runs/43466540243), exact SHA `7e5bf0c`, compiled and ran selected native tests on both Ubuntu and Windows. **38/39 succeeded** on each OS including strict receipt-contract; positive D7 failed identically at `ConstructOutpost`, ID 4 tick 92, `InvalidTarget` because the newly fitted ship was at exactly the 2500mm station exclusion.
+- Repair [`2ea233e`](https://github.com/vjmichael/Single-galaxy/commit/2ea233eedb97ea397692c797965e0f6251a31252) moved the actual ship using native thrust and counterthrust; local tracing revealed a swept asteroid hazard on that vector. The fixture now places the fitting station on the opposite side, retaining genuine native movement and the exclusion rule.
+- Subsequent local real-world trace progressed through the entire original station refinery and documented qualification/planetary builds. Original saved-world pending-command validation previously disallowed station-sourced `RefineMineral` with `thrust_x=1` even when submission approved it; the reader now admits this exact command at snapshot >=123 and continues to reject other malformed parameters.
+- The commissioned refinery needs one original resident on site while four trained adults move to the ship; one fifth finite shipboard adult is deployed rather than falsifying plant staffing.
+- Shuttle launches burn original water propellant; with a combined 1000kg hold, 1000kg mineral cargo needs **two real voyages**: 999kg + 1kg. The fixture draws actual site/orbital water, checks capacity refusal, multiple actual ascent/descent receipts and the final ship cargo total.
+- Direct geological load/unload are durable original `PersistentWorld` transactions, not executed `Command` STEP events. They previously inserted IDs into `submitted_ids_`, causing genuine `snapshot: missing or extra command receipts` and preventing SQLite replay. Added a distinct canonical v136 `planetgeofreightreceipt` replay set with duplicate and cross-family ID denial, while preserving actual pending/executed command integrity.
+- **Verification so far:** source-only syntax checks for changed `Simulation.cpp`, `Persistence.cpp`, fixture **passed** on local Linux. Complete native rebuild was interrupted under this container's resource limits; therefore full D7 CTest and matching Windows/Linux native matrices on the new head are **NOT yet passed**. No claim of D7 closure, release, merge or installation until original results prove the material chain, replay and conservation.
+
 # S6-D7 — exact command-receipt repair (2026-11-13)
 
 ## Original v123+ station-mineral custody integration (2026-11-13)

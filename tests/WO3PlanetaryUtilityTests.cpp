@@ -209,7 +209,7 @@ int main(int argc,char** argv) {
     const auto bulk=seed.add_asteroid({2000,0},150);
     const auto silicate=seed.add_geological_asteroid({1000,0},
         AsteroidClass::Silicate,30,2500);
-    const auto fitting_station=d7 ? seed.add_station({-2000,0}) : EntityId{0};
+    const auto fitting_station=d7 ? seed.add_station({2000,0}) : EntityId{0};
     seed.ensure_physical_celestial_systems();
     seed.ensure_ship_frame_registry();
     if(advanced) {
@@ -410,12 +410,12 @@ int main(int argc,char** argv) {
     }
     CHECK(w.world().workshop_trade_certified(
         trained_visitor,WorkshopTrade::Shape));
-    // The exact four original named workers now return from their real
-    // habitat duty to the ship before celestial transit. The workshop
-    // operator/finisher retains qualification receipts, never shadow crew.
+    // Keep one genuine finite worker at the commissioned station refinery
+    // while the four Shape-trained adults return to their original ship.
+    if(d7)act(w,ship,293,Action::AssignHabitatResidents,orbital,1);
     act(w,ship,290,Action::AssignUtilityTechnicians,orbital,0);
     act(w,ship,291,Action::AssignHabitatResidents,orbital,-4);
-    CHECK(w.world().habitat(orbital)->residents==0);
+    CHECK(w.world().habitat(orbital)->residents==(d7?1:0));
     CHECK(w.world().npc_records().at(builder).location==ship);
     CHECK(w.world().npc_available_for_duty(builder));
     CHECK(w.begin_celestial_transit(7,ship,chosen.body,90001));
@@ -1300,12 +1300,18 @@ int main(int argc,char** argv) {
         // a real piloted shuttle, a manufacturing project and a source ship.
         // A second pair of real manufactured modules MUST make the miner;
         // earlier farm modules were consumed, never copied.
+        // Every real descent/ascent burns 1kg of original water propellant.
+        // Source water comes from the genuine landed site/ship inventory.
+        CHECK(w.load_planetary_shuttle(7,ship,key,ShuttleCargo::Water,1));
         up(w,ship,key,89010);
         CHECK(w.transfer_planetary_housing_module(7,ship,key,true));
+        CHECK(w.load_planetary_shuttle(7,ship,key,ShuttleCargo::Water,1));
         down(w,ship,key,89011);
         CHECK(w.transfer_planetary_housing_module(7,ship,key,false));
+        CHECK(w.load_planetary_shuttle(7,ship,key,ShuttleCargo::Water,1));
         up(w,ship,key,89012);
         CHECK(w.transfer_planetary_housing_module(7,ship,key,true));
+        CHECK(w.load_planetary_shuttle(7,ship,key,ShuttleCargo::Water,1));
         down(w,ship,key,89013);
         CHECK(w.transfer_planetary_housing_module(7,ship,key,false));
         CHECK(w.world().planetary_sites().at(key).housing_modules==2);
@@ -1346,35 +1352,41 @@ int main(int argc,char** argv) {
         CHECK(w.world().planetary_sites().at(key).regional_geology_kg[1]==
               site_before+1000);
         CHECK(w.world().total_ore()==initial_mass);
+        // 1,000kg sealed hold includes propulsion water. Carry 999kg
+        // on the first actual ascent, then the final 1kg on a second.
+        // This is real two-voyage transport, not a mass or fuel exception.
+        CHECK(w.load_planetary_shuttle(7,ship,key,ShuttleCargo::Water,1));
+        const auto fueled=w.world().state_hash();
         CHECK(!w.load_planetary_geology_shuttle(
-            8,ship,key,PlanetaryResource::Mineral,1000,89103));
+            7,ship,key,PlanetaryResource::Mineral,1000,89108));
+        CHECK(w.world().state_hash()==fueled);
+        CHECK(!w.load_planetary_geology_shuttle(
+            8,ship,key,PlanetaryResource::Mineral,999,89103));
         CHECK(!w.unload_planetary_geology_shuttle(
             7,ship,key,PlanetaryResource::Mineral,1000,89104));
         bool failed_load=false;
         try{
             (void)w.load_planetary_geology_shuttle(
-                7,ship,key,PlanetaryResource::Mineral,1000,89103,
+                7,ship,key,PlanetaryResource::Mineral,999,89103,
                 FailPoint::AfterSnapshotWrite);
         }catch(const std::exception&){failed_load=true;}
         CHECK(failed_load);
         CHECK(w.world().planetary_shuttles().at(key).regional_geology_kg[1]==0);
         CHECK(w.load_planetary_geology_shuttle(
-            7,ship,key,PlanetaryResource::Mineral,1000,89103));
-        CHECK(w.world().planetary_shuttles().at(key).regional_geology_kg[1]==1000);
-        CHECK(w.world().planetary_sites().at(key).regional_geology_kg[1]==
-              site_before);
+            7,ship,key,PlanetaryResource::Mineral,999,89103));
+        CHECK(w.world().planetary_shuttles().at(key).regional_geology_kg[1]==999);
+        CHECK(w.world().planetary_sites().at(key).regional_geology_kg[1]==site_before+1);
         CHECK(!w.load_planetary_geology_shuttle(
-            7,ship,key,PlanetaryResource::Mineral,1000,89103));
-        // Physical ascent is the only path into original orbital cargo.
+            7,ship,key,PlanetaryResource::Mineral,999,89103));
         up(w,ship,key,89105);
         const auto in_orbit=w.world().state_hash();
         CHECK(!w.unload_planetary_geology_shuttle(
-            8,ship,key,PlanetaryResource::Mineral,1000,89106));
+            8,ship,key,PlanetaryResource::Mineral,999,89106));
         CHECK(w.world().state_hash()==in_orbit);
         bool failed_unload=false;
         try{
             (void)w.unload_planetary_geology_shuttle(
-                7,ship,key,PlanetaryResource::Mineral,1000,89106,
+                7,ship,key,PlanetaryResource::Mineral,999,89106,
                 FailPoint::AfterSnapshotWrite);
         }catch(const std::exception&){failed_unload=true;}
         CHECK(failed_unload && w.world().state_hash()==in_orbit);
@@ -1382,12 +1394,24 @@ int main(int argc,char** argv) {
         const auto old_goods=before_goods.count("planetary_mineral")?
             before_goods.at("planetary_mineral"):0;
         CHECK(w.unload_planetary_geology_shuttle(
-            7,ship,key,PlanetaryResource::Mineral,1000,89106));
+            7,ship,key,PlanetaryResource::Mineral,999,89106));
         CHECK(w.world().colony_ships().at(ship).
-              goods_kg.at("planetary_mineral")==old_goods+1000);
+              goods_kg.at("planetary_mineral")==old_goods+999);
         CHECK(w.world().planetary_shuttles().at(key).regional_geology_kg[1]==0);
         CHECK(!w.unload_planetary_geology_shuttle(
-            7,ship,key,PlanetaryResource::Mineral,1000,89106));
+            7,ship,key,PlanetaryResource::Mineral,999,89106));
+        CHECK(w.load_planetary_shuttle(7,ship,key,ShuttleCargo::Water,2));
+        down(w,ship,key,89110);
+        CHECK(w.load_planetary_geology_shuttle(
+            7,ship,key,PlanetaryResource::Mineral,1,89111));
+        CHECK(w.world().planetary_sites().at(key).regional_geology_kg[1]==site_before);
+        up(w,ship,key,89112);
+        CHECK(w.unload_planetary_geology_shuttle(
+            7,ship,key,PlanetaryResource::Mineral,1,89113));
+        CHECK(!w.unload_planetary_geology_shuttle(
+            7,ship,key,PlanetaryResource::Mineral,1,89113));
+        CHECK(w.world().colony_ships().at(ship).
+              goods_kg.at("planetary_mineral")==old_goods+1000);
         CHECK(w.world().total_ore()==initial_mass);
         const auto original=w.world().canonical_state();
         CHECK(Simulation::from_snapshot(original).canonical_state()==original);
