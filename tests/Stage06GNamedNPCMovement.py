@@ -86,14 +86,33 @@ def main():
             proc.stdin.write(f"NMOVE|{session+1}|1|{npc}|200|0\n")
             proc.stdin.flush()
             await_frame(pending,"DENY|1|1|planet-session-mismatch")
-            # Wait for one autonomous ORIGINAL SQLite tick.
+            # Explicit negative original-world contracts: do not permit
+            # client movement beyond the 250-mm physical NPC limit or an
+            # invented named person to enter original SQLite custody.
+            proc.stdin.write(f"NMOVE|{session}|2|{npc}|500|0\n")
+            proc.stdin.flush()
+            await_frame(pending,"DENY|1|2|planet-step-limit")
+            # Advance one original durable tick rather than moving on the
+            # Godot renderer's clock. A wrong NPC must then fail ownership.
             while True:
                 row=await_frame(pending,"PFRAME|1|")
                 if int(row[15])>int(p[15]):break
-            proc.stdin.write(f"NMOVE|{session}|2|{npc}|200|0\n")
+            proc.stdin.write(f"NMOVE|{session}|3|99999999|200|0\n")
+            proc.stdin.flush()
+            await_frame(pending,"DENY|1|3|planet-native-action-refused")
+            # The negative proposal cannot alter the actual resident pose.
+            # Allow the 50-ms host rate fence to expire independently.
+            time.sleep(0.075)
+            while True:
+                row=await_frame(pending,"PFRAME|1|")
+                if int(row[15])>int(p[15])+1:break
+            proc.stdin.write(f"NMOVE|{session}|4|{npc}|200|0\n")
             proc.stdin.flush()
             ack=await_frame(pending,"NACK|1|")
-            assert int(ack[2])==session and int(ack[3])==2
+            assert int(ack[2])==session and int(ack[3])==4
+            proc.stdin.write(f"NMOVE|{session}|4|{npc}|200|0\n")
+            proc.stdin.flush()
+            await_frame(pending,"DENY|1|4|planet-request-replayed")
             assert int(ack[4])==npc and int(ack[9])>0
             assert int(ack[8])>before[1]
         finally:

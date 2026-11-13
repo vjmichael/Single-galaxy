@@ -1,3 +1,18 @@
+# ACTIVE STAGE 6 FEATURE-CLOSEOUT PLAN — 2026-11-12
+
+**Sequence: S6-D/E → S6-F → S6-G → functional closeout.** The user explicitly prioritizes completing gameplay features before another physical PC validation. Preserve older Godot/GPU gameplay evidence. Physical Radeon retests are **not a gate** unless a changed graphics/hardware path actually demonstrates a regression. Hosted NSIS checks are manually opt-in after feature implementation, and no release or main merge is authorized.
+
+## Work still outstanding
+- **D6 regional water/soil:** Original physical upstream/downstream transfer exists. A new source-backed native test checks positive 20-tick watershed transfer between funded adjacent regions, original resource conservation, canonical reparse and SQLite reopen. This new test is pending native Windows/Linux validation.
+- **D7 geology freight:** The original extractor and v136 freight schema exist. Still integrate one *positive* native sequence from a genuinely trained Shape worker and commissioned, powered site through original regional source extraction, landed shuttle load, genuine ascent, ship cargo credit, replay/rollback and journal readback. Do **not** seed fake extracted goods in tests.
+- **E6 ecology:** Seasonal field/controlled crop budgets, hazard/soil/rest and power constraints exist. Still exercise a complete original physical farm with real resources, qualified deployed workers, actual cycles, ecological shortages, and durable recovery. Complete missing ecological behavior demonstrated by that case, rather than inventing an unlimited ecosystem scope.
+- **F planetary gameplay:** Original native terrain, gravity/survival, role recovery and NPC movement implementations exist. Extend F5-D regression with oversized NPC move, forged named-NPC ID and replay denial in addition to verified movement/restart. Reconcile source-authoritative Godot packet/mesh and native medical/suit/atmosphere integration; no broad GPU recheck for unchanged renderer.
+- **G consolidation:** Historical exact-head 8ee71f0 had Windows/Linux 35/35. New heads require exact-head native acceptance. Current SGDX supplemental Linux test showed a real protocol-test mismatch (extra ROCKNONE before NAV); correlate telemetry by session and request without dropping navigation verification. Continue independent multi-cell process-custody and actual 1,024+ tick worker load/restart. Installed/physical Radeon remains separately deferred, not a Stage 6 feature blocker.
+
+**Closeout means completed D/E/F function, repaired native acceptance at one Windows/Linux SHA, and genuine original worker/journal custody. It does not mean repeatedly revalidating proven GPU hardware.** Stage 7 remains separate.
+
+---
+
 # S6-G functional closeout: D7 freight, E6 ecology, F5-D named-NPC movement
 
 Date: 2026-11-12. Branch:

@@ -6,6 +6,11 @@ on:
   push:
     branches: [sg/stage6f5e-installed-terrain-recovery-20261112]
   workflow_dispatch:
+    inputs:
+      installed_acceptance:
+        description: 'Opt-in hosted NSIS installation after core Stage 6 feature integration'
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -126,14 +131,14 @@ jobs:
             --packet build/stage06g-installed-evidence/planet-source-packet.json \
             2>&1 | tee stage06g-sgdx-planet.log
       - name: Actually install Windows NSIS original game, test and uninstall
-        if: runner.os == 'Windows'
+        if: runner.os == 'Windows' && github.event_name == 'workflow_dispatch' && inputs.installed_acceptance
         shell: pwsh
         run: |
           $ErrorActionPreference='Stop'
           & ./desktop_godot/build_tools/Stage06G-InstalledWindows.ps1 -BuildDir build/stage06g -SourceSha '${{ github.sha }}' -EvidenceDir build/stage06g-installed-evidence
           if($LASTEXITCODE -ne 0){throw 'Hosted installed original game failed; physical acceptance remains open'}
       - name: Publish unsigned test installer only after successful hosted installed acceptance
-        if: runner.os == 'Windows' && success()
+        if: runner.os == 'Windows' && github.event_name == 'workflow_dispatch' && inputs.installed_acceptance && success()
         uses: actions/upload-artifact@v4
         with:
           name: stage06g-nsis-unsigned-test-installer-${{ github.sha }}

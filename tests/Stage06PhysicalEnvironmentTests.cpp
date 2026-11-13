@@ -187,11 +187,89 @@ static void world_processes(const std::string& db){
     }
     cleanup(db);
 }
+// D6 positive original-world acceptance: a real funded upstream region sends
+// literal water to its authoritative adjacent watershed cell during an actual
+// committed world STEP. No rain model values or unregistered deposits count.
+static void cross_region_world(const std::string& db){
+    cleanup(db);
+    Simulation sim(777,1);
+    const auto ship=sim.add_colony_ship(7,{0,0},50,5);
+    sim.provision_starter_exploration_scanner(ship);
+    sim.enable_native_galactic_physics({
+        {1,galactic::Point{{0,100000},{0,100000},{0,100000}}}});
+    sim.ensure_planetary_genesis_manifest();
+    PlanetarySiteKey upstream{},downstream{};
+    for(const auto& [body,gen]:sim.planetary_genesis()){
+        if(!gen.envelope.water_coverage)continue;
+        const auto map=planetary::generate_watersheds(gen.key,gen.envelope);
+        const auto climate=planetary::generate_seasonal_climate(
+            map,gen.key,gen.envelope);
+        for(int i=0;i<planetary::kWatershedCells;++i){
+            const auto& cell=map.cells[i];
+            if(cell.ocean || cell.downstream<0 ||
+               map.cells[cell.downstream].ocean)continue;
+            const auto lat=i/planetary::kWatershedColumns;
+            const auto lon=i%planetary::kWatershedColumns;
+            if(climate.at(0,lat,lon).temperature_c<=5 ||
+               climate.at(1,lat,lon).temperature_c<=5)continue;
+            upstream={body,std::uint16_t(lat),std::uint16_t(lon),1};
+            downstream={body,
+                std::uint16_t(cell.downstream/planetary::kWatershedColumns),
+                std::uint16_t(cell.downstream%planetary::kWatershedColumns),1};
+            break;
+        }
+        if(std::get<0>(upstream))break;
+    }
+    CHECK(std::get<0>(upstream)!=0 && upstream!=downstream);
+    const auto body=std::get<0>(upstream);
+    sim.provision_planetary_body_genesis(body,{6000,12000,1000,0});
+    sim.place_planetary_region_genesis(body,std::get<1>(upstream),
+        std::get<2>(upstream),{6000,12000,0,0});
+    // The downstream site already exists in the SAME finite original
+    // geological catalogue but starts with no water or soil.
+    sim.place_planetary_region_genesis(body,std::get<1>(downstream),
+        std::get<2>(downstream),{0,0,1000,0});
+    sim.enable_physical_planetary_environment();
+    const auto mass=sim.total_ore();
+    CHECK(sim.planetary_region_sources().at(upstream).stock_kg[0]==6000);
+    CHECK(sim.planetary_region_sources().at(downstream).stock_kg[0]==0);
+    const auto out=db+".reopened";
+    cleanup(out);
+    std::string committed;
+    std::uint64_t generation=0;
+    {
+        PersistentWorld world(db,std::move(sim));
+        CHECK(world.world().total_ore()==mass);
+        world.steps(20);
+        const auto& after=world.world();
+        const auto source=after.planetary_region_sources().at(upstream).stock_kg[0];
+        const auto target=after.planetary_region_sources().at(downstream).stock_kg[0];
+        CHECK(target>0 && source<6000 && source+target==6000);
+        CHECK(after.planetary_physical_environment().at(downstream).water_kg[0]>0);
+        CHECK(after.total_ore()==mass);
+        committed=after.canonical_state();
+        CHECK(Simulation::from_snapshot(committed).canonical_state()==committed);
+        generation=world.generation();
+        PersistentWorld::recover_copy(db,out);
+    }
+    {
+        PersistentWorld reopened(out,Simulation(777,1));
+        CHECK(reopened.generation()==generation);
+        CHECK(reopened.world().canonical_state()==committed);
+        CHECK(reopened.world().total_ore()==mass);
+        reopened.steps(20);
+        CHECK(reopened.world().total_ore()==mass);
+    }
+    cleanup(out);
+    cleanup(db);
+}
+
 int main(int argc,char** argv){
     if(argc!=2)return 2;
     try{
         local_processes();
         world_processes(argv[1]);
+        cross_region_world(std::string(argv[1])+".regional");
         std::cout<<"Stage06-D source physical processes and SQLite migration PASS\n";
         return 0;
     }catch(const std::exception& e){

@@ -184,9 +184,24 @@ def send(p, payload, needs_rock=False):
     assert first and first[0] in ("ACK","DENY","SHIP"),first
     rock = None
     if needs_rock and first[0] == "SHIP":
-        rock = bounded_line(p, "native ROCK").split("|")
-        assert rock[0] in ("ROCK","ROCKNONE"),rock
-        nav = bounded_line(p, "same-tick native station NAV").split("|")
+        # The original native clock can emit a ROCKNONE advisory between
+        # authoritative ROCK and NAV receipts. Identify the exact request,
+        # rather than treating a variable telemetry burst as a fixed tuple.
+        rock,nav=None,None
+        for _ in range(20):
+            row=bounded_line(p, "same-request original ROCK/NAV").split("|")
+            if row[0] in ("ROCK","ROCKNONE"):
+                assert row[2]==first[2],row
+                if row[3]==first[3] and (
+                        rock is None or row[0]=="ROCK"):
+                    rock=row
+                continue
+            if row[0] in ("NAV","NAVNONE") and row[2]==first[2] and row[3]==first[3]:
+                nav=row
+                break
+            # An unrelated zero-request sensor update remains read-only.
+            assert row[0] in ("NAV","NAVNONE"),row
+        assert rock is not None and nav is not None,(rock,nav)
         assert len(nav)==11 and nav[:5]==["NAV","1",first[2],first[3],first[6]],nav
         assert nav[5:7]==first[7:9] and int(nav[7])>0,nav
         assert sum(int(v)**2 for v in nav[8:11])<=1000000000**2,nav
@@ -198,8 +213,20 @@ def start_original(save):
                          text=True,bufsize=1)
     pose=bounded_line(p, "original POSE").split("|")
     ship=bounded_line(p, "original SHIP").split("|")
-    rock=bounded_line(p, "original initial ROCK").split("|")
-    nav=bounded_line(p, "original initial NAV").split("|")
+    rock,nav=None,None
+    for _ in range(20):
+        row=bounded_line(p,"original initial ROCK/NAV").split("|")
+        assert row[2]==pose[2],row
+        if row[0] in ("ROCK","ROCKNONE"):
+            if row[3]=="0" and (rock is None or row[0]=="ROCK"):
+                rock=row
+        elif row[0] in ("NAV","NAVNONE"):
+            if row[3]=="0":
+                nav=row
+                break
+        else:
+            raise AssertionError(f"Unexpected original ship telemetry {row}")
+    assert rock is not None and nav is not None,(rock,nav)
     assert len(nav)==11 and nav[:5]==["NAV","1",pose[2],"0",pose[10]],nav
     assert nav[5:7]==ship[7:9] and int(nav[7])>0,nav
     assert pose[:2] == ["POSE","1"] and ship[:2] == ["SHIP","1"] and rock[0] in (
@@ -251,12 +278,18 @@ def check_original_world(root):
                              input="QUIT\n",capture_output=True,text=True,timeout=15)
     assert resumed.returncode == 0, (resumed.returncode,resumed.stderr[:600])
     records = resumed.stdout.splitlines()
-    assert len(records) >= 4 and records[0].startswith("POSE|1|") and (
-        "ROCK|1|" in records[2]), records[:4]
-    nav=records[3].split("|")
-    assert len(nav)==11 and nav[:5]==["NAV","1",records[0].split("|")[2],"0",records[1].split("|")[6]],nav
+    assert len(records)>=4 and records[0].startswith("POSE|1|"),records[:5]
+    token2=records[0].split("|")[2]
+    observed=[line.split("|") for line in records[2:]]
+    rocks=[f for f in observed if f[0]=="ROCK" and
+           len(f)>8 and f[2]==token2 and f[3]=="0"]
+    navs=[f for f in observed if f[0]=="NAV" and
+          len(f)==11 and f[2]==token2 and f[3]=="0"]
+    assert rocks and navs,observed[:8]
+    nav=navs[0]
+    assert nav[:5]==["NAV","1",token2,"0",records[1].split("|")[6]],nav
     assert nav[5:7]==records[1].split("|")[7:9],nav
-    restored = records[2].split("|")
+    restored = rocks[0]
     assert restored[7] == rock and restored[8] == stock
     with closing(sqlite3.connect(save)) as con:
         assert con.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
