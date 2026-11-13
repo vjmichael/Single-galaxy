@@ -7,7 +7,7 @@
 !endif
 Unicode true
 Name "Single Galaxy Stage 6 Native Acceptance"
-OutFile "\${OUTFILE}"
+OutFile "${OUTFILE}"
 InstallDir "$LOCALAPPDATA\SingleGalaxyStage6Acceptance"
 RequestExecutionLevel user
 SetCompressor /SOLID lzma
@@ -15,7 +15,7 @@ ShowInstDetails show
 ShowUninstDetails show
 Section "Install native original game and bundled Godot" SecGame
   SetOutPath "$INSTDIR"
-  File /r "\${PAYLOAD}\*.*"
+  File /r "${PAYLOAD}\*.*"
   WriteUninstaller "$INSTDIR\Uninstall.exe"
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\SingleGalaxyStage6Acceptance" "DisplayName" "Single Galaxy Stage 6 Acceptance"
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\SingleGalaxyStage6Acceptance" "InstallLocation" "$INSTDIR"
