@@ -318,7 +318,12 @@ static void cross_system_ship_destruction_custody(){
     world.add_system(2);
     const auto attacker=world.add_colony_ship(7,{0,0},100,4);
     world.provision_colony_genesis(attacker,1000,1000,1000,1000,1000);
-    const auto near_drone=world.add_training_drone({2000,0});
+    // This target is physically near the REAL post-gate arrival, which
+    // displaces the ship by +/-12000 mm according to original ship-ID
+    // parity. The test must model that exit geometry, not assume the
+    // attacker materializes at the center of the destination gate.
+    const auto near_drone=world.add_training_drone({
+        (attacker%2)?-10000:10000,0});
     const auto remote_drone=world.add_training_drone({250000,0});
     world.enable_native_3d_physics();
     const galactic::Point first{{0,1000000},{0,1000000},{0,1000000}};
