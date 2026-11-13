@@ -42,8 +42,13 @@ static void act(PersistentWorld& w,EntityId ship,std::uint64_t id,
     c.action=kind;c.target=target;c.amount=quantity;
     c.execute_tick=w.world().tick()+1;
     CHECK(w.submit(c));w.step();
-    CHECK(w.world().events().back().command_id==id &&
-          w.world().events().back().result==Outcome::Applied);
+    const auto& receipt=w.world().events().back();
+    if(receipt.command_id!=id || receipt.result!=Outcome::Applied)
+        throw std::runtime_error("S6-F5 source action failed: receipt="+
+            std::to_string(id)+" kind="+
+            std::to_string(static_cast<unsigned>(kind))+" outcome="+
+            std::to_string(static_cast<unsigned>(receipt.result)));
+
 }
 int main() {
 try {
@@ -58,6 +63,7 @@ try {
     const auto db=(dir/"original-player.sqlite").string();
     Simulation seed(613,selected.system);
     const auto ship=seed.add_colony_ship(7,{0,0},60,8);
+    const auto station=seed.add_station({0,0});
     seed.provision_colony_genesis(ship,2000,2000,2000,2000,2000);
     seed.enable_individual_workforce();
     seed.provision_starter_exploration_scanner(ship);
@@ -66,6 +72,11 @@ try {
     seed.ensure_ship_frame_registry();
     seed.enable_native_galactic_physics({
         {selected.system,galactic::Point{{0,100000},{0,100000},{0,100000}}}});
+    seed.enable_station_ore_provenance();
+    seed.enable_ship_mining_equipment();
+    // Fixture-only finite source pays for the initial 2t mining hardpoint.
+    // Fitting and mining must still pass the real native authorization path.
+    seed.provision_mining_test_refined_stock(ship);
     // Every v127+ snapshot must carry the complete immutable planet
     // catalogue before any transport/ground state can promote the schema.
     seed.ensure_planetary_genesis_manifest();
@@ -73,9 +84,21 @@ try {
     PersistentWorld world(db,std::move(seed));
     CHECK(world.register_player_person(7,ship));
     CHECK(!world.register_player_person(8,ship));
-    act(world,ship,1001,Action::Mine,rock,30);
-    act(world,ship,1002,Action::RefineOre,0,30);
-    act(world,ship,1003,Action::FabricateModule,0,8);
+    act(world,ship,1001,Action::RequestDock,station);
+    world.steps(Simulation::kDockTransitionTicks);
+    CHECK(world.world().find(ship)->dock_state==DockState::Docked);
+    act(world,ship,1002,Action::FabricateModule,0,1);
+    act(world,ship,1003,Action::ConfigureMiningTool,0,1);
+    CHECK(world.world().find(ship)->fitting.mining_tool());
+    act(world,ship,1004,Action::RequestUndock,station);
+    world.steps(Simulation::kDockTransitionTicks);
+    CHECK(world.world().find(ship)->dock_state==DockState::InSpace);
+    // Original v126+ commands mine one tonne with a powered drill and
+    // a registered onboard owner. Never bypass source/custody checks.
+    for(std::uint64_t i=0;i<30;++i)
+        act(world,ship,1010+i,Action::Mine,rock,1);
+    act(world,ship,1040,Action::RefineOre,0,30);
+    act(world,ship,1041,Action::FabricateModule,0,8);
     CHECK(world.begin_celestial_transit(7,ship,selected.body,90001));
     world.steps(4);
     CHECK(world.complete_celestial_transit(90001));

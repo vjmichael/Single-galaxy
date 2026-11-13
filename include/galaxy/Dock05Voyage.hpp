@@ -144,13 +144,15 @@ public:
         PlayerId owner,EntityId ferry,EntityId destination,
         EntityId receiver){
         const auto& sim=world.world();
-        const auto* boat=sim.find(ferry),*port=sim.find(origin),
-                  *far=sim.find(destination),*home=sim.find(receiver);
+        const auto* boat=sim.find(ferry);
+        const auto* port=sim.find(origin);
+        const auto* destination_port=sim.find(destination);
+        const auto* home=sim.find(receiver);
         if(!origin||!owner||!ferry||!destination||!receiver ||
            origin==destination || ferry==receiver ||
-           !boat||!port||!far||!home ||
+           !boat||!port||!destination_port||!home ||
            port->type!=EntityType::Station ||
-           far->type!=EntityType::Station ||
+           destination_port->type!=EntityType::Station ||
            boat->type!=EntityType::Ship ||
            home->type!=EntityType::Ship ||
            boat->owner_id!=owner || home->owner_id!=owner ||
@@ -161,7 +163,7 @@ public:
            !sim.colony_ship(ferry)||!sim.colony_ship(receiver) ||
            !sim.life_support(ferry)||!sim.life_support(receiver) ||
            !sim.original_passenger_ferry_safe_to_fly(ferry) ||
-           port->system_id!=far->system_id)return 0;
+           port->system_id!=destination_port->system_id)return 0;
         // The existing galactic transit is currently same-system only.
         // Different frames require the REAL planetary/celestial destination
         // anchor and an installed original scanner; otherwise refuse.

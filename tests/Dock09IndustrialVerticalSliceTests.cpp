@@ -88,7 +88,10 @@ int main(int argc,char** argv){
         {
             Simulation seed(0xD009);
             home=seed.add_station({0,0});
-            ship=seed.add_colony_ship(7,{10000,0},12,8);
+            // Modules still consume physical cargo volume after refining.
+            // The original 12 m3 hold remains full after six modules;
+            // reserve real room for both ore lots and later geology.
+            ship=seed.add_colony_ship(7,{10000,0},32,8);
             raw=seed.add_geological_asteroid(
                 {8000,0},AsteroidClass::Metallic,10,3000);
             silicate=seed.add_geological_asteroid(
