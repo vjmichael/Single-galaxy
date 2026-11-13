@@ -84,6 +84,28 @@ try {
     PersistentWorld world(db,std::move(seed));
     CHECK(world.register_player_person(7,ship));
     CHECK(!world.register_player_person(8,ship));
+    // Exercise v135's genuine migration failpoint on an original v127
+    // source before gameplay has already installed the atmospheric manifest.
+    const auto initial_atmosphere_db=(dir/"pre-v135-atmosphere.sqlite").string();
+    PersistentWorld::recover_copy(db,initial_atmosphere_db);
+    {
+        PersistentWorld pre_v135(initial_atmosphere_db,Simulation(613));
+        CHECK(!pre_v135.world().original_surface_atmosphere_enabled());
+        const auto hash_before=pre_v135.world().state_hash();
+        const auto generation_before=pre_v135.generation();
+        bool injected=false;
+        try { pre_v135.ensure_planetary_atmosphere_manifest(
+                  FailPoint::AfterSnapshotWrite); }
+        catch(const std::exception&) { injected=true; }
+        CHECK(injected);
+        CHECK(pre_v135.world().state_hash()==hash_before);
+        CHECK(pre_v135.generation()==generation_before);
+        pre_v135.ensure_planetary_atmosphere_manifest();
+        CHECK(pre_v135.world().original_surface_atmosphere_enabled());
+        const auto committed_generation=pre_v135.generation();
+        pre_v135.ensure_planetary_atmosphere_manifest();
+        CHECK(pre_v135.generation()==committed_generation);
+    }
     act(world,ship,1001,Action::RequestDock,station);
     world.steps(Simulation::kDockTransitionTicks);
     CHECK(world.world().find(ship)->dock_state==DockState::Docked);
@@ -253,7 +275,15 @@ try {
     CHECK(world.world().state_hash()==pre_vertical_hash);
     CHECK(world.planetary_surface_vertical_action(7,ship,key,false,87001));
     CHECK(!world.planetary_surface_vertical_action(7,ship,key,false,87001));
-    CHECK(world.world().canonical_state().find("galaxy-kernel-v134|")==0);
+    // Physics custody requires at least v134. Subsequent native Stage 6
+    // migrations may legitimately advance the canonical snapshot version.
+    const auto native_header=world.world().canonical_state();
+    constexpr auto prefix="galaxy-kernel-v";
+    CHECK(native_header.rfind(prefix,0)==0);
+    const auto header_end=native_header.find('|');
+    CHECK(header_end!=std::string::npos);
+    const auto native_version=std::stoull(native_header.substr(15,header_end-15));
+    CHECK(native_version>=134);
     const auto planet=world.world().celestial_navigation_anchor(7,ship,selected.body);
     CHECK(planet && planet->physical_mass_1e18_kg>0);
     const auto g=planetary::gravity::surface_gravity_mm_s2(
@@ -332,19 +362,17 @@ try {
     PersistentWorld::recover_copy(db,v135_file);
     {
         PersistentWorld native(v135_file,Simulation(613));
+        // This recovered player is already v135+, so even a supplied
+        // failpoint must not create an extra commit on the idempotent path.
+        CHECK(native.world().original_surface_atmosphere_enabled());
         const auto before_migration=native.world().state_hash();
         const auto before_generation=native.generation();
-        bool injected=false;
-        try{native.ensure_planetary_atmosphere_manifest(
-             FailPoint::AfterSnapshotWrite);}
-        catch(const std::exception&){injected=true;}
-        CHECK(injected);
+        native.ensure_planetary_atmosphere_manifest(
+            FailPoint::AfterSnapshotWrite);
         CHECK(native.world().state_hash()==before_migration);
         CHECK(native.generation()==before_generation);
         native.ensure_planetary_atmosphere_manifest();
-        const auto migration_generation=native.generation();
-        native.ensure_planetary_atmosphere_manifest();
-        CHECK(native.generation()==migration_generation); // idempotent
+        CHECK(native.generation()==before_generation); // idempotent
         CHECK(native.world().original_surface_atmosphere_enabled());
         const auto verified=native.world().celestial_navigation_anchor(
             7,ship,selected.body);
