@@ -1,5 +1,15 @@
 # S6-D7 — exact command-receipt repair (2026-11-13)
 
+## Native-run reconciliation — 2026-11-13
+
+- Original Windows/Linux Actions run [#53](https://github.com/vjmichael/Single-galaxy/actions/runs/43455824013), **same source SHA `64f3c6a9c584c72dc058baabf6d759fe09e16c4d`**, both compiled; native acceptance was **38/39 on each OS**, with only `galaxy_stage06d7_positive_geological_freight` failing.
+- The original Linux `stage06g-native-acceptance.json` captured **command 1, tick 1, outcome 5 (`InvalidArgument`)**, before the positive freight flow. The source-level verifier was working; the actual native `Simulation::execute(Action::Mine)` at snapshot >=126 refuses amount !=1, whereas fixture still requested 80 tonnes in one call. The original Windows artifact independently shows the same command/tick/outcome.
+- First repair commit [`b1272a2`](https://github.com/vjmichael/Single-galaxy/commit/b1272a298d118fc728631fad3f674d5dffba2b0c) supplies a finite starter drill cost, installs/powers the real mine through the docked-v126 commands, registers the onboard owner, and executes 80 + 30 **individual one-tonne** physical `Mine` requests. Existing alternative legacy fixture path is unchanged.
+- Isolated source compilation syntax check succeeded with GCC C++20; the first full local target build exceeded the execution environment time limit and **is not a native PASS**. Native Windows/Linux CI for the corrected original world is **pending**, and the downstream original mineral-industry path has not yet received a positive-run receipt.
+- The independent `galaxy_stage06d7_receipt_contract` test is now required by `Stage06GNativeAcceptanceBatch.py`, not merely registered. Keep the entire matrix strict and preserve actual 1,000kg freight, rollback, conservation and recovery assertions.
+- **D7 OPEN; G OPEN; no installation, merge or release authorized.** Do not repeat physical Radeon GPU validation merely because this original C++/SQLite test is failing.
+
+
 ## Objective
 Keep original finite-source mineral extraction -> legitimately landed shuttle loading -> physical ascent -> original colony-ship unload -> mass-conserving independent SQLite replay. Do not loosen original inventory, workforce, owner, flight, journal, or process custody rules.
 

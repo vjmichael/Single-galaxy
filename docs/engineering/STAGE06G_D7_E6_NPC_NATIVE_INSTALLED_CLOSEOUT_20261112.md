@@ -1,5 +1,10 @@
 # ACTIVE STAGE 6 FEATURE-CLOSEOUT PLAN — 2026-11-12
 
+## 2026-11-13 evidence update (supersedes the earlier provisional native status)
+
+The original run [#53](https://github.com/vjmichael/Single-galaxy/actions/runs/43455824013) on source `64f3c6a` compiled on Windows and Linux; each ran **38/39 native tests successfully**. The sole failure was D7's positive freight scenario before mining completed: original command ID 1, tick 1, `InvalidArgument`. It was a legacy 80-tonne `Mine` request against snapshot v126's mandatory one-tonne mining, not a missing receipt. The **current repair** is committed on the same Stage 6 branch at `b1272a2`, with finite fitted drill and onboard pilot and unique one-tonne requests. D7 new native outcome remains pending; independent receipt-contract CTest is mandatory in consolidated batch. Original historical v85 SQLite, E6, F, G and native worker custody gates passed at the prior SHA but **must reconcile at a single new SHA**. Installed-human and physical GPU gates remain separate; no repeated Radeon check blocks feature work.
+
+
 **Sequence: S6-D/E → S6-F → S6-G → functional closeout.** The user explicitly prioritizes completing gameplay features before another physical PC validation. Preserve older Godot/GPU gameplay evidence. Physical Radeon retests are **not a gate** unless a changed graphics/hardware path actually demonstrates a regression. Hosted NSIS checks are manually opt-in after feature implementation, and no release or main merge is authorized.
 
 ## Work still outstanding

@@ -47,6 +47,7 @@ INDUSTRY=(
     "galaxy_wo3_planetary_housing",
     "galaxy_wo3_historical_sqlite_import",
     "galaxy_wo3_planetary_utility",
+    "galaxy_stage06d7_receipt_contract",
     "galaxy_stage06d7_positive_geological_freight",
     "galaxy_stage06e6_positive_staffed_ecology",
     "galaxy_wo4_resource_demand",
