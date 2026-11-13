@@ -257,6 +257,22 @@ int main(int argc,char** argv) {
     } else act(w,ship,1,Action::Mine,bulk,80);
     act(w,ship,2,Action::RefineOre,0,80);
     act(w,ship,3,Action::FabricateModule,0,20);
+    if(d7) {
+        // Undocking after a real v126 fitting leaves this ship exactly
+        // 1,500mm from the fitting station. The planned outpost is 1,000mm
+        // ahead and would be rejected at the inclusive 2,500mm exclusion
+        // boundary. Use genuine thrust and counterthrust to move farther
+        // away before placing the new original outpost.
+        const auto before_x=w.world().find(ship)->position.x;
+        act(w,ship,71006,Action::Thrust,0,0,1);
+        act(w,ship,71007,Action::Thrust,0,0,-1);
+        CHECK(w.world().find(ship)->velocity.x==0 &&
+              w.world().find(ship)->velocity.y==0 &&
+              w.world().find(ship)->position.x>before_x);
+        const auto* fit=w.world().find(fitting_station);
+        CHECK(fit && w.world().find(ship)->position.x+1000-
+              fit->position.x>2500);
+    }
     act(w,ship,4,Action::ConstructOutpost);
     const auto orbital=w.world().built_outposts().begin()->first;
     act(w,ship,6,Action::ConstructWorkshop,orbital);
