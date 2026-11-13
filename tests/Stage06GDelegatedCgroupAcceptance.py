@@ -13,6 +13,7 @@ import argparse
 import json
 import hashlib
 import os
+import shutil
 from pathlib import Path
 import subprocess
 import sys
@@ -68,12 +69,30 @@ def main(args):
         # The game child must be able to execute the real fixture but must
         # never receive the ancestor's write privilege.
         os.chmod(path,0o755)
-        denied=run(base+privileged+["--",args.fault,"cgroup-escape"])
-        assert denied.returncode==0 and "CGROUP_ANCESTOR_DENIED|" in denied.stdout,(
-            denied.stdout,denied.stderr,denied.returncode)
+        # The runner checkout can be under a private $HOME. The deliberately
+        # distinct worker UID must NEVER need access to the runner's private
+        # checkout. Copy the exact fixture bytes into a finite, read-only
+        # runner-owned directory with traversable parent; verify SHA-256
+        # equality before giving the worker this executable path.
+        staging=path/"trusted-executables"
+        staging.mkdir(mode=0o755)
+        staged=staging/"galaxy_server_dx_fault_child"
+        shutil.copyfile(args.fault,staged)
+        os.chmod(staged,0o555)
+        assert hashlib.sha256(staged.read_bytes()).digest()==hashlib.sha256(
+            Path(args.fault).read_bytes()).digest()
+        assert staged.stat().st_uid==os.geteuid() and not (staged.stat().st_mode & 0o222)
+        denied=run(base+privileged+["--",staged,"cgroup-escape"])
+        if denied.returncode!=0:
+            receipts=sorted(Path(str(save)+".diagnostics").glob("process-*.json"))
+            diagnostic=[json.loads(x.read_text()) for x in receipts[-2:]]
+            raise AssertionError(("original positive cgroup worker failed",
+                                  denied.returncode,denied.stdout,denied.stderr,
+                                  diagnostic))
+        assert "CGROUP_ANCESTOR_DENIED|" in denied.stdout,denied.stdout
         # A child capable of setsid escapes kill(-pgid), but NOT cgroup.kill.
         detached=run(base+["--timeout-ms","500"]+privileged+
-                     ["--",args.fault,"escaped-descendant"],timeout=12)
+                     ["--",staged,"escaped-descendant"],timeout=12)
         assert detached.returncode==124, (detached.returncode,detached.stderr)
         marker="DETACHED_DESCENDANT="
         assert marker in detached.stdout,detached.stdout
@@ -95,7 +114,9 @@ def main(args):
                 "systemd_mainpid_guardian_loss_verified":False,
                 "physical_windows_scm_verified":False,
                 "supervisor_sha256":hashlib.sha256(Path(args.supervisor).read_bytes()).hexdigest(),
-                "fault_child_sha256":hashlib.sha256(Path(args.fault).read_bytes()).hexdigest()}
+                "fault_child_sha256":hashlib.sha256(Path(args.fault).read_bytes()).hexdigest(),
+                "staged_child_bytes_verified":True,
+                "staged_child_worker_read_only":True}
         if args.output:
             dest=Path(args.output).resolve()
             dest.parent.mkdir(parents=True,exist_ok=True)

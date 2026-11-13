@@ -1,5 +1,12 @@
 # Stage 6 GK / GR — stronger kernel custody and multi-world recovery
 
+## 2026-11-13 — Hosted systemd positive-path failure and targeted repair
+
+First independent hosted systemd attempt [#43499411960](https://github.com/vjmichael/Single-galaxy/actions/runs/43499411960) at `6d79e69` obtained genuine systemd unit activation with `Delegate=yes`, but the first positive lower-privilege worker exited code **127** with no output, before any migration receipt. The ordinary SGDX native Linux test suite was **3/3 PASS**. This is **not** a cgroup containment pass. The original fixture attempted to execute its worker from the GitHub runner's private `/home/runner/work/...` checkout, inaccessible to the deliberately different UID. The positive fixture now copies only its exact SHA256-verified test executable into a 0555 runner-owned staged directory under a 0755 temporary root; it does not weaken the worker UID, cgroup admission, ancestor migration denial, or the cgroup.kill contract. It also retains the supervisor's original diagnostic sidecar on a worker failure.
+
+The separate **hosted** Windows SCM smoke at the same `6d79e69` SHA passed genuine MSVC, LocalService two starts/stops and kernel Job PID membership/termination, with private original receipts. Those receipts explicitly report `physical_pc_verified=false`; owner physical SCM remains a separate gate. Exact-head native Windows/Linux and the new systemd positive rerun are pending at the next repair SHA.
+
+
 **Scope:** feature implementation and original evidence only. Installed gameplay, Radeon rechecks, NSIS upgrades, merge and release remain deferred and unauthorized. The earlier exact SHA `40dc0e092bf71bfd4ac6bfa1cf638effdbbb458e` passed native Windows/Linux **44/44** required tests, separate SGDX **3/3** each, and 16+ tick guardian-death planetary recovery ([original run #43484153299](https://github.com/vjmichael/Single-galaxy/actions/runs/43484153299)). The following stronger gates are new work and do not inherit that PASS.
 
 ## GK-L — owned delegated Linux cgroup v2 (not process-group substitution)
