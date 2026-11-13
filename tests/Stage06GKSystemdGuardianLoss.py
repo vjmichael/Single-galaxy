@@ -13,6 +13,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -61,6 +62,17 @@ def main(args):
         folder=Path(td)
         save=folder/"original.sqlite"
         os.chmod(folder,0o755)
+        # Systemd service supervision runs under the operator UID, but the
+        # supervised worker deliberately drops to a different UID. Never
+        # rely on private runner-checkout traversal or grant it access.
+        # Stage only the exact hashed fixture in an owned RX-only directory.
+        staged=folder/"trusted-worker"
+        shutil.copyfile(child,staged)
+        os.chmod(staged,0o555)
+        if hashlib.sha256(staged.read_bytes()).digest()!=hashlib.sha256(child.read_bytes()).digest():
+            raise RuntimeError("trusted worker staging changed fixture bytes")
+        if staged.stat().st_uid!=uid or staged.stat().st_mode & 0o222:
+            raise RuntimeError("trusted worker staged executable is not owner-controlled and read-only")
         full=unit+".service"
         # systemd's OS process-custody path, not a caller-created fake cgroup.
         root=f"/sys/fs/cgroup/system.slice/{full}"
@@ -78,7 +90,7 @@ def main(args):
              "--delegated-cgroup-root",root,
              "--worker-uid","65534","--worker-gid","65534",
              "--build-sha",sha,
-             "--",str(child),"escaped-descendant"]
+             "--",str(staged),"escaped-descendant"]
         started=False
         try:
             call(cmd,timeout=20)
@@ -134,6 +146,8 @@ def main(args):
                    "unit_unpopulated_or_removed":True,
                    "supervisor_sha256":hashlib.sha256(supervisor.read_bytes()).hexdigest(),
                    "child_sha256":hashlib.sha256(child.read_bytes()).hexdigest(),
+                   "staged_child_byte_identity_verified":True,
+                   "staged_child_worker_read_only":True,
                    "physical_windows_scm_verified":False,
                    "installed_gameplay_tested":False}
             output=Path(args.output).resolve()

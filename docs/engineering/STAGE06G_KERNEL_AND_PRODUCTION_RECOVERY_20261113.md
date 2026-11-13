@@ -1,5 +1,12 @@
 # Stage 6 GK / GR — stronger kernel custody and multi-world recovery
 
+## 2026-11-13 — Native delegated-cgroup pass and guardian-loss fixture repair
+
+The original [hosted kernel run #43500119214](https://github.com/vjmichael/Single-galaxy/actions/runs/43500119214) at SHA `4c1ea7ac1b79be9ed0014c40b864a656f8c85fab` produced a **genuine positive delegated Linux cgroup-v2 receipt**: independent systemd-owned `Delegate=yes` unit, distinct worker UID/GID, verified leaf membership, hostile ancestor `cgroup.procs` migration denied, `setsid` detached descendant killed via `cgroup.kill`, empty leaf removed. Original unit report `positive-cgroup.json` includes SHA256 of the actual native binaries and `systemd_mainpid_guardian_loss_verified=false`. It is not a guardian-loss pass.
+
+The next systemd MainPID-guardian-loss fixture failed **before kill injection** with service exit code 127, because that independent fixture still tried to launch the lower-privilege worker from the private runner checkout. Corrected that fixture to stage exactly SHA256-matching bytes in an operator-owned 0555 temp executable beneath a traversable 0755 root; original native game worker identity and kernel cgroup contract remain strict. **Guardian-loss result remains pending on replacement exact SHA**. The hosted Windows SCM two-cycle original Job Object matrix at earlier SHA `6d79e69` passed but cannot be used as an exact-SHA final receipt.
+
+
 ## 2026-11-13 — Hosted systemd positive-path failure and targeted repair
 
 First independent hosted systemd attempt [#43499411960](https://github.com/vjmichael/Single-galaxy/actions/runs/43499411960) at `6d79e69` obtained genuine systemd unit activation with `Delegate=yes`, but the first positive lower-privilege worker exited code **127** with no output, before any migration receipt. The ordinary SGDX native Linux test suite was **3/3 PASS**. This is **not** a cgroup containment pass. The original fixture attempted to execute its worker from the GitHub runner's private `/home/runner/work/...` checkout, inaccessible to the deliberately different UID. The positive fixture now copies only its exact SHA256-verified test executable into a 0555 runner-owned staged directory under a 0755 temporary root; it does not weaken the worker UID, cgroup admission, ancestor migration denial, or the cgroup.kill contract. It also retains the supervisor's original diagnostic sidecar on a worker failure.
