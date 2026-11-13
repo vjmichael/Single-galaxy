@@ -77,7 +77,9 @@ static void seeded(const std::string& db) {
         CHECK(rejects([&]{
             seed.provision_planetary_body_genesis(
                 body,{1000,0,0,0});}));
-        const auto& gen=seed.planetary_genesis().at(body);
+        // Candidate-and-swap writes replace the map instance below.
+        // Preserve original geology by value, not a dangling map reference.
+        const auto gen=seed.planetary_genesis().at(body);
         s6c_stage="first-land";
         first=land(gen);
         s6c_stage="second-land";
