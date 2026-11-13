@@ -13,6 +13,9 @@
 #else
 #include <sys/types.h>
 #include <unistd.h>
+#include <fcntl.h>
+#include <cerrno>
+#include <fstream>
 #endif
 int main(int argc,char** argv){
     if(argc<2)return 64;
@@ -95,6 +98,43 @@ int main(int argc,char** argv){
         return 23;
     }
 #ifndef _WIN32
+    if(mode=="cgroup-escape"){
+        // Hostile attempt to migrate into the *ancestor* supervisor unit.
+        // A genuine delegated OS boundary must deny it at the kernel, even
+        // though SGDX itself is capable of writing the delegated child leaf.
+        std::ifstream membership("/proc/self/cgroup");
+        std::string line;std::getline(membership,line);
+        if(line.rfind("0::/",0)!=0)return 74;
+        const auto relative=line.substr(3);
+        const auto end=relative.rfind('/');
+        if(end==std::string::npos || end==0)return 75;
+        const auto path="/sys/fs/cgroup"+relative.substr(0,end)+"/cgroup.procs";
+        const int fd=::open(path.c_str(),O_WRONLY|O_CLOEXEC|O_NOFOLLOW);
+        if(fd<0){
+            std::cout<<"CGROUP_ANCESTOR_DENIED|"<<errno<<"\n"<<std::flush;
+            return 0;
+        }
+        const auto pid=std::to_string(getpid());
+        const auto n=::write(fd,pid.c_str(),pid.size());
+        const int denied=errno;
+        ::close(fd);
+        if(n>=0){
+            std::cout<<"CGROUP_ANCESTOR_ESCAPED|"<<getpid()<<"\n"<<std::flush;
+            return 76;
+        }
+        std::cout<<"CGROUP_ANCESTOR_DENIED|"<<denied<<"\n"<<std::flush;
+        return 0;
+    }
+    if(mode=="escaped-descendant"){
+        const pid_t child=fork();
+        if(child==0){
+            if(setsid()<0)_exit(77);
+            for(;;)std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        }
+        if(child<0)return 72;
+        std::cout<<"DETACHED_DESCENDANT="<<child<<"\n"<<std::flush;
+        for(;;)std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    }
     if(mode=="pid-hang"){
         std::cout<<"CHILD_PID="<<getpid()<<"\n"<<std::flush;
         for(;;)std::this_thread::sleep_for(std::chrono::milliseconds(100));

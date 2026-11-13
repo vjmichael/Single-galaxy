@@ -167,6 +167,7 @@ jobs:
           name: stage06g-native-${{ matrix.os }}-${{ github.sha }}
           path: |
             stage06g-native-acceptance.json
+            build/stage06g/stage06g-multiworld-recovery.json
             build/stage06g-history/evidence/wo3-v85-attestation.json
             build/stage06g/Testing/Temporary/LastTest.log
             build/stage06g/Testing/Temporary/LastTestsFailed.log

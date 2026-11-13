@@ -71,6 +71,10 @@ CUSTODY=(
     "galaxy_server_dx_supervisor",
     "galaxy_server_dx_sqlite_recovery",
     "galaxy_sgdx03_godot_native_bridge",
+    # The cgroup *admission* contract does not constitute a positive
+    # delegated-cgroup containment receipt. That needs a systemd-owned host.
+    "galaxy_stage06g_cgroup_admission_contract",
+    "galaxy_stage06g_multiworld_crash_recovery",
 )
 GODOT=(
     "galaxy_stage6f5e_godot_tile_window",

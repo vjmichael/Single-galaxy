@@ -103,7 +103,8 @@ def main(args):
                        for t in packet["tiles"])
             probe(args.host,save,False)
             later=info(receive(q,lambda f:f[0]=="PFRAME" and
-                                 int(f[15])>=first["tick"]+16,45))
+                                 int(f[15])>=first["tick"]+args.ticks,
+                                 max(45,int(args.ticks/5)+45)))
             assert later["gen"]>first["gen"]
             if args.packet:
                 evidence=pathlib.Path(args.packet).resolve()
@@ -141,8 +142,9 @@ def main(args):
                 finish(p2,t2,False)
             finally:
                 if p2.poll() is None:p2.kill();p2.wait(timeout=10)
-            print("S6-G real SGDX planet 16+ ticks, writer contention, guardian death, "
-                  "offline freeze, SQLite resume and stale session DENY PASS")
+            print("S6-G real SGDX planet %d+ ticks, writer contention, guardian death, "
+                  "offline freeze, SQLite resume and stale session DENY PASS"
+                  % args.ticks)
         finally:
             if p.poll() is None:p.kill();p.wait(timeout=10)
 
@@ -151,4 +153,8 @@ if __name__=="__main__":
     for name in ("supervisor","host","fixture","sha"):
         ap.add_argument("--"+name,required=True)
     ap.add_argument("--packet",default="")
-    main(ap.parse_args())
+    ap.add_argument("--ticks",type=int,default=16)
+    args=ap.parse_args()
+    if not 16<=args.ticks<=4096:
+        ap.error("ticks outside 16..4096 bounded original-world acceptance")
+    main(args)

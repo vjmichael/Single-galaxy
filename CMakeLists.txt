@@ -2244,6 +2244,11 @@ target_include_directories(galaxy_server_dx_supervisor PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/include)
 if(WIN32)
   target_link_libraries(galaxy_server_dx_supervisor PRIVATE Dbghelp Advapi32)
+  # Genuine physical-SCM-only gate executable. The native test never installs
+  # a Windows service or executes against the owner's physical computer.
+  add_executable(galaxy_stage6g_windows_scm_gate
+    src/stage06g_windows_scm_gate.cpp)
+  target_link_libraries(galaxy_stage6g_windows_scm_gate PRIVATE Advapi32)
 endif()
 if(BUILD_TESTING)
   add_executable(galaxy_server_dx_fault_child tests/ServerDx02FaultChild.cpp)
@@ -2257,6 +2262,13 @@ if(BUILD_TESTING)
         $<TARGET_FILE:galaxy_server_dx_supervisor>
         $<TARGET_FILE:galaxy_server_dx_fault_child>)
     set_tests_properties(galaxy_server_dx_supervisor PROPERTIES TIMEOUT 120)
+    add_test(NAME galaxy_stage06g_cgroup_admission_contract
+      COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/Stage06GDelegatedCgroupAcceptance.py
+        $<TARGET_FILE:galaxy_server_dx_supervisor>
+        $<TARGET_FILE:galaxy_server_dx_fault_child>)
+    set_tests_properties(galaxy_stage06g_cgroup_admission_contract
+      PROPERTIES TIMEOUT 25 LABELS "native;fail-closed;not-delegated-cgroup-proof")
 
     add_test(NAME galaxy_server_dx_sqlite_recovery
       COMMAND ${Python3_EXECUTABLE}
@@ -2606,6 +2618,28 @@ endif()
 # induced crash, externally killed child/supervisor, Linux SQLite recovery and
 # opt-in Windows second-chance private MDMP, independently from UI/snapshots.
 if(BUILD_TESTING AND Python3_Interpreter_FOUND)
+  # Four simultaneous *independent* real SQLite planetary hosts, 256+
+  # committed ticks per original world, actual guardian death and recovery.
+  # This is not a true intercell network or physical installed GPU test.
+  execute_process(COMMAND git rev-parse HEAD
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    OUTPUT_VARIABLE STAGE06G_EXACT_SOURCE_SHA
+    OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+  string(LENGTH "${STAGE06G_EXACT_SOURCE_SHA}" STAGE06G_SHA_LENGTH)
+  if(STAGE06G_SHA_LENGTH EQUAL 40 AND
+     STAGE06G_EXACT_SOURCE_SHA MATCHES "^[0-9a-f]+$")
+    add_test(NAME galaxy_stage06g_multiworld_crash_recovery
+    COMMAND ${Python3_EXECUTABLE}
+      ${CMAKE_CURRENT_SOURCE_DIR}/tests/Stage06GMultiWorldRecovery.py
+      --single ${CMAKE_CURRENT_SOURCE_DIR}/tests/Stage06GInstalledSupervisor.py
+      --supervisor $<TARGET_FILE:galaxy_server_dx_supervisor>
+      --host $<TARGET_FILE:galaxy_desktop_player_host>
+      --fixture $<TARGET_FILE:galaxy_stage6f5e_planet_host_fixture>
+      --sha ${STAGE06G_EXACT_SOURCE_SHA}
+      --output ${CMAKE_BINARY_DIR}/stage06g-multiworld-recovery.json)
+    set_tests_properties(galaxy_stage06g_multiworld_crash_recovery
+      PROPERTIES TIMEOUT 300 LABELS "native;sqlite;four-original-worlds;recovery")
+  endif()
   add_test(NAME galaxy_sgdx03_godot_native_bridge
     COMMAND ${Python3_EXECUTABLE}
       ${CMAKE_CURRENT_SOURCE_DIR}/tests/SGDX03GodotInteractiveTests.py

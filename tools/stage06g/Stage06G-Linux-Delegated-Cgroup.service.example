@@ -1,0 +1,28 @@
+# OPERATOR TEMPLATE, NOT installed or enabled by the game.
+# Replace these deliberate absolute-path and identity placeholders before
+# any creator-authorized Linux physical-host acceptance. No shell expansion,
+# no generic privileged command broker or Docker. This file alone proves
+# nothing; inspect the OS-owned original result JSON and systemd journal.
+[Unit]
+Description=Single Galaxy Stage 6 genuine delegated cgroup custody acceptance
+After=local-fs.target
+
+[Service]
+Type=exec
+User=sgdx-supervisor
+Group=sgdx-supervisor
+# Separate service owner from the game worker so it cannot write the parent
+# cgroup.procs. The game UID/GID must already be provisioned and reviewed.
+AmbientCapabilities=CAP_SETUID CAP_SETGID
+CapabilityBoundingSet=CAP_SETUID CAP_SETGID
+NoNewPrivileges=no
+Delegate=yes
+KillMode=control-group
+TimeoutStopSec=15s
+TasksMax=64
+Restart=no
+# Replace all paths and the game account IDs with approved actual values.
+ExecStart=/usr/bin/python3 /opt/single-galaxy/tests/Stage06GDelegatedCgroupAcceptance.py /opt/single-galaxy/bin/galaxy_server_dx_supervisor /opt/single-galaxy/bin/galaxy_server_dx_fault_child --delegated-root auto --worker-uid 65534 --worker-gid 65534 --source-sha REPLACE_WITH_EXACT_40_HEX_SHA --output /var/lib/single-galaxy-acceptance/delegated-cgroup.json
+
+[Install]
+# Intentionally no WantedBy: no automatic start, enablement or installation.

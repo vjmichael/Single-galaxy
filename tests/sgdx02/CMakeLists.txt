@@ -46,3 +46,9 @@ add_test(NAME sgdx02_sqlite_recovery COMMAND ${Python3_EXECUTABLE}
   "${GAME_ROOT}/tests/SGDX02SqliteRecoveryTests.py"
   $<TARGET_FILE:galaxy_server_dx_supervisor>)
 set_tests_properties(sgdx02_sqlite_recovery PROPERTIES TIMEOUT 90)
+
+add_test(NAME sgdx02_cgroup_admission_contract COMMAND ${Python3_EXECUTABLE}
+  "${GAME_ROOT}/tests/Stage06GDelegatedCgroupAcceptance.py"
+  $<TARGET_FILE:galaxy_server_dx_supervisor>
+  $<TARGET_FILE:galaxy_server_dx_fault_child>)
+set_tests_properties(sgdx02_cgroup_admission_contract PROPERTIES TIMEOUT 25)

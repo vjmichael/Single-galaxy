@@ -11,6 +11,7 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
+#include <memory>
 #ifdef _WIN32
 #define NOMINMAX
 #include <windows.h>
@@ -24,6 +25,8 @@
 #include <sys/resource.h>
 #ifdef __linux__
 #include <sys/prctl.h>
+#include <grp.h>
+#include "galaxy/ServerDelegatedCgroup.hpp"
 #endif
 #include <sys/socket.h>
 #include <sys/types.h>
@@ -34,6 +37,8 @@ namespace dx=galaxy::server_dx;
 using Clock=std::chrono::steady_clock;
 struct Args {
     std::string save,role,build_sha;
+    std::string delegated_cgroup_root;
+    std::uint32_t worker_uid=0,worker_gid=0;
     int timeout_ms=60000;
     bool record_clean=false,allow_core=false,windows_minidump=false,interactive=false;
     std::vector<std::string> command;
@@ -44,12 +49,22 @@ static Args parse(int argc,char** argv){
     for(;i<argc;++i){
         const std::string arg=argv[i];
         if(arg=="--") {++i;break;}
-        if((arg=="--save" || arg=="--role" || arg=="--build-sha" || arg=="--timeout-ms") && i+1<argc){
+        if((arg=="--save" || arg=="--role" || arg=="--build-sha" || arg=="--timeout-ms" ||
+            arg=="--delegated-cgroup-root" || arg=="--worker-uid" ||
+            arg=="--worker-gid") && i+1<argc){
             const std::string value=argv[++i];
             if(arg=="--save")a.save=value;
             else if(arg=="--role")a.role=value;
             else if(arg=="--build-sha")a.build_sha=value;
-            else {
+            else if(arg=="--delegated-cgroup-root")a.delegated_cgroup_root=value;
+            else if(arg=="--worker-uid" || arg=="--worker-gid") {
+                if(value.empty() || value.find_first_not_of("0123456789")!=std::string::npos)
+                    throw std::invalid_argument("worker identity must be decimal");
+                const auto id=std::stoull(value);
+                if(id<1 || id>2147483647)throw std::invalid_argument("invalid worker identity");
+                if(arg=="--worker-uid")a.worker_uid=static_cast<std::uint32_t>(id);
+                else a.worker_gid=static_cast<std::uint32_t>(id);
+            } else {
                 if(value.empty() || value.find_first_not_of("0123456789")!=std::string::npos)
                     throw std::invalid_argument("timeout must be decimal");
                 const auto value_long=std::stoll(value);
@@ -73,8 +88,20 @@ static Args parse(int argc,char** argv){
     }
     #ifdef _WIN32
     if(a.allow_core)throw std::invalid_argument("OS core collection is Linux-only");
+    if(!a.delegated_cgroup_root.empty() || a.worker_uid || a.worker_gid)
+        throw std::invalid_argument("Linux delegated cgroup option on non-Linux host");
     #else
     if(a.windows_minidump)throw std::invalid_argument("Windows minidumps require Windows");
+    #ifndef __linux__
+    if(!a.delegated_cgroup_root.empty() || a.worker_uid || a.worker_gid)
+        throw std::invalid_argument("Linux cgroup-v2 requires native Linux");
+    #else
+    if((a.delegated_cgroup_root.empty() && (a.worker_uid || a.worker_gid)) ||
+       (!a.delegated_cgroup_root.empty() && (!a.worker_uid || !a.worker_gid)))
+        throw std::invalid_argument("cgroup mode requires distinct worker UID and GID");
+    if(!a.delegated_cgroup_root.empty() && a.worker_uid==static_cast<std::uint32_t>(::geteuid()))
+        throw std::invalid_argument("cgroup child cannot share supervisor UID");
+    #endif
     #endif
     for(const char c:a.role)
         if(!((c>='a'&&c<='z')||(c>='A'&&c<='Z')||
@@ -106,10 +133,33 @@ static int run(const Args& args){
         throw std::runtime_error("cannot create native supervisor pipes");
     nonblocking(logs[0]);nonblocking(crumbs[0]);nonblocking(crumbs[1]);
     const auto started=Clock::now();
+#ifdef __linux__
+    std::unique_ptr<dx::DelegatedCgroup> cgroup;
+    if(!args.delegated_cgroup_root.empty())
+        cgroup=std::make_unique<dx::DelegatedCgroup>(args.delegated_cgroup_root);
+    int gate[2]{-1,-1};
+    if(cgroup && ::pipe2(gate,O_CLOEXEC)!=0)throw std::runtime_error("S6-GK admission gate pipe failed");
+#endif
     const pid_t supervisor_pid=::getpid();
     const pid_t pid=::fork();
     if(pid<0)throw std::runtime_error("fork failed");
     if(pid==0){
+#ifdef __linux__
+        if(cgroup){
+            ::close(gate[1]);
+            cgroup->close_in_child();
+            char release=0;
+            if(::read(gate[0],&release,1)!=1 || release!='A')::_exit(127);
+            ::close(gate[0]);
+            // A separate game user cannot write the supervisor-owned ancestor
+            // cgroup.procs. This prevents ordinary cgroup ancestor migration.
+            if(::setgroups(0,nullptr)!=0 ||
+               ::setgid(static_cast<gid_t>(args.worker_gid))!=0 ||
+               ::setuid(static_cast<uid_t>(args.worker_uid))!=0 ||
+               ::geteuid()!=static_cast<uid_t>(args.worker_uid) ||
+               ::prctl(PR_SET_NO_NEW_PRIVS,1,0,0,0)!=0)::_exit(127);
+        }
+#endif
 #ifdef __linux__
         // If the supervisor is SIGKILLed, the native game must not silently
         // continue without its authoritative process guardian. A parent-death
@@ -135,6 +185,21 @@ static int run(const Args& args){
         ::_exit(127);
     }
     (void)::setpgid(pid,pid);
+#ifdef __linux__
+    if(cgroup){
+        ::close(gate[0]);
+        try{
+            cgroup->attach(pid);
+            if(::write(gate[1],"A",1)!=1)
+                throw std::runtime_error("S6-GK child launch gate failed");
+        }catch(...){
+            ::close(gate[1]);
+            (void)::kill(pid,SIGKILL);(void)::waitpid(pid,nullptr,0);
+            throw;
+        }
+        ::close(gate[1]);
+    }
+#endif
     ::close(logs[1]);::close(crumbs[1]);
     std::signal(SIGINT,on_interrupt);std::signal(SIGTERM,on_interrupt);
     dx::ProcessIncident incident;
@@ -194,6 +259,9 @@ static int run(const Args& args){
                        || interrupted)){
             timed_out=!interrupted;cancelled=interrupted;
             (void)::kill(-pid,SIGKILL);(void)::kill(pid,SIGKILL);
+#ifdef __linux__
+            if(cgroup)cgroup->kill_all();
+#endif
         }
         struct pollfd fds[2]{};int nfds=0;
         if(log_open)fds[nfds++]={logs[0],POLLIN|POLLHUP,0};
@@ -206,6 +274,9 @@ static int run(const Args& args){
     }
     if(log_open)::close(logs[0]);
     if(crumb_open)::close(crumbs[0]);
+#ifdef __linux__
+    if(cgroup)cgroup->finish(); // no success receipt with surviving descendants
+#endif
     incident.elapsed_ms=elapsed_ms(started);
     int return_code=1;
     if(cancelled){incident.reason="cancelled";return_code=130;}
