@@ -59,6 +59,33 @@ static Choice choose(bool require_geology=false) {
     }
     throw std::runtime_error("missing real buildable site");
 }
+static const char* receipt_outcome_name(Outcome result) {
+    switch(result) {
+        case Outcome::Applied:return "Applied";
+        case Outcome::InvalidActor:return "InvalidActor";
+        case Outcome::Unauthorized:return "Unauthorized";
+        case Outcome::InvalidTarget:return "InvalidTarget";
+        case Outcome::OutOfRange:return "OutOfRange";
+        case Outcome::InvalidArgument:return "InvalidArgument";
+        case Outcome::NoResources:return "NoResources";
+        case Outcome::CargoFull:return "CargoFull";
+        case Outcome::NotMining:return "NotMining";
+        case Outcome::NotInSpace:return "NotInSpace";
+        case Outcome::NotDocked:return "NotDocked";
+        case Outcome::InTransition:return "InTransition";
+        case Outcome::ShipMoving:return "ShipMoving";
+        case Outcome::HangarFull:return "HangarFull";
+        case Outcome::InsufficientFunds:return "InsufficientFunds";
+        case Outcome::WrongSystem:return "WrongSystem";
+        case Outcome::GateOffline:return "GateOffline";
+        case Outcome::NotColonyShip:return "NotColonyShip";
+        case Outcome::InsufficientCrew:return "InsufficientCrew";
+        case Outcome::ModuleOffline:return "ModuleOffline";
+        case Outcome::CooldownActive:return "CooldownActive";
+        case Outcome::AttackResisted:return "AttackResisted";
+    }
+    return "Unknown";
+}
 // Inspect only receipts produced by this committed world tick. An unrelated
 // NPC/host event may be the last event, but neither that event nor a historical
 // receipt can stand in for the submitted command. Any duplicate or unsuccessful
@@ -77,7 +104,8 @@ static void require_applied_receipt(const std::vector<Event>& events,
         const auto& e=events[i];
         delta+=" [id="+std::to_string(e.command_id)+
                ",tick="+std::to_string(e.tick)+
-               ",result="+std::to_string(static_cast<int>(e.result))+"]";
+               ",result="+receipt_outcome_name(e.result)+
+               "("+std::to_string(static_cast<int>(e.result))+")]";
         if(e.command_id==command_id) {
             ++matching_id;
             if(e.tick==due_tick && e.result==Outcome::Applied)
@@ -106,10 +134,10 @@ static void test_d7_receipt_contract() {
     const Event irrelevant{tick,id+1,Outcome::Applied,0};
     const Event denied{tick,id,Outcome::InvalidArgument,0};
     const Event stale{tick-1,id,Outcome::Applied,0};
-    const auto accepts=[](const std::vector<Event>& events,std::size_t before) {
+    const auto accepts=[=](const std::vector<Event>& events,std::size_t before) {
         require_applied_receipt(events,before,id,tick);
     };
-    const auto rejects=[](const std::vector<Event>& events,std::size_t before) {
+    const auto rejects=[=](const std::vector<Event>& events,std::size_t before) {
         bool rejected=false;
         try {require_applied_receipt(events,before,id,tick);}
         catch(const std::runtime_error& e) {
@@ -158,7 +186,7 @@ int main(int argc,char** argv) {
     if(argc!=1 && !d7 && !e6 && !receipt_contract)return 2;
     if(receipt_contract) {
         test_d7_receipt_contract();
-        std::cout<<"S6-D7 authoritative command receipt contract PASS\\n";
+        std::cout<<"S6-D7 authoritative command receipt contract PASS\n";
         return 0;
     }
     if(d7)test_d7_receipt_contract();
