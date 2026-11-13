@@ -1,7 +1,7 @@
-name: S6-G exact-head native consolidation and Godot source admission
+name: S6-G exact-head native, installed Windows and OS process-custody acceptance
 # This branch is the explicit S6-G functional closeout integration point.
 # The first push containing this workflow runs one Windows/Linux matrix.
-# No PR merge, release or automatic installation is authorized.
+# No release or merge authorized. Hosted install is not physical GPU/human acceptance.
 on:
   push:
     branches: [sg/stage6f5e-installed-terrain-recovery-20261112]
@@ -104,6 +104,57 @@ jobs:
         run: |
           set -euo pipefail
           python tests/Stage06GNativeAcceptanceBatch.py --source . --build build/stage06g --config Release --output stage06g-native-acceptance.json
+      - name: Verify SGDX guardian, Windows Job/Linux process tree and SQLite custody
+        shell: bash
+        run: |
+          set -euo pipefail
+          ctest --test-dir build/stage06g -C Release --output-on-failure \
+            -R '^(galaxy_server_dx_supervisor|galaxy_server_dx_sqlite_recovery|galaxy_sgdx03_godot_native_bridge)$' \
+            --timeout 300 2>&1 | tee stage06g-sgdx-custody.log
+      - name: Run original planet under SGDX; 16 ticks, guardian death and restart
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "$RUNNER_OS" = Windows ]; then EXE=build/stage06g/Release; SUFFIX=.exe;
+          else EXE=build/stage06g; SUFFIX=; fi
+          mkdir -p build/stage06g-installed-evidence
+          python tests/Stage06GInstalledSupervisor.py \
+            --fixture "$EXE/galaxy_stage6f5e_planet_host_fixture$SUFFIX" \
+            --host "$EXE/galaxy_desktop_player_host$SUFFIX" \
+            --supervisor "$EXE/galaxy_server_dx_supervisor$SUFFIX" \
+            --sha "$GITHUB_SHA" \
+            --packet build/stage06g-installed-evidence/planet-source-packet.json \
+            2>&1 | tee stage06g-sgdx-planet.log
+      - name: Actually install Windows NSIS original game, test and uninstall
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          & ./desktop_godot/build_tools/Stage06G-InstalledWindows.ps1 -BuildDir build/stage06g -SourceSha '${{ github.sha }}' -EvidenceDir build/stage06g-installed-evidence
+          if($LASTEXITCODE -ne 0){throw 'Hosted installed original game failed; physical acceptance remains open'}
+      - name: Publish unsigned test installer only after successful hosted installed acceptance
+        if: runner.os == 'Windows' && success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage06g-nsis-unsigned-test-installer-${{ github.sha }}
+          path: build/stage06g-installed-evidence/SingleGalaxy_Stage06G_Windows_Unsigned_Test.exe
+          if-no-files-found: error
+          retention-days: 7
+      - name: Retain genuine SGDX and Windows installed receipts without private SQLite
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage06g-installed-${{ matrix.os }}-${{ github.sha }}
+          path: |
+            stage06g-sgdx-custody.log
+            stage06g-sgdx-planet.log
+            build/stage06g-installed-evidence/stage06g-installed-acceptance.json
+            build/stage06g-installed-evidence/installed-*.log
+            build/stage06g-installed-evidence/nsis-build.log
+            build/stage06g-installed-evidence/payload-hashes.json
+            build/stage06g-installed-evidence/planet-source-packet.json
+          if-no-files-found: warn
+          retention-days: 14
       - name: Retain original native receipt and failure logs
         if: always()
         uses: actions/upload-artifact@v4
