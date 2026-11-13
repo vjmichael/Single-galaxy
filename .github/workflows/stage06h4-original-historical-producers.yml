@@ -70,23 +70,23 @@ jobs:
           if grep -q '^// WO3-A: proposal-only' "$HIST/CMakeLists.txt"; then
             ADAPTER="$PWD/original-evidence/source-adapter"
             python3 - "$HIST" "$ADAPTER" <<'PYADAPTER'
-import pathlib,sys
-historic=pathlib.Path(sys.argv[1])
-target=pathlib.Path(sys.argv[2])
-target.mkdir(parents=True,exist_ok=False)
-original=(historic/'CMakeLists.txt').read_text()
-wrong=['// WO3-A: proposal-only colony construction planning and original-world actual',
-       '// facility, census, utility, immutable SQLite copies and material conservation.']
-for line in wrong:
-    if original.count(line)!=1:raise RuntimeError('unexpected historical CMake source')
-repaired=original
-for line in wrong:repaired=repaired.replace(line,'#'+line[2:])
-(target/'CMakeLists.txt').write_text(repaired)
-for entry in historic.iterdir():
-    if entry.name!='CMakeLists.txt':
-        (target/entry.name).symlink_to(entry.resolve(),target_is_directory=entry.is_dir())
-print('Verified unmodified original C++ with shadow-only CMake parse adapter')
-PYADAPTER
+          import pathlib,sys
+          historic=pathlib.Path(sys.argv[1])
+          target=pathlib.Path(sys.argv[2])
+          target.mkdir(parents=True,exist_ok=False)
+          original=(historic/'CMakeLists.txt').read_text()
+          wrong=['// WO3-A: proposal-only colony construction planning and original-world actual',
+                 '// facility, census, utility, immutable SQLite copies and material conservation.']
+          for line in wrong:
+              if original.count(line)!=1:raise RuntimeError('unexpected historical CMake source')
+          repaired=original
+          for line in wrong:repaired=repaired.replace(line,'#'+line[2:])
+          (target/'CMakeLists.txt').write_text(repaired)
+          for entry in historic.iterdir():
+              if entry.name!='CMakeLists.txt':
+                  (target/entry.name).symlink_to(entry.resolve(),target_is_directory=entry.is_dir())
+          print('Verified unmodified original C++ with shadow-only CMake parse adapter')
+          PYADAPTER
             SOURCE="$ADAPTER"
             sha256sum "$HIST/CMakeLists.txt" "$SOURCE/CMakeLists.txt" \
                > original-evidence/cmake-adapter-provenance.sha256
