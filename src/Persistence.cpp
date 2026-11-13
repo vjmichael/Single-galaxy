@@ -7738,6 +7738,7 @@ public:
                     const auto cmd = due_commands.find(ev.command_id);
                     if (cmd == due_commands.end() ||
                         (cmd->second.action != Action::DeploySurveyProbe &&
+                         cmd->second.action != Action::ConfigureMiningTool &&
                          cmd->second.action != Action::LaunchGeologicalDrone &&
                          cmd->second.action != Action::RecoverSurveyProbe &&
                          cmd->second.action != Action::Mine && cmd->second.action != Action::SalvageWreck &&
@@ -7805,6 +7806,22 @@ public:
                         ledger.text(7,recovered?"probe_device_recovered":
                             cmd->second.action==Action::LaunchGeologicalDrone?
                             "geological_drone_deployed":"survey_probe_deployed");
+                    } else if (cmd->second.action == Action::ConfigureMiningTool) {
+                        // Original two-tonne module moves between the finite
+                        // ship cargo hold and the physical mining hardpoint.
+                        // Both directions need one verified durable ledger row.
+                        const auto& c=cmd->second;
+                        if(c.target || c.thrust_x || c.thrust_y ||
+                           (c.amount!=1 && c.amount!=-1) || ev.transferred!=2)
+                            throw std::runtime_error("invalid mining tool material custody event");
+                        const auto ship=std::to_string(c.actor);
+                        const auto module="modules:"+ship;
+                        const auto installed="hardpoint:"+ship+":mining_tool";
+                        ledger.text(4,c.amount==1?module:installed);
+                        ledger.text(5,c.amount==1?installed:module);
+                        ledger.i64(6,2);
+                        ledger.text(7,c.amount==1?"mining_tool_install_t":
+                                                    "mining_tool_removal_t");
                     } else if (cmd->second.action == Action::Mine ||
                                cmd->second.action == Action::SalvageWreck) {
                         ledger.text(4, std::to_string(cmd->second.target));

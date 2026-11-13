@@ -34,7 +34,18 @@ static Event perform(PersistentWorld& w,std::uint64_t& seq,EntityId ship,
 static Event select(PersistentWorld& w,std::uint64_t& seq,EntityId ship,
                     colony_onboarding::Operation action) {
     const auto c=colony_onboarding::propose(w.world(),7,ship,++seq,action);
-    CHECK(c.has_value()&&c->id==seq&&c->actor==ship);
+    if(!c || c->id!=seq || c->actor!=ship){
+        const auto* hull=w.world().find(ship);
+        const auto* cargo=w.world().colony_ship(ship);
+        throw std::runtime_error("DOCK09 proposal refused: op="+
+            std::to_string(static_cast<unsigned>(action))+" receipt="+
+            std::to_string(seq)+" cargo="+
+            std::to_string(hull?hull->cargo:-1)+" refined="+
+            std::to_string(cargo?cargo->refined:-1)+" modules="+
+            std::to_string(cargo?cargo->modules:-1)+" plagioclase="+
+            std::to_string(cargo && cargo->minerals_kg.count("plagioclase")?
+                cargo->minerals_kg.at("plagioclase"):0));
+    }
     CHECK(w.submit(*c));w.step();
     auto e=w.world().events().back();
     CHECK(e.command_id==seq&&e.result==Outcome::Applied);
@@ -81,6 +92,34 @@ int main(int argc,char** argv){
                 colony_onboarding::Operation::EstablishOutpost));
         }
         erase(ordinary_db);
+        // Verify the separate v125 custody model on original native physics:
+        // geological mining creates a tagged ore lot and must NOT mint
+        // ship mineral stock. PLAY-STATION-03B covers station refining.
+        const auto modern_db=db+".v125";
+        erase(modern_db);
+        {
+            Simulation modern_seed(0xD015);
+            const auto modern_ship=modern_seed.add_colony_ship(7,{10000,0},32,8);
+            const auto modern_rock=modern_seed.add_geological_asteroid(
+                {8000,1400},AsteroidClass::Silicate,10,1000);
+            modern_seed.enable_native_galactic_physics({
+                {1,galactic::Point{{0,100000},{0,100000},{0,100000}}}});
+            modern_seed.enable_station_ore_provenance();
+            modern_seed.enable_native_swept_asteroid_collision();
+            const auto original_mass=modern_seed.total_material_kg();
+            PersistentWorld modern(modern_db,std::move(modern_seed));
+            std::uint64_t modern_seq=93000;
+            perform(modern,modern_seq,modern_ship,Action::Mine,modern_rock,1);
+            CHECK(modern.world().find(modern_ship)->cargo==1);
+            CHECK(modern.world().colony_ship(modern_ship)->minerals_kg.empty());
+            CHECK(modern.world().station_ore_lots().size()==1);
+            const auto& lot=modern.world().station_ore_lots().begin()->second;
+            CHECK(lot.rock==modern_rock && lot.source_ship==modern_ship &&
+                  lot.owner==7 && lot.tonnes==1 && lot.station==0 &&
+                  lot.taxonomy==static_cast<std::uint8_t>(AsteroidClass::Silicate));
+            CHECK(modern.world().total_material_kg()==original_mass);
+        }
+        erase(modern_db);
         EntityId home=0,station=0,raw=0,silicate=0,ship=0;
         std::uint64_t seq=92000;
         std::int64_t initial_mass=0;
@@ -92,16 +131,18 @@ int main(int argc,char** argv){
             // The original 12 m3 hold remains full after six modules;
             // reserve real room for both ore lots and later geology.
             ship=seed.add_colony_ship(7,{10000,0},32,8);
-            raw=seed.add_geological_asteroid(
-                {8000,0},AsteroidClass::Metallic,10,3000);
+            // Historical onboard workshop source: bulk ore is mined
+            // into cargo while classified silicate separates onboard.
+            raw=seed.add_asteroid({8000,0},3000);
             silicate=seed.add_geological_asteroid(
                 {8000,1400},AsteroidClass::Silicate,10,1000);
             seed.provision_colony_genesis(ship,3000,3000,3000,3000,3000);
             seed.enable_individual_workforce();
             seed.enable_native_galactic_physics({
                 {1,galactic::Point{{0,100000},{0,100000},{0,100000}}}});
-            seed.enable_station_ore_provenance();
-            seed.enable_native_swept_asteroid_collision();
+            // The historical whole-workflow fixture remains at v120:
+            // v123+ geological lots must be processed at a real
+            // commissioned station refinery, not onboard by fiat.
             initial_mass=seed.total_material_kg();
             PersistentWorld w(db,std::move(seed));
             CHECK(w.world().find(ship)->dock_state==DockState::InSpace);
