@@ -2244,6 +2244,32 @@ if(BUILD_TESTING)
     TIMEOUT 180 LABELS "stage06;continuous-space;original-sqlite;worker-handoff;recovery")
 endif()
 
+# S6-H3: one authoritative SQLite game world, 64 real ships / 512 named
+# residents across 4 physically occupied cells and 2-at-a-time bounded OS
+# preflight waves. Host admission rejects concurrent ticks/configuration; the
+# original writer alone commits and handles crash/replay/SQLite recovery.
+if(BUILD_TESTING)
+  add_executable(galaxy_stage06h3_fleet_scale
+    tests/Stage06H3FleetScaleTests.cpp)
+  target_link_libraries(galaxy_stage06h3_fleet_scale
+    PRIVATE galaxy_kernel Threads::Threads)
+  add_test(NAME galaxy_stage06h3_fleet_256
+    COMMAND galaxy_stage06h3_fleet_scale
+      $<TARGET_FILE:galaxy_native_cell_worker>
+      $<TARGET_FILE:galaxy_native_cell_hang_worker>)
+  set_tests_properties(galaxy_stage06h3_fleet_256 PROPERTIES TIMEOUT 300
+    LABELS "stage06;original-world;sqlite;fleet;backpressure;recovery")
+  if(SPACE_ENABLE_1024_ENDURANCE)
+    add_test(NAME galaxy_stage06h3_fleet_1024
+      COMMAND galaxy_stage06h3_fleet_scale
+        $<TARGET_FILE:galaxy_native_cell_worker>
+        $<TARGET_FILE:galaxy_native_cell_hang_worker>)
+    set_tests_properties(galaxy_stage06h3_fleet_1024 PROPERTIES
+      ENVIRONMENT "SPACE_H3_FLEET_TICKS=1024" TIMEOUT 900
+      LABELS "stage06;original-world;sqlite;fleet;scale;recovery")
+  endif()
+endif()
+
 # SGDX-01: private host-incident evidence is independently testable without
 # constructing a second world or modifying the authoritative SQLite writer.
 if(BUILD_TESTING)

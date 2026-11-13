@@ -10,6 +10,8 @@
 #include "galaxy/ServerProcessDiagnostics.hpp"
 #include <sqlite3.h>
 #include <algorithm>
+#include <atomic>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <future>
@@ -251,23 +253,63 @@ inline bool release_uncommitted_writer_claim(
 // A crashed worker is replaced by transfer_cell_worker's epoch CAS and
 // claim_original_writer's durable takeover, not a replayed world tick.
 class NativeMultiCellSupervisor {
+    // ONE host process can own a supervisor, but several transport/UI threads
+    // may submit work simultaneously. Reject the second entry immediately:
+    // never race last_failed_, the mutable original world, or worker leases.
+    // This is a bounded zero-queue admission, NOT a second world mutex.
+    class Admission {
+    public:
+        explicit Admission(NativeMultiCellSupervisor& owner):owner_(owner){
+            bool expected=false;
+            if(!owner_.active_.compare_exchange_strong(expected,true,
+                std::memory_order_acq_rel,std::memory_order_acquire)){
+                owner_.rejected_admissions_.fetch_add(1,std::memory_order_relaxed);
+                throw std::runtime_error("original shared-world supervisor busy; retry later");
+            }
+        }
+        ~Admission(){owner_.active_.store(false,std::memory_order_release);}
+        Admission(const Admission&)=delete;
+        Admission& operator=(const Admission&)=delete;
+    private:
+        NativeMultiCellSupervisor& owner_;
+    };
 public:
+    struct ScheduleMetrics {
+        std::uint64_t world_generation=0;
+        std::size_t cells_examined=0,eligible_cells=0,failed_cells=0;
+        std::size_t preflight_waves=0,maximum_parallel_preflights=0;
+        std::uint64_t committed_tick=0;
+        double elapsed_ms=0.0;
+    };
     explicit NativeMultiCellSupervisor(std::string original_sqlite,
-        PersistentWorld& original,std::size_t max_workers=4):
-        db_(std::move(original_sqlite)),world_(original),limit_(max_workers){
-        if(db_.empty() || limit_==0 || limit_>4)
+        PersistentWorld& original,std::size_t max_workers=4,
+        std::size_t max_parallel_preflights=4):
+        db_(std::move(original_sqlite)),world_(original),limit_(max_workers),
+        preflight_parallelism_(max_parallel_preflights){
+        if(db_.empty() || limit_==0 || limit_>4 ||
+           preflight_parallelism_==0 || preflight_parallelism_>limit_)
             throw std::invalid_argument("bounded original supervisor capacity");
+    }
+    bool busy() const noexcept {return active_.load(std::memory_order_acquire);}
+    std::uint64_t rejected_admissions() const noexcept {
+        return rejected_admissions_.load(std::memory_order_relaxed);
+    }
+    const ScheduleMetrics& last_schedule() const noexcept {return last_schedule_;}
+    std::size_t maximum_parallel_preflights() const noexcept {
+        return preflight_parallelism_;
     }
     // Production mode: each admitted cell executes in a constrained native
     // child process. Unlike in-process async eligibility calculations, this
     // exercises a real OS process lifecycle and a deadline/kill policy.
     // No SQLite writer path or mutable world is passed to children.
     void use_native_process_workers(std::string executable){
+        Admission admission(*this);
         if(executable.empty() || executable.size()>4096)
             throw std::invalid_argument("worker executable path required");
         process_executable_=std::move(executable);
     }
     void register_worker(const WorkerLease& lease){
+        Admission admission(*this);
         const auto name=scope(lease.cell);
         if(leases_.size()>=limit_ && !leases_.count(name))
             throw std::runtime_error("native supervisor worker budget exceeded");
@@ -278,6 +320,7 @@ public:
     }
     WorkerLease recover_worker(const Cell& cell,const std::string& replacement,
         const std::string& unique_handoff_id,bool authenticated_host){
+        Admission admission(*this);
         const auto name=scope(cell);
         const auto found=leases_.find(name);
         if(found==leases_.end())
@@ -299,6 +342,7 @@ public:
         std::uint64_t destination_checkpoint_revision,
         const std::string& durable_handoff_id,bool authenticated_host,
         FailPoint failure=FailPoint::None) {
+        Admission admission(*this);
         const auto found=leases_.find(scope(previous));
         if(found==leases_.end())
             throw std::runtime_error("H2 original source lease not registered");
@@ -329,6 +373,7 @@ public:
     // claim with immutable audit, rather than deadlocking subsequent ticks.
     bool submit_original_command(const Command& command,
         const std::string& claim_id,FailPoint failure=FailPoint::None){
+        Admission admission(*this);
         if(claim_id.empty() || !command.actor)
             throw std::invalid_argument("original command dispatch required");
         const auto* actor=world_.world().find(command.actor);
@@ -384,6 +429,7 @@ public:
     // Never issue a speculative new claim when the old one may still commit.
     std::optional<Committed> resume_pending_tick(
         FailPoint failure=FailPoint::None){
+        Admission admission(*this);
         sqlite3* db=nullptr;
         if(sqlite3_open_v2(db_.c_str(),&db,
             SQLITE_OPEN_READONLY|SQLITE_OPEN_FULLMUTEX,nullptr)!=SQLITE_OK){
@@ -445,6 +491,9 @@ public:
     }
     Committed run_next_tick(const std::string& dispatch_id,
         FailPoint failure=FailPoint::None){
+        Admission admission(*this);
+        last_schedule_={}; // a failed tick never masquerades as prior success
+        const auto started=std::chrono::steady_clock::now();
         if(dispatch_id.empty())throw std::invalid_argument("dispatch ID required");
         if(leases_.empty())throw std::runtime_error("no native cell workers");
         // These are REAL bounded concurrent read-only worker tasks. No task
@@ -454,51 +503,73 @@ public:
         const Simulation& immutable=world_.world();
         const auto native_generation=world_.generation();
         const auto native_hash=immutable.state_hash();
-        std::vector<std::future<std::optional<std::pair<std::string,int>>>> pending;
-        pending.reserve(leases_.size());
-        last_failed_.clear();
-        for(const auto& [cell,lease]:leases_){
-            pending.push_back(std::async(std::launch::async,
-                [world=&immutable,db=db_,cell,lease,
-                 binary=process_executable_,native_generation,native_hash]()
-                    ->std::optional<std::pair<std::string,int>>{
-                    if(!worker_may_simulate_cell(db,lease.cell,lease.worker,
-                        lease.epoch,lease.region_generation,lease.checkpoint_revision))
-                        return std::nullopt; // a revoked worker never receives a tick
-                    std::size_t physical_ships=0;
-                    for(const auto& [id,e]:world->entities()){
-                        if(e.type!=EntityType::Ship)continue;
-                        const auto current=ship_cell(*world,id);
-                        if(current && scope(*current)==cell)
-                            ++physical_ships;
-                    }
-                    if(!physical_ships)return std::nullopt;
-                    const auto detail=desired_detail(*world,lease.cell);
-                    if(!binary.empty()){
-                        const CellProcessTask request{cell,lease.worker,
-                            native_generation,native_hash,physical_ships,
-                            static_cast<std::uint8_t>(detail)};
-                        const auto result=run_cell_process(binary,request);
-                        if(!result.passed)
-                            throw std::runtime_error(
-                                "OS cell process denied: "+result.reason);
-                    }
-                    return std::make_pair(cell,static_cast<int>(detail));
-                }));
-        }
         std::vector<std::pair<std::string,int>> eligible;
-        for(std::size_t i=0;i<pending.size();++i){
-            try{
-                auto report=pending[i].get();
-                if(report)eligible.push_back(*report);
-            }catch(const std::exception& error){
-                auto at=leases_.begin();
-                std::advance(at,static_cast<std::ptrdiff_t>(i));
-                last_failed_.push_back(at->first);
-                if(!process_executable_.empty())
-                    record_native_worker_failure(at->first,at->second.epoch,error.what());
+        eligible.reserve(leases_.size());
+        last_failed_.clear();
+        ScheduleMetrics metrics{};
+        metrics.world_generation=native_generation;
+        metrics.cells_examined=leases_.size();
+        // Never create a task for every ship or run an unbounded std::async
+        // queue. Only the four admitted *cells* are eligible. Dispatch them
+        // in at-most-N parallel waves; every wave drains before the next.
+        auto at=leases_.begin();
+        while(at!=leases_.end()){
+            std::vector<std::future<std::optional<std::pair<std::string,int>>>> pending;
+            std::vector<std::string> scopes;
+            pending.reserve(preflight_parallelism_);
+            scopes.reserve(preflight_parallelism_);
+            while(at!=leases_.end() && pending.size()<preflight_parallelism_){
+                const auto cell=at->first;
+                const auto lease=at->second;
+                scopes.push_back(cell);
+                pending.push_back(std::async(std::launch::async,
+                    [world=&immutable,db=db_,cell,lease,
+                     binary=process_executable_,native_generation,native_hash]()
+                        ->std::optional<std::pair<std::string,int>>{
+                        if(!worker_may_simulate_cell(db,lease.cell,lease.worker,
+                            lease.epoch,lease.region_generation,lease.checkpoint_revision))
+                            return std::nullopt;
+                        std::size_t physical_ships=0;
+                        for(const auto& [id,e]:world->entities()){
+                            if(e.type!=EntityType::Ship)continue;
+                            const auto current=ship_cell(*world,id);
+                            if(current && scope(*current)==cell)++physical_ships;
+                        }
+                        if(!physical_ships)return std::nullopt;
+                        const auto detail=desired_detail(*world,lease.cell);
+                        if(!binary.empty()){
+                            const CellProcessTask request{cell,lease.worker,
+                                native_generation,native_hash,physical_ships,
+                                static_cast<std::uint8_t>(detail)};
+                            const auto result=run_cell_process(binary,request);
+                            if(!result.passed)
+                                throw std::runtime_error(
+                                    "OS cell process denied: "+result.reason);
+                        }
+                        return std::make_pair(cell,static_cast<int>(detail));
+                    }));
+                ++at;
+            }
+            ++metrics.preflight_waves;
+            metrics.maximum_parallel_preflights=std::max(
+                metrics.maximum_parallel_preflights,pending.size());
+            for(std::size_t i=0;i<pending.size();++i){
+                try{
+                    auto report=pending[i].get();
+                    if(report)eligible.push_back(*report);
+                }catch(const std::exception& error){
+                    last_failed_.push_back(scopes[i]);
+                    if(!process_executable_.empty()){
+                        const auto failed=leases_.find(scopes[i]);
+                        if(failed!=leases_.end())
+                            record_native_worker_failure(scopes[i],
+                                failed->second.epoch,error.what());
+                    }
+                }
             }
         }
+        metrics.eligible_cells=eligible.size();
+        metrics.failed_cells=last_failed_.size();
         if(eligible.empty())
             throw std::runtime_error("no healthy occupied leased native cells");
         const auto max_detail=std::max_element(eligible.begin(),eligible.end(),
@@ -514,6 +585,10 @@ public:
         const auto& worker=leases_.at(winner);
         const auto token=claim_original_writer(db_,world_,worker,dispatch_id,true);
         world_.step_as_cell_worker(token,failure);
+        metrics.committed_tick=world_.world().tick();
+        metrics.elapsed_ms=std::chrono::duration<double,std::milli>(
+            std::chrono::steady_clock::now()-started).count();
+        last_schedule_=metrics;
         return {winner,worker.worker,dispatch_id,world_.generation(),world_.world().tick()};
     }
     std::size_t worker_count() const noexcept {return leases_.size();}
@@ -544,7 +619,10 @@ private:
     }
     std::string db_;
     PersistentWorld& world_;
-    std::size_t limit_;
+    std::size_t limit_,preflight_parallelism_;
+    std::atomic<bool> active_{false};
+    std::atomic<std::uint64_t> rejected_admissions_{0};
+    ScheduleMetrics last_schedule_{};
     std::map<std::string,WorkerLease> leases_;
     std::vector<std::string> last_failed_;
     std::string process_executable_;

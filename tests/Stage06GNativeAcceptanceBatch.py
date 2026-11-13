@@ -64,6 +64,8 @@ MULTICELL=(
     # Every cross-sector / authorized cross-star handoff must be source backed
     # by an original physical movement, with atomic lease CAS and replay denial.
     "galaxy_stage06h2_original_cell_handoff",
+    "galaxy_stage06h3_fleet_256",
+    "galaxy_stage06h3_fleet_1024",
     "galaxy_native_galactic_supervisor_multisystem_256",
     "galaxy_native_galactic_supervisor_1024",
     "galaxy_native_cell_process_stress",
