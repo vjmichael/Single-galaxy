@@ -1,4 +1,5 @@
 #include "galaxy/PlanetaryContinuousSurface.hpp"
+#include "galaxy/Stage6WalkingPatch.hpp"
 #include <cstdint>
 #include <cstdlib>
 #include <iostream>
@@ -29,6 +30,25 @@ try{
     CHECK(!native_step(*initial,301,0,earth_radius));
     CHECK(!native_step(*initial,300,300,earth_radius));
     CHECK(!native_step(*initial,300,0,1)); // no impossible body physics
+    // The source-only 3x3 visual atlas spans +/-64 metres, while no actual
+    // planetary movement may exceed the original +/-32m native offset bound.
+    CHECK(!native_offset(*initial,64000,0,earth_radius));
+    const auto visual_east=galaxy::stage6::visual_tile_offset(
+        *initial,64000,0,earth_radius);
+    const auto visual_west=galaxy::stage6::visual_tile_offset(
+        *initial,-64000,0,earth_radius);
+    const auto visual_north=galaxy::stage6::visual_tile_offset(
+        *initial,0,64000,earth_radius);
+    CHECK(visual_east && visual_west && visual_north);
+    CHECK(visual_east->longitude_pdeg>initial->longitude_pdeg);
+    CHECK(visual_west->longitude_pdeg<initial->longitude_pdeg);
+    CHECK(visual_north->latitude_pdeg>initial->latitude_pdeg);
+    CHECK(galaxy::stage6::visual_tile_offset(
+        *initial,64000,64000,earth_radius));
+    CHECK(!galaxy::stage6::visual_tile_offset(
+        *initial,64002,0,earth_radius));
+    CHECK(!galaxy::stage6::visual_tile_offset(
+        *initial,0,64001,earth_radius));
     // Crossing both 5-degree source-region seams is a native geometry
     // operation, not teleport between two colony-site IDs.
     const GeoPoint left{-85*kDegree,-175*kDegree-1000000};

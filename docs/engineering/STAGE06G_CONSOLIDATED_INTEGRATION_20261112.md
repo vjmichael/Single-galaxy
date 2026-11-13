@@ -1,5 +1,16 @@
 # S6-G — Consolidated original Stage 6 integration
 
+## 2026-11-13 — Original Linux SGDX planet nine-tile failure and repair
+
+Original exact-head Actions [run #43481325726](https://github.com/vjmichael/Single-galaxy/actions/runs/43481325726) at SHA `8e846901343c3d9c4119da1800c841012964148c` established Linux full original Stage 6 native batch **PASS**; the independent SGDX custody CTest matrix **3/3 PASS**. Its subsequent original-planet supervisor/guardian-restart test failed at `Stage06GInstalledSupervisor.py:101` requiring **nine original source-backed visual tiles**.
+
+A separate local real executable reproduction captured **1 valid tile, center (0,0)** instead of the required 3x3 at +/-64m offsets. Exact root cause: `original_walking_tiles` invokes the authority-limited `planetary::continuous_surface::native_offset` with +/-64000mm, while that unchanged movement helper refuses offsets beyond +/-32000mm. The eight outer visual tiles are silently omitted despite valid underlying source land.
+
+Repair: `Stage6WalkingPatch.hpp` now has a **read-only** `visual_tile_offset` that composes two allowed +/-32000mm geodetic offsets for visual sampling only. It is strictly bounded to +/-64000mm, retains the existing no-synthetic-land / no-ocean / no-client-authority rules, and does **not** increase the native actor movement limit. Native geometry regression in `STAGE6F5B_ContinuousSurfaceMathTests.cpp` verifies valid source-only 64m offsets, rejected out-of-range values and unchanged direct native 32m limit. On locally compiled actual Linux game host, the original nine tile packet now publishes at all nine expected +/-64m positions, and `Stage06GInstalledSupervisor.py` passes **16+ ticks, one-writer contention, guardian loss, offline tick freeze, recovered generation and stale-session denial**. Native local SGDX five-test process custody suite also **5/5 PASS**, including 4,000 genuine worker launches.
+
+These are source-compatible local tests, not final hosted Windows/Linux exact-source attestation. The next exact-head native and SGDX results MUST be reconciled at the replacement SHA, and physical Windows SCM/Job plus real delegated Linux cgroup/reparenting remain separate high-security gates.
+
+
 ## 2026-11-13 D7/E6/F/G original acceptance reconciliation (newer evidence)
 
 - Original run [#43476579404](https://github.com/vjmichael/Single-galaxy/actions/runs/43476579404) at exact SHA `db3ebe89321c1336783583d95d50cc615478a15b`: **Linux original-source native batch passed all mandatory groups**, including D7 full 1,000kg two-voyage freight, E6 staffed ecology, F named-NPC movement and SQLite/1,024-tick four-cell supervisor endurance. The original v85 historical-producer/SQLite attestation succeeded. This is native source acceptance, **not installed gameplay/physical GPU acceptance**.

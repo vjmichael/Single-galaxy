@@ -17,6 +17,23 @@
 #include <tuple>
 #include <vector>
 namespace galaxy::stage6 {
+// S6-G: visual tiles are centred at +/-64m, while the authoritative
+// geodetic movement helper intentionally admits only +/-32m per call.
+// Compose two bounded original calculations for read-only source sampling;
+// do not raise the native movement limit or confer a new actor action.
+inline std::optional<planetary::continuous_surface::GeoPoint>
+visual_tile_offset(planetary::continuous_surface::GeoPoint center,
+                   std::int64_t east_mm,std::int64_t north_mm,
+                   std::uint64_t radius_mm) {
+    using namespace planetary::continuous_surface;
+    constexpr std::int64_t visual_limit=64000;
+    if(east_mm < -visual_limit || east_mm > visual_limit ||
+       north_mm < -visual_limit || north_mm > visual_limit ||
+       (east_mm % 2) || (north_mm % 2)) return std::nullopt;
+    const auto midpoint=native_offset(center,east_mm/2,north_mm/2,radius_mm);
+    return midpoint?native_offset(*midpoint,east_mm/2,north_mm/2,radius_mm):
+                    std::nullopt;
+}
 inline std::optional<std::string> original_walking_patch(
        const PersistentWorld& world,PlayerId owner,EntityId ship,
        const PlanetarySiteKey& key,
@@ -70,7 +87,7 @@ inline std::optional<std::string> original_walking_patch(
     const auto center=source_pose.last_move_receipt?
         grid::GeoPoint{source_pose.latitude_pdeg,source_pose.longitude_pdeg}:*home;
     if(!grid::canonical(center))return std::nullopt;
-    const auto tile_center=grid::native_offset(
+    const auto tile_center=visual_tile_offset(
         center,tile_offset_x_mm,-tile_offset_z_mm,
         radius->physical_radius_mm);
     if(!tile_center)return std::nullopt;
