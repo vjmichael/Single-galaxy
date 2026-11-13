@@ -2065,6 +2065,23 @@ if(BUILD_TESTING)
       ${CMAKE_COMMAND} -E false)
   endif()
   set_tests_properties(galaxy_wo3_historical_sqlite_import PROPERTIES TIMEOUT 300)
+  # S6-H4 genuine native SQLite WAL plus pinned original v85 producer.
+  add_executable(galaxy_stage06h4_historical_recovery_tests
+    tests/Stage06H4HistoricalRecoveryTests.cpp)
+  target_link_libraries(galaxy_stage06h4_historical_recovery_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_stage06h4_current_wal_recovery
+    COMMAND galaxy_stage06h4_historical_recovery_tests --current)
+  if(Python3_Interpreter_FOUND)
+    add_test(NAME galaxy_stage06h4_v85_source_wal_recovery
+      COMMAND ${Python3_EXECUTABLE}
+      ${CMAKE_CURRENT_SOURCE_DIR}/tests/WO3HistoricalSQLiteVerifier.py
+      $<TARGET_FILE:galaxy_stage06h4_historical_recovery_tests>)
+  else()
+    add_test(NAME galaxy_stage06h4_v85_source_wal_recovery
+      COMMAND ${CMAKE_COMMAND} -E false)
+  endif()
+  set_tests_properties(galaxy_stage06h4_current_wal_recovery
+    galaxy_stage06h4_v85_source_wal_recovery PROPERTIES TIMEOUT 300)
   add_executable(galaxy_wo3_planetary_utility_tests tests/WO3PlanetaryUtilityTests.cpp)
   target_link_libraries(galaxy_wo3_planetary_utility_tests PRIVATE galaxy_kernel)
   add_test(NAME galaxy_wo3_planetary_utility COMMAND galaxy_wo3_planetary_utility_tests)

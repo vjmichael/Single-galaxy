@@ -104,6 +104,11 @@ jobs:
             --binary "$HIST_EXE" --sqlite "$SG_WO3_HISTORICAL_CAPTURE_OUTPUT" \
             --manifest build/stage06g-history/evidence/wo3-v85-attestation.json \
             --github-env "$GITHUB_ENV"
+          # Source-authenticated historical coverage only; never fabricate v86–v135.
+          python tests/Stage06H4HistoricalCorpusInventory.py \
+            --v85-sqlite "$SG_WO3_HISTORICAL_CAPTURE_OUTPUT" \
+            --v85-attestation build/stage06g-history/evidence/wo3-v85-attestation.json \
+            --output build/stage06g-history/evidence/stage06h4-historical-coverage.json
       - name: One consolidated native compile, CTest discovery and Stage 6/industry matrix
         shell: bash
         run: |
@@ -169,6 +174,7 @@ jobs:
             stage06g-native-acceptance.json
             build/stage06g/stage06g-multiworld-recovery.json
             build/stage06g-history/evidence/wo3-v85-attestation.json
+            build/stage06g-history/evidence/stage06h4-historical-coverage.json
             build/stage06g/Testing/Temporary/LastTest.log
             build/stage06g/Testing/Temporary/LastTestsFailed.log
           if-no-files-found: warn

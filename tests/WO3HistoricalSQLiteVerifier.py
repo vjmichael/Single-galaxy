@@ -42,8 +42,8 @@ def verify(path, digest, label):
 
 
 def main():
-    if len(sys.argv) != 2:
-        fail("native historical-import acceptance executable missing")
+    if len(sys.argv) < 2 or any(not Path(x).is_file() for x in sys.argv[1:]):
+        fail("one or more native historical SQLite acceptance executables missing")
     commit = os.environ.get("SG_WO3_V85_SOURCE_COMMIT", "")
     if commit != SOURCE_COMMIT:
         fail("historical native source commit is unpinned or wrong")
@@ -99,10 +99,11 @@ def main():
             fail("historical saved world is not real native v85 producer data")
     print("SOURCE-PINNED HISTORICAL REPRODUCTION; NOT AN ARCHIVED DATABASE",
           commit, "SQLite SHA256", world_sha)
-    subprocess.run([sys.argv[1], str(world)], check=True)
-    # Fail closed if native acceptance wrote through or corrupted the source.
-    verify(world, world_sha, "original SQLite after independent native test")
-    verify(binary, binary_sha, "producer executable after independent native test")
+    for native_test in sys.argv[1:]:
+        subprocess.run([native_test, str(world)], check=True)
+        # Rehash authentic original SQLite and producer after every consumer.
+        verify(world, world_sha, "original SQLite after independent native test")
+        verify(binary, binary_sha, "producer executable after independent native test")
 
 
 if __name__ == "__main__":
