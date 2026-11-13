@@ -4,6 +4,7 @@
 // commit each generation. Unselected workers are read-only, never shadow
 // Simulation owners. The original SQLite BEGIN IMMEDIATE serializes effects.
 #include "galaxy/SeamlessCellWorker.hpp"
+#include "galaxy/SeamlessShipCellHandoff.hpp"
 #include "galaxy/Persistence.hpp"
 #include "galaxy/NativeCellProcessRunner.hpp"
 #include "galaxy/ServerProcessDiagnostics.hpp"
@@ -287,6 +288,41 @@ public:
             unique_handoff_id,authenticated_host);
         found->second=successor;
         return successor;
+    }
+    // S6-H2: the ship has already moved in the original PersistentWorld.
+    // Reconcile its immutable migration receipt and both worker leases in
+    // one SQLite transaction. No physical state can be written by this API.
+    ShipCellHandoff reconcile_ship_handoff(
+        EntityId ship,const Cell& previous,const Cell& destination,
+        const std::string& next_worker,std::uint64_t destination_prior_epoch,
+        std::uint64_t destination_region_generation,
+        std::uint64_t destination_checkpoint_revision,
+        const std::string& durable_handoff_id,bool authenticated_host,
+        FailPoint failure=FailPoint::None) {
+        const auto found=leases_.find(scope(previous));
+        if(found==leases_.end())
+            throw std::runtime_error("H2 original source lease not registered");
+        const auto destination_key=scope(destination);
+        // Retain any old worker that still serves other original ships.
+        // Reject capacity overflow BEFORE touching the original SQLite.
+        bool old_cell_occupied=false;
+        for(const auto& [id,e]:world_.world().entities()){
+            if(e.type!=EntityType::Ship)continue;
+            const auto real=ship_cell(world_.world(),id);
+            if(!real)throw std::runtime_error("H2 unresolved original ship cell");
+            if(scope(*real)==scope(previous))old_cell_occupied=true;
+        }
+        if(old_cell_occupied && leases_.size()>=limit_ &&
+           !leases_.count(destination_key))
+            throw std::runtime_error("H2 worker capacity before handoff exceeded");
+        const auto receipt=reconcile_committed_ship_handoff(
+            db_,world_,ship,found->second,destination,next_worker,
+            destination_prior_epoch,destination_region_generation,
+            destination_checkpoint_revision,durable_handoff_id,
+            authenticated_host,failure);
+        if(receipt.source_retired)leases_.erase(found);
+        leases_[destination_key]=receipt.destination;
+        return receipt;
     }
     // Player commands use the exact same global writer arbitration as a
     // physical tick. A rejected/no-op command releases its uncommitted

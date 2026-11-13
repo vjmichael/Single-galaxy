@@ -2229,6 +2229,21 @@ if(BUILD_TESTING)
   endif()
 endif()
 
+# S6-H2: original 250mm physical galactic sector crossing and authorized
+# cross-star gate arrival, one SQLite ship/index authority and atomic worker
+# lease CAS; hostile destination, crash rollback, restart and replay tests.
+if(BUILD_TESTING)
+  add_executable(galaxy_stage06h2_original_cell_handoff
+    tests/Stage06H2PhysicalShipHandoffTests.cpp)
+  target_link_libraries(galaxy_stage06h2_original_cell_handoff
+    PRIVATE galaxy_kernel Threads::Threads)
+  add_test(NAME galaxy_stage06h2_original_cell_handoff
+    COMMAND galaxy_stage06h2_original_cell_handoff
+      $<TARGET_FILE:galaxy_native_cell_worker>)
+  set_tests_properties(galaxy_stage06h2_original_cell_handoff PROPERTIES
+    TIMEOUT 180 LABELS "stage06;continuous-space;original-sqlite;worker-handoff;recovery")
+endif()
+
 # SGDX-01: private host-incident evidence is independently testable without
 # constructing a second world or modifying the authoritative SQLite writer.
 if(BUILD_TESTING)

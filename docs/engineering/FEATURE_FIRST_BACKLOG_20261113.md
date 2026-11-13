@@ -8,7 +8,7 @@
 
 ## Implementation order — no local PC gates
 1. **S6-H1 (this source change)**: 4 physically distinct original star systems, 4 actual occupied cells, 1 shared original SQLite authority. Each of 256 committed ticks schedules 4 real read-only OS workers; durable winner rotation, 7 supervisor restarts, 7 injected rollbacks, 4 original SQLite recovered copies, original ship/NPC/entity IDs and ore mass, no invented copies. Source-only feature simulation, not interstellar flight or four concurrent mutable writers.
-2. **S6-H2**: Real cross-star physically continuous transit/streamed cell handoffs using original ship, true coordinate and source-authorized arrival; verify pending worker lease revocation and crash-mid-transfer without double ownership.
+2. **S6-H2 (source implemented; exact-head native acceptance pending)**: Genuinely journaled 250-mm physical sector crossing plus separately authorized cross-star gate arrival; each drives the same atomic post-movement worker lease CAS, empty-source retirement, crash-mid-handoff rollback and restart/idempotent recovery. Original ship, true galactic coordinate and SQLite immutable transfer remain sole authority. This is not new instant star travel.
 3. **S6-H3**: Production-scale concurrent native worker throughput and bounded scheduler admission across a growing, one-original-world fleet; observe and repair actual latency/backpressure, no detached descendants, and durable replay denial. Four independent worlds alone do not count.
 4. **S6-H4**: Historical v86–v135 original SQLite corpus and WAL/revision recovery if actual incompatible saves remain; preserve exact citizen, resource, medical/legal address and source audit identity without regenerating starting worlds.
 5. **Stage 7 — population/society**: Continue individual NPCs, households, delegated labor, independent society, economic and legal behavior on existing authoritative game records; no fabricated NPC resources or consequences. Defer networking and release until supported gameplay exists.
@@ -21,3 +21,9 @@
 
 ## Governance
 No merge/release/installation. Keep exact-head native receipts and inspect original failures before source fixes. Functional backlog implementation has precedence over routine hosted CI and device revalidation.
+
+## S6-H2 implementation checkpoint (2026-11-13)
+- `include/galaxy/SeamlessShipCellHandoff.hpp` — source-backed, immutable cross-cell worker handoff receipt with single-SQLite atomic CAS and failure injection; only original snapshot migration can authorize a move.
+- `NativeMultiCellSupervisor::reconcile_ship_handoff` — bounded host API; no unapproved worker or capacity overflow.
+- `tests/Stage06H2PhysicalShipHandoffTests.cpp` and registered mandatory `galaxy_stage06h2_original_cell_handoff` CTest — real 250-mm galactic sector crossing plus original gate arrival, crash-mid-handoff, stale/forged/replayed worker authority, recover copy, no resource/entity creation.
+- Local GCC/Clang target passed against the baseline original kernel; new exact SHA Windows/Linux native results remain open. Proceed to H3 multi-cell fleet throughput and H4 old SQLite corpus before any physical PC testing.
