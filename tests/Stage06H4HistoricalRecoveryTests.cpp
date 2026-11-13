@@ -157,7 +157,8 @@ int main(int argc,char** argv){
     Command c{};c.id=7799001;c.execute_tick=1;
     c.issuer=7;c.actor=ship;c.action=Action::Thrust;c.thrust_x=1;
     CHECK(w.submit(c));w.step();CHECK(w.world().has_command_id(c.id));
-    const auto before=w.world().canonical_state(),generation=w.generation();
+    const auto before=w.world().canonical_state();
+    const auto generation=w.generation();
     rejects([&]{w.step(FailPoint::AfterSnapshotWrite);});
     CHECK(w.generation()==generation && w.world().canonical_state()==before);
    }
