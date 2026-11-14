@@ -1,7 +1,7 @@
 {
   "schema": "SG-CI-GATE-01",
-  "task_group": "INT03-H4",
-  "source_sha": "466a3f9af14992c0cf70378fba589c399e6e37f2",
+  "task_group": "INT04-NATIVE",
+  "source_sha": "e6eab86ed289f4465cb63957cebc00bf4ae2f1a9",
   "pr_number": 0,
-  "note": "Single main-anchored historical H4 task-group request. Source SHA is the unchanged parent of this manifest-only acceptance commit. Require GitHub push-before == SHA, exact main/event HEAD == request commit SHA and one-file diff; run eight source-pinned original Linux historical producer scenarios including fresh v128/v135 plus Linux/Windows original v85/SQLite native subset. Preserve JUnit, original executable, source and SQLite integrity provenance; reject any failed vintage CTest; full v86-v135 compatibility and physical GPU acceptance remain OPEN absent independent evidence."
+  "note": "Owner-authorized SINGLE main-native grouped acceptance of integrated INT04 source: exact main Linux/Windows 16 original SQLite/WO3/H4/Stage6/Group3 native CTests; genuine original pre-v109/v111/v118/v128/v135 H4 source-produced SQLite/receipt provenance eight-scenario matrix; original SHA-produced v85 legacy precursor from genuine native C++; Linux real Godot 4.7.2 Stage6+Group3 script/import; Windows Godot source contracts. No per-fix or PR workflow reruns. This manifest-only child SHA must stay unchanged across all jobs. No physical installed R9700/Windows Godot runtime acceptance implied; full v86-v135 version coverage remains independently gated."
 }
