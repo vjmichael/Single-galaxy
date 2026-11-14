@@ -251,6 +251,7 @@ jobs:
           python tests/Stage06H4HistoricalNativeCorpus.py \
             --source-sha '${{ matrix.source_sha }}' --current-sha "$GITHUB_SHA" \
             --source-clean --capture-dir original-evidence/sqlite \
+            --adapter-manifest original-evidence/source-adapter-provenance.json \
             --observer original-evidence/libsg_h4_observer.so \
             --output original-evidence/historical-corpus.json \
             --test-names '${{ matrix.test_regex }}' \
@@ -262,6 +263,12 @@ jobs:
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
           cmake -S . -B original-evidence/current -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON 2>&1 | tee original-evidence/modern-consumer-configure.log
           cmake --build original-evidence/current --parallel 3 --target galaxy_stage06h4_historical_recovery_tests 2>&1 | tee original-evidence/modern-consumer-build.log
+          read -ra TARGETS <<< '${{ matrix.targets }}'
+          EXE=()
+          for target in "${TARGETS[@]}"; do
+            test -x "original-evidence/build/$target"
+            EXE+=("original-evidence/build/$target")
+          done
           python3 tests/Stage06H4NativeCompatibility.py \
             --manifest original-evidence/historical-corpus.json \
             --capture-dir original-evidence/sqlite \
@@ -289,6 +296,6 @@ jobs:
             original-evidence/ctest-discovery.txt
             original-evidence/original-cmake-configure.log
             original-evidence/original-native-build.log
-            original-evidence/cmake-adapter-provenance.sha256
+            original-evidence/source-adapter-provenance.json
           if-no-files-found: warn
           retention-days: 21
