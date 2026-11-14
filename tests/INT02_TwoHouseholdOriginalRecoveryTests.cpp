@@ -35,6 +35,21 @@ static void sql_fixture(const std::string& path,const std::string& statement){
     if(executed!=SQLITE_OK)throw std::runtime_error("family fixture SQL: "+message);
     CHECK(closed==SQLITE_OK);
 }
+// Original v74/v77 predecessor witnesses must survive rolling checkpoints.
+static std::uint64_t retained_snapshot_count(const std::string& path,std::uint64_t gen){
+    sqlite3* db=nullptr;
+    CHECK(sqlite3_open_v2(path.c_str(),&db,SQLITE_OPEN_READONLY,nullptr)==SQLITE_OK);
+    sqlite3_stmt* stmt=nullptr;
+    CHECK(sqlite3_prepare_v2(db,"SELECT COUNT(*) FROM snapshots WHERE generation=?",
+                            -1,&stmt,nullptr)==SQLITE_OK);
+    CHECK(sqlite3_bind_int64(stmt,1,static_cast<sqlite3_int64>(gen))==SQLITE_OK);
+    CHECK(sqlite3_step(stmt)==SQLITE_ROW);
+    const auto count=static_cast<std::uint64_t>(sqlite3_column_int64(stmt,0));
+    CHECK(sqlite3_step(stmt)==SQLITE_DONE);
+    CHECK(sqlite3_finalize(stmt)==SQLITE_OK);
+    CHECK(sqlite3_close(db)==SQLITE_OK);
+    return count;
+}
 int main(){
 try {
     const auto db=(std::filesystem::temp_directory_path()/
@@ -46,6 +61,7 @@ try {
     const std::array<std::uint64_t,2> guardians{1,3};
     EntityId source=0,destination=0;
     std::int64_t conserved_material=0;
+    std::uint64_t predecessor_generation=0;
     {
         Simulation genesis(seed);
         source=genesis.add_colony_ship(7,{0,0},100,4);
@@ -171,6 +187,7 @@ try {
         CHECK(world.prepare_host_colony_family_departure(plan.family));
         CHECK(world.submit_host_atomic_family_departure(plan));
         const auto accepted=world.generation();
+        predecessor_generation=accepted;
         auto duplicate=plan;
         duplicate.member_event_ids[5]=duplicate.member_event_ids[4];
         bool refused=false;
@@ -213,6 +230,14 @@ try {
         try{world.step_with_atomic_family_departure(plan);}
         catch(const std::exception&){refused=true;}
         CHECK(refused);
+        // Old v77 branch caught loss of immutable before/after world witnesses
+        // when rolling checkpoint retention later pruned ordinary generations.
+        world.steps(8);
+        CHECK(world.generation()>=predecessor_generation+9);
+        CHECK(retained_snapshot_count(db,1)==1);
+        CHECK(retained_snapshot_count(db,predecessor_generation)==1);
+        CHECK(retained_snapshot_count(db,predecessor_generation+1)==1);
+        CHECK(world.verified_atomic_family_departure(plan.command_id));
     }
     {
         PersistentWorld original(db,Simulation(92303));
@@ -227,7 +252,19 @@ try {
         CHECK(survivor.world().children_physically_aboard(destination)==2);
         CHECK(survivor.world().total_material_kg()==conserved_material);
         CHECK(re::CheckpointStore(recovered,region_scope).load()->scheduler.colony("receiver").population==8);
+        CHECK(retained_snapshot_count(recovered,predecessor_generation)==1);
+        CHECK(retained_snapshot_count(recovered,predecessor_generation+1)==1);
     }
+    // Test a *copy* only: delete the original before-state witness while
+    // retaining the final family receipt and ART02 destination census.
+    // Independent original-world recovery MUST reject this missing proof.
+    sql_fixture(recovered,"DELETE FROM snapshots WHERE generation="+
+        std::to_string(predecessor_generation));
+    CHECK(retained_snapshot_count(recovered,predecessor_generation)==0);
+    bool missing_witness_rejected=false;
+    try{PersistentWorld damaged(recovered,Simulation(92305));}
+    catch(const std::exception&){missing_witness_rejected=true;}
+    CHECK(missing_witness_rejected);
     clean(db);clean(recovered);
     std::cout<<"INT02 PASS: two original households, six named adults, two ART02 physical children, atomic custody, rollback/replay and independent recovery\n";
     return 0;
