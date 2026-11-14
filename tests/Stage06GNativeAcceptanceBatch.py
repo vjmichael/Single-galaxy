@@ -89,6 +89,7 @@ STAGE7=(
     "galaxy_stage07_population_households",
     "galaxy_stage07_household_lifecycle_birth",
     "galaxy_stage07_household_lifecycle_migration",
+    "galaxy_stage07_delegated_labor",
 )
 GODOT=(
     "galaxy_stage6f5e_godot_tile_window",

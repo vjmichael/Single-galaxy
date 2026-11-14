@@ -1,5 +1,6 @@
 #include "galaxy/RegionalProductionNetwork.hpp"
 #include "galaxy/ShipmentManifest.hpp"
+#include "galaxy/Stage07IndependentCommerce.hpp"
 #include "galaxy/NpcAppearanceGenome.hpp"
 #include <filesystem>
 #include <iostream>
@@ -167,11 +168,37 @@ int main(){
   shipping::ThirdPartyRegistry contracts(w,path,authenticate);
   shipping::ThirdPartyBooking frames{"frames-third-party",home,carrier,receiver,site,destination,7,8,9,2,2,1,9102,9401,9403};
   shipping::ThirdPartyBooking panels{"panels-third-party",home,carrier,receiver,site,destination,7,8,9,2,1,1,9106,9402,9404};
+  // Stage 7 POP-09: the original physically resident producer forms a
+  // specific real-world export decision based on the manufactured warehouse
+  // stock. The NPC has NO authority to consent for the other two owners.
+  std::uint64_t resident=0;
+  for(const auto& [id,p]:w.world().npc_records())
+   if(stage7::authentic_resident(w.world(),7,home,id,home)){
+    resident=id;break;
+   }
+  ck(resident!=0,"source has no genuine named resident");
+  const auto offer=stage7::decide_resident_manufactured_consignment(
+      w,7,home,resident,frames);
+  ck(offer.has_value()&&offer->original_contract.quantity_kg==1,
+     "native named resident failed to inspect actual manufactured goods");
+  ck(!stage7::decide_resident_manufactured_consignment(
+      w,8,home,resident,frames),"foreign citizen forged source consent");
+  ck(!stage7::book_resident_manufactured_consignment(
+      w,contracts,*offer,7,false),"NPC preference became owner consent");
+  ck(!stage7::book_resident_manufactured_consignment(
+      w,contracts,*offer,8,true),"foreign host principal authorized resident sale");
+  auto enlarged=*offer;
+  enlarged.original_contract.quantity_kg=2;
+  ck(!stage7::book_resident_manufactured_consignment(
+      w,contracts,enlarged,7,true),"resident sold absent physical goods");
   reject([&]{contracts.book(frames);},"anonymous source shipment proposal accepted");
   active=7;
   reject([&]{auto forged=frames;forged.id="bad-owner";forged.carrier_owner=7;contracts.book(forged);},"forged carrier ownership accepted");
   reject([&]{auto forged=frames;forged.id="bad-warehouse";forged.receiving_ship=home;contracts.book(forged);},"forged destination ownership accepted");
-  contracts.book(frames);contracts.book(panels);
+  ck(stage7::book_resident_manufactured_consignment(
+      w,contracts,*offer,7,true),
+      "authenticated producer did not create genuine original three-owner contract");
+  contracts.book(panels);
   reject([&]{contracts.load("frames-third-party");},"unsigned contract loaded before all three grants");
   active=8;reject([&]{contracts.approve("frames-third-party",7,1);},"carrier impersonated source authorization");
   active=7;reject([&]{contracts.approve("frames-third-party",7,2);},"source owner consented in carrier's role");
@@ -265,6 +292,8 @@ int main(){
   ck(w.world().storage(site)->network_escrow_kg==8&&w.world().total_material_kg()==conserved,
      "delivery withdrew duplicated factory escrow or failed conservation");
   contracts.verify();net.verify();
+  ck(stage7::resident_manufactured_delivery_verified(
+      w,contracts,*offer),"NPC-backed consignment lacks original delivered stock and receipts");
   contracts.load("frames-third-party");contracts.unload("frames-third-party");
   {PersistentWorld reopen(path,Simulation(5153));shipping::ThirdPartyRegistry checked(reopen,path,[](PlayerId){return false;});checked.verify();
    ck(reopen.world().storage(destination)->goods_kg.at("aluminum_frames")==1,

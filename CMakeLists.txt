@@ -2852,11 +2852,47 @@ if(BUILD_TESTING)
     LABELS "stage07;autonomous-society;actual-economy;original-law;sqlite;recovery")
 endif()
 
-// Stage 7 POP-06: original citizen social diary, independently authorized
-// immutable legal-policy epoch, one-generation delay and SQLite recovery.
+# Stage 7 POP-06: original citizen social diary, independently authorized
+# immutable legal-policy epoch, one-generation delay and SQLite recovery.
 if(BUILD_TESTING)
   add_test(NAME galaxy_stage07_civic_policy
     COMMAND galaxy_stage07_society_economy_tests)
   set_tests_properties(galaxy_stage07_civic_policy PROPERTIES TIMEOUT 180
     LABELS "stage07;real-npc;original-owner-consent;constitutional-epoch;sqlite;replay-denial")
+endif()
+
+# Stage 7 POP-05: original cross-domain duty collision, world-authoritative
+# staff reservation, one-use medical care and genuine dock restart tests.
+# Original tests remain separately required, never replaced by aliases.
+if(BUILD_TESTING)
+  add_test(NAME galaxy_stage07_duty_workshop
+    COMMAND galaxy_wo2_industry_workforce_tests)
+  add_test(NAME galaxy_stage07_duty_medical
+    COMMAND v59_medical_recovery)
+  add_test(NAME galaxy_stage07_duty_dock
+    COMMAND galaxy_dock03_physical_workforce_tests
+    "${CMAKE_CURRENT_BINARY_DIR}/stage07_dock03_world.sqlite")
+  set_tests_properties(
+    galaxy_stage07_duty_workshop
+    galaxy_stage07_duty_medical
+    galaxy_stage07_duty_dock
+    PROPERTIES TIMEOUT 180
+    LABELS "stage07;original-sqlite;exclusive-labor;recovery")
+endif()
+
+# POP-08: one named citizen -> source-backed native vital transfer, original
+# physical freight refusal and a separately approved original legal epoch.
+# Original WO4/WO5 tests remain independent; no shadow commerce inventory.
+if(BUILD_TESTING)
+  add_executable(galaxy_stage07_resident_economy_tests
+    tests/Stage07ResidentEconomyTests.cpp)
+  target_link_libraries(galaxy_stage07_resident_economy_tests
+    PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_stage07_resident_economy
+    COMMAND galaxy_stage07_resident_economy_tests)
+  add_test(NAME galaxy_stage07_resident_legal_consequence
+    COMMAND galaxy_stage07_resident_economy_tests)
+  set_tests_properties(galaxy_stage07_resident_economy
+    galaxy_stage07_resident_legal_consequence PROPERTIES TIMEOUT 180
+    LABELS "stage07;real-resident;original-economic-transfer;governance;sqlite-recovery")
 endif()

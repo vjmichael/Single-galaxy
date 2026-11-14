@@ -39,8 +39,14 @@ int main(int argc,char** argv){
    const auto rock=seed.add_geological_asteroid(
        {2500,0},AsteroidClass::Metallic,10,5000);
    seed.enable_individual_workforce();
+   // Both the source-native galactic upgrade and its immutable origin must
+   // precede the v123 ore-provenance snapshot upgrade. At >=v120, a later
+   // different registry is rightfully rejected rather than silently moved.
+   seed.enable_native_galactic_physics(
+       {{1,galactic::Point{{0,100000},{0,100000},{0,100000}}}});
    seed.enable_station_ore_provenance();
-   seed.enable_native_galactic_physics({{1,galactic::Point{{0,100000},{0,100000},{0,100000}}}});
+   CHECK(seed.native_galactic_physics());
+   CHECK(seed.galactic_system_origins().count(1)==1);
    PersistentWorld world(db,std::move(seed));
    for(std::uint64_t cmd_id=57098;cmd_id<=57100;++cmd_id){
      Command mine{};mine.id=cmd_id;mine.sequence=mine.id;
@@ -99,6 +105,13 @@ int main(int argc,char** argv){
    CHECK(world.world().hangar(station,7)->ore==3);
    CHECK(ledger.snapshot(world.world(),station,7).freight_tonnes==0);
    CHECK(ledger.documented_cargo_units(worker)==3);
+   // POP-05: the named dock worker may not be reauthorized from a caller's
+   // stale pre-step Simulation. The original SQLite snapshot is canonical.
+   const auto stale_world=world.world();
+   world.step();
+   CHECK(!ledger.renew(stale_world,station,7,worker));
+   CHECK(ledger.renew(world.world(),station,7,worker));
+   CHECK(ledger.active_staff(world.world(),station,7)==1);
    CHECK(ledger.snapshot(world.world(),station,7).qualified_staff==1);
    CHECK(ledger.snapshot(world.world(),station,7).service_capacity==2);
   }

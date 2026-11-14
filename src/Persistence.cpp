@@ -13,6 +13,7 @@
 #include "galaxy/RegionalModeAuthority.hpp"
 #include "galaxy/NpcAppearanceGenome.hpp"
 #include "galaxy/MedicalSocietyBridge.hpp"
+#include "galaxy/Stage07DutyExclusivity.hpp"
 #include "galaxy/RegionalCheckpointStore.hpp"
 #include <algorithm>
 #include <array>
@@ -7612,6 +7613,19 @@ public:
                 if(!shipping::manifest_transfer_authorized(db_,c) ||
                    !shipping::third_party_transfer_authorized(db_,c))
                     throw std::runtime_error("shipment: unreserved due cargo command");
+            }
+            // POP-05: BOTH acceptance and genuinely APPLIED execution read
+            // the same original dock-shift table under this BEGIN IMMEDIATE.
+            // A later dock shift cannot supersede an already accepted future
+            // workshop or medical duty. Failed native commands do not acquire
+            // imaginary work or block ordinary world advancement.
+            if(accepted)
+                stage7::enforce_original_dock_exclusivity(db_,*accepted);
+            for(const auto& event:new_events){
+                if(event.result!=Outcome::Applied)continue;
+                const auto pending=due_commands.find(event.command_id);
+                if(pending!=due_commands.end())
+                    stage7::enforce_original_dock_exclusivity(db_,pending->second);
             }
             if (expected_generation >= static_cast<std::uint64_t>(std::numeric_limits<sqlite3_int64>::max()))
                 throw std::runtime_error("generation exhausted");
