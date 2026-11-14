@@ -29,10 +29,18 @@ jobs:
             source_sha: 44619e9b186f99fa836ae9494a88137f3f2bf3f5
             targets: 'galaxy_wo3_planetary_housing_tests galaxy_wo3_planetary_utility_tests'
             test_regex: '^galaxy_wo3_planetary_(housing|utility)$'
+          - era: v111-original-utility-only
+            source_sha: 44619e9b186f99fa836ae9494a88137f3f2bf3f5
+            targets: galaxy_wo3_planetary_utility_tests
+            test_regex: '^galaxy_wo3_planetary_utility$'
           - era: v118-family-custody
             source_sha: d47e5cdb0532b615ffc99ffce23358a92ab05724
             targets: 'galaxy_wo3_planetary_housing_tests galaxy_wo3_planetary_utility_tests'
             test_regex: '^galaxy_wo3_planetary_(housing|utility)$'
+          - era: v118-original-utility-only
+            source_sha: d47e5cdb0532b615ffc99ffce23358a92ab05724
+            targets: galaxy_wo3_planetary_utility_tests
+            test_regex: '^galaxy_wo3_planetary_utility$'
           - era: v128-planetary-resource
             source_sha: eb448b6735a6e90b20480b3ac5065e06f30ae1ad
             targets: 'galaxy_stage06_finite_planet_genesis_tests galaxy_stage06_seasonal_environment_tests'
@@ -185,6 +193,11 @@ jobs:
                   text=split_auto(text,edits)
               if path=='tests/SHIPSTATUS02_AuthoritativePersistenceTests.cpp' and era=='pre-v109-original-v92':
                   text=replace_one(text,
+                      '            genesis.provision_starter_probe_kit(ship);',
+                      ('            genesis.provision_starter_probe_kit(ship);\n'
+                       '            genesis.ensure_ship_frame_registry();'),
+                      'register original ship frame before v100 status codec',edits)
+                  text=replace_one(text,
                       ('            genesis.provision_starter_exploration_scanner(ship);\n'
                        '            genesis.provision_starter_probe_kit(ship);\n'
                        '            genesis.enable_individual_workforce();'),
@@ -192,6 +205,14 @@ jobs:
                        '            genesis.provision_starter_exploration_scanner(ship);\n'
                        '            genesis.provision_starter_probe_kit(ship);'),
                       'move original workforce genesis before versioned scanner/probe kit',edits)
+              if path=='tests/WO3PlanetaryUtilityTests.cpp' and era in ('v111-planet-housing','v118-family-custody'):
+                  text=replace_one(text,'    seed.enable_individual_workforce();','',
+                      'remove late individual-workforce initialization',edits)
+                  text=replace_one(text,
+                      '    seed.provision_starter_exploration_scanner(ship);',
+                      ('    seed.enable_individual_workforce();\n'
+                       '    seed.provision_starter_exploration_scanner(ship);'),
+                      'original crew identity before versioned scanner',edits)
               if path=='tests/Stage06FinitePlanetaryGenesisTests.cpp' and era in ('v128-planetary-resource','v135-medical-atmosphere'):
                   wrong=('        CHECK(!seed.scan_planetary_region_source(\n'
                          '            7,ship,body,first.first,second.second==first.second?\n'
@@ -228,6 +249,45 @@ jobs:
                        '        CHECK(world.world().events().back().result==Outcome::Applied);\n'
                        '        world.steps(2);'),
                       'original authorized physical thrust and executed receipt before capture',edits)
+                  # Supplementary ORIGINAL vintage engine scenario, distinct
+                  # from the unmodified original negative checks. The snapshot
+                  # version changes only through real source migration APIs.
+                  version='135' if era=='v135-medical-atmosphere' else '128'
+                  promotion=('CHECK(certified.establish_original_surface_atmosphere());'
+                             if version=='135' else
+                             'certified.enable_physical_planetary_environment();')
+                  proof=(
+                      '        {\n'
+                      '            Simulation certified=seed;\n'
+                      '            '+promotion+'\n'
+                      '            CHECK(certified.canonical_state().rfind("galaxy-kernel-v'+version+'|",0)==0);\n'
+                      '            const auto extra_db=db+"-native-v'+version+'.sqlite";\n'
+                      '            cleanup(extra_db);\n'
+                      '            {\n'
+                      '                PersistentWorld original(extra_db,std::move(certified));\n'
+                      '                Command action{};action.id=99128002;action.sequence=action.id;\n'
+                      '                action.execute_tick=original.world().tick()+1;\n'
+                      '                action.issuer=7;action.actor=ship;action.action=Action::Thrust;\n'
+                      '                action.thrust_x=1;\n'
+                      '                CHECK(original.submit(action));original.step();\n'
+                      '                CHECK(original.world().events().back().command_id==action.id);\n'
+                      '                CHECK(original.world().events().back().result==Outcome::Applied);\n'
+                      '                CHECK(original.world().canonical_state().rfind("galaxy-kernel-v'+version+'|",0)==0);\n'
+                      '                CHECK(Simulation::from_snapshot(original.world().canonical_state()).canonical_state()==\n'
+                      '                      original.world().canonical_state());\n'
+                      '            }\n'
+                      '            {\n'
+                      '                PersistentWorld reopened(extra_db,Simulation(777,1));\n'
+                      '                CHECK(reopened.world().has_command_id(99128002));\n'
+                      '                CHECK(reopened.world().canonical_state().rfind("galaxy-kernel-v'+version+'|",0)==0);\n'
+                      '            }\n'
+                      '            cleanup(extra_db);\n'
+                      '        }\n'
+                      '        initial_world=seed.canonical_state();'
+                  )
+                  text=replace_one(text,'        initial_world=seed.canonical_state();',
+                      proof,
+                      'native source v'+version+' command, receipt, immutable resources and restart',edits)
               if path=='tests/Stage06PhysicalEnvironmentTests.cpp' and era=='v135-medical-atmosphere':
                   text=replace_one(text,
                       '    sim.steps(80);',
@@ -277,7 +337,8 @@ jobs:
                       'tests/Stage06FinitePlanetaryGenesisTests.cpp',
                       'tests/Stage06EcologyIndustryTests.cpp',
                       'tests/Stage06PhysicalEnvironmentTests.cpp',
-                      'tests/SHIPSTATUS02_AuthoritativePersistenceTests.cpp'}
+                      'tests/SHIPSTATUS02_AuthoritativePersistenceTests.cpp',
+                      'tests/WO3PlanetaryUtilityTests.cpp'}
           for parent in ('src','include','tests'):
               for entry in (original/parent).iterdir():
                   if parent=='include' and entry.name=='galaxy':continue
