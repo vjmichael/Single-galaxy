@@ -181,6 +181,17 @@ jobs:
                           'close per-body serialization loop',edits)
               if path=='src/DockWorkforce.cpp' and era in ('v128-planetary-resource','v135-medical-atmosphere'):
                   text=split_auto(text,edits)
+              if path=='src/CyberIncidentJournal.cpp' and era in ('v111-planet-housing','v118-family-custody'):
+                  text=split_auto(text,edits)
+              if path=='tests/SHIPSTATUS02_AuthoritativePersistenceTests.cpp' and era=='pre-v109-original-v92':
+                  text=replace_one(text,
+                      ('            genesis.provision_starter_exploration_scanner(ship);\n'
+                       '            genesis.provision_starter_probe_kit(ship);\n'
+                       '            genesis.enable_individual_workforce();'),
+                      ('            genesis.enable_individual_workforce();\n'
+                       '            genesis.provision_starter_exploration_scanner(ship);\n'
+                       '            genesis.provision_starter_probe_kit(ship);'),
+                      'move original workforce genesis before versioned scanner/probe kit',edits)
               if path=='tests/Stage06FinitePlanetaryGenesisTests.cpp' and era in ('v128-planetary-resource','v135-medical-atmosphere'):
                   wrong=('        CHECK(!seed.scan_planetary_region_source(\n'
                          '            7,ship,body,first.first,second.second==first.second?\n'
@@ -204,6 +215,19 @@ jobs:
                       ('        legacy.enable_native_galactic_physics({{1,galactic::Point{{0,0},{0,0},{0,0}}}});\n'
                        '        legacy.ensure_physical_celestial_systems();'),
                       'historical original galactic source before journaled v127 upgrade',edits)
+                  text=replace_one(text,
+                      '        world.steps(2);',
+                      ('        Command native{};\n'
+                       '        native.id=99127001;native.sequence=native.id;\n'
+                       '        native.execute_tick=world.world().tick()+1;\n'
+                       '        native.issuer=7;native.actor=ship;native.action=Action::Thrust;\n'
+                       '        native.thrust_x=1;native.thrust_y=0;\n'
+                       '        CHECK(world.submit(native));\n'
+                       '        world.step();\n'
+                       '        CHECK(world.world().events().back().command_id==native.id);\n'
+                       '        CHECK(world.world().events().back().result==Outcome::Applied);\n'
+                       '        world.steps(2);'),
+                      'original authorized physical thrust and executed receipt before capture',edits)
               if path=='tests/Stage06PhysicalEnvironmentTests.cpp' and era=='v135-medical-atmosphere':
                   text=replace_one(text,
                       '    sim.steps(80);',
@@ -248,10 +272,12 @@ jobs:
           (target/'src').mkdir();(target/'include').mkdir();(target/'include'/'galaxy').mkdir()
           (target/'tests').mkdir()
           candidates={'CMakeLists.txt','src/Simulation.cpp','src/DockWorkforce.cpp',
+                      'src/CyberIncidentJournal.cpp',
                       'include/galaxy/PlanetaryContinuousSurface.hpp',
                       'tests/Stage06FinitePlanetaryGenesisTests.cpp',
                       'tests/Stage06EcologyIndustryTests.cpp',
-                      'tests/Stage06PhysicalEnvironmentTests.cpp'}
+                      'tests/Stage06PhysicalEnvironmentTests.cpp',
+                      'tests/SHIPSTATUS02_AuthoritativePersistenceTests.cpp'}
           for parent in ('src','include','tests'):
               for entry in (original/parent).iterdir():
                   if parent=='include' and entry.name=='galaxy':continue
