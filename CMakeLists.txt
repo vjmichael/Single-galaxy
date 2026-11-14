@@ -2839,3 +2839,22 @@ if(BUILD_TESTING)
   set_tests_properties(galaxy_stage07_delegated_labor PROPERTIES TIMEOUT 180
     LABELS "stage07;original-world;delegated-labor;sqlite;real-production")
 endif()
+
+// Stage 7 POP-05: original cross-domain duty collision, world-authoritative
+// staff reservation, one-use medical care and genuine dock restart tests.
+// Original tests remain separately required, never replaced by aliases.
+if(BUILD_TESTING)
+  add_test(NAME galaxy_stage07_duty_workshop
+    COMMAND galaxy_wo2_industry_workforce_tests)
+  add_test(NAME galaxy_stage07_duty_medical
+    COMMAND v59_medical_recovery)
+  add_test(NAME galaxy_stage07_duty_dock
+    COMMAND galaxy_dock03_physical_workforce_tests
+    "${CMAKE_CURRENT_BINARY_DIR}/stage07_dock03_world.sqlite")
+  set_tests_properties(
+    galaxy_stage07_duty_workshop
+    galaxy_stage07_duty_medical
+    galaxy_stage07_duty_dock
+    PROPERTIES TIMEOUT 180
+    LABELS "stage07;original-sqlite;exclusive-labor;recovery")
+endif()

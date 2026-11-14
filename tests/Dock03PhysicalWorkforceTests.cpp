@@ -99,6 +99,13 @@ int main(int argc,char** argv){
    CHECK(world.world().hangar(station,7)->ore==3);
    CHECK(ledger.snapshot(world.world(),station,7).freight_tonnes==0);
    CHECK(ledger.documented_cargo_units(worker)==3);
+   // POP-05: the named dock worker may not be reauthorized from a caller's
+   // stale pre-step Simulation. The original SQLite snapshot is canonical.
+   const auto stale_world=world.world();
+   world.step();
+   CHECK(!ledger.renew(stale_world,station,7,worker));
+   CHECK(ledger.renew(world.world(),station,7,worker));
+   CHECK(ledger.active_staff(world.world(),station,7)==1);
    CHECK(ledger.snapshot(world.world(),station,7).qualified_staff==1);
    CHECK(ledger.snapshot(world.world(),station,7).service_capacity==2);
   }
