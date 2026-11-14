@@ -2747,6 +2747,41 @@ if(BUILD_TESTING)
   set_tests_properties(galaxy_group3_original_fitted_mining PROPERTIES TIMEOUT 120)
 endif()
 
+# INT-02 reconciled missing source functions and original native acceptance
+# registrations from the older physical-family, route and mining forks.
+# These are ordinary CTests; CI only at the END OF THE INTEGRATION GROUP.
+if(BUILD_TESTING)
+  add_executable(galaxy_int02_two_household_tests
+    tests/INT02_TwoHouseholdOriginalRecoveryTests.cpp)
+  target_link_libraries(galaxy_int02_two_household_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_int02_original_two_households
+    COMMAND galaxy_int02_two_household_tests)
+  set_tests_properties(galaxy_int02_original_two_households
+    PROPERTIES TIMEOUT 120 LABELS "int02;native;family;sqlite")
+
+  add_executable(galaxy_int02_authenticated_routes_tests
+    tests/COLONY_EXIT01E_RouteCoordinatorTests.cpp)
+  target_include_directories(galaxy_int02_authenticated_routes_tests PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include)
+  add_test(NAME galaxy_int02_authenticated_routes
+    COMMAND galaxy_int02_authenticated_routes_tests)
+  set_tests_properties(galaxy_int02_authenticated_routes
+    PROPERTIES TIMEOUT 20 LABELS "int02;source;route")
+
+  add_executable(galaxy_int02_original_mining_seed
+    tests/PLAY_STATION_04B_NativeMiningSeed.cpp)
+  target_link_libraries(galaxy_int02_original_mining_seed PRIVATE galaxy_kernel)
+endif()
+if(BUILD_TESTING AND Python3_Interpreter_FOUND)
+  add_test(NAME galaxy_int02_original_mining_pipe
+    COMMAND ${Python3_EXECUTABLE}
+      ${CMAKE_CURRENT_SOURCE_DIR}/tests/PLAY_STATION_04B_NativeMiningPipeTests.py
+      $<TARGET_FILE:galaxy_int02_original_mining_seed>
+      $<TARGET_FILE:galaxy_desktop_player_host>)
+  set_tests_properties(galaxy_int02_original_mining_pipe
+    PROPERTIES TIMEOUT 150 LABELS "int02;native;mining;sqlite;pipe")
+endif()
+
 # GROUP3-B read-only capped 8.5km original-space optical asteroid survey.
 if(BUILD_TESTING)
   add_executable(galaxy_group3_asteroid_survey_tests tests/Group3AsteroidSurveyTests.cpp)

@@ -203,6 +203,25 @@ Audit assess(const Simulation& world,sqlite3* db,const DeparturePlan& request){
                !source_children.count(child))
                 throw std::runtime_error("unlisted family scope or split child custody at source");
         }
+        // INT-02: reconcile the original v77 physical-child registry with
+        // the ART02 birth ledger BEFORE accepting a whole-source manifest.
+        // Legacy read-only ART02 previews may have no registered native
+        // children yet; once any child has physical custody here, a partial
+        // registration can never authorize the departure of all siblings.
+        std::size_t registered_children_at_source=0;
+        for(const auto& [child_id,physical]:world.physical_dependents()) {
+            if(physical.home_ship!=request.source)continue;
+            if(physical.location!=request.source ||
+               !physical.registration_command ||
+               !source_children.count(child_id))
+                throw std::runtime_error(
+                    "native dependent custody lacks matching ART02 source birth");
+            ++registered_children_at_source;
+        }
+        if(registered_children_at_source &&
+           registered_children_at_source!=source_children.size())
+            throw std::runtime_error(
+                "source household has incomplete native physical registration");
         std::vector<std::uint64_t> requested_ids;
         std::uint64_t previous=0;
         for(const auto& ch:request.children){

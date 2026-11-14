@@ -105,6 +105,9 @@ try {
               world.world().planetary_sites().at(key).surface_location &&
           landed->surveyed.original_body_id==selected.body &&
           landed->still_current(world));
+    // INT-02 planetary reconciliation: original NPC shuttle descent is
+    // not itself evidence that the real player left the shuttle.
+    CHECK(!stage6::observe_native_landed_player(world,7,ship,key));
     // S6-F: the actual landed NPC shuttle may be OBSERVED in a bounded
     // Godot tile packet; owner/body/region are never a new player travel grant.
     const galaxy::stage6::RenderTileAddress landing_tile{
@@ -117,6 +120,8 @@ try {
           packet->find(R"("original_descent_receipt":"81234")")!=std::string::npos &&
           packet->find("\"shuttle_pilot_npc\":")!=std::string::npos &&
           packet->find("\"surface_location\":")!=std::string::npos);
+    CHECK(packet->find(R"("player_surface_verified":false)")!=std::string::npos);
+    CHECK(packet->find(R"("native_surface_pose_verified":false)")!=std::string::npos);
     CHECK(!stage6::original_godot_mesh_packet(
         world,8,ship,selected.body,{landing_tile},key));
     CHECK(!stage6::original_godot_mesh_packet(

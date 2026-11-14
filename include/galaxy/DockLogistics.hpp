@@ -365,13 +365,21 @@ class Ledger {
     const auto eligible=service_roster(world.world(),station,owner);
     if(std::find(eligible.begin(),eligible.end(),worker)==eligible.end())
       return false;
-    Statement q(db_,"SELECT id,kind,source_id,requested,completed FROM dock_jobs_v1 "
-                    "WHERE station=? AND owner=? AND state=0 AND "
-                    "(?=0 OR kind=2) ORDER BY id LIMIT 1");
-    q.bind(1,station);q.bind(2,owner);q.bind(3,freight_only?1:0);
-    if(q.next()!=SQLITE_ROW)return false;
-    const auto id=q.number(0),kind=q.number(1),source=q.number(2);
-    const auto requested=q.number(3),done=q.number(4);
+    // POP-10 native failure repair: fully finalize the original queue
+    // SELECT before opening a writer or submitting to the independently
+    // owned PersistentWorld SQLite connection. An active SQLITE_ROW cursor
+    // on a second connection held a rollback-journal reader lock through
+    // world.step(), causing the original DOCK03 "database is locked".
+    std::uint64_t id=0,kind=0,source=0,requested=0,done=0;
+    {
+      Statement q(db_,"SELECT id,kind,source_id,requested,completed FROM dock_jobs_v1 "
+                      "WHERE station=? AND owner=? AND state=0 AND "
+                      "(?=0 OR kind=2) ORDER BY id LIMIT 1");
+      q.bind(1,station);q.bind(2,owner);q.bind(3,freight_only?1:0);
+      if(q.next()!=SQLITE_ROW)return false;
+      id=q.number(0);kind=q.number(1);source=q.number(2);
+      requested=q.number(3);done=q.number(4);
+    } // finalize before real-world submit/step; not an authorization bypass
     if(kind==1){
       const auto it=world.world().npc_records().find(source);
       const auto* home=it==world.world().npc_records().end() ?

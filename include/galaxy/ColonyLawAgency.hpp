@@ -237,13 +237,18 @@ public:
         colony_conflict::GovernanceEpoch gov{};
         try{gov=world.colony_governance(colony);}
         catch(const std::exception&){return {};}
-        if(!gov.event_id || !gov.leader_id ||
+        // A founded original government has a nonzero founding_event_id
+        // and a ZERO successor-epoch event_id until its first lawful
+        // transition. Do not treat that legitimate founding epoch as
+        // unauthorised; later epochs still supersede this appointment.
+        const auto government=gov.event_id?gov.event_id:gov.founding_event_id;
+        if(!government || !gov.leader_id ||
            !duty(world.world(),colony,gov.leader_id))return {};
         const auto records=appointments();
         auto it=std::find_if(records.rbegin(),records.rend(),
             [&](const Appointment& p){
                 return p.owner==owner && p.colony==colony &&
-                    p.government_event==gov.event_id &&
+                    p.government_event==government &&
                     p.leader==gov.leader_id;
             });
         if(it==records.rend() || !duty(world.world(),colony,it->officer) ||
@@ -258,7 +263,8 @@ public:
         colony_conflict::GovernanceEpoch gov{};
         try{gov=world.colony_governance(colony);}
         catch(const std::exception&){return false;}
-        if(!gov.event_id || !duty(world.world(),colony,gov.leader_id) ||
+        const auto government=gov.event_id?gov.event_id:gov.founding_event_id;
+        if(!government || !duty(world.world(),colony,gov.leader_id) ||
            active(world,owner,colony).event_id)return false;
         std::uint64_t officer=0;
         for(const auto& [id,npc]:world.world().npc_records())
@@ -270,7 +276,7 @@ public:
             "(event,owner,colony,government,leader,officer,tick) "
             "VALUES(?,?,?,?,?,?,?)");
         const std::uint64_t values[]{
-            receipt,owner,colony,gov.event_id,gov.leader_id,officer,
+            receipt,owner,colony,government,gov.leader_id,officer,
             world.world().tick()};
         try{
             sql(db_,"BEGIN IMMEDIATE");
