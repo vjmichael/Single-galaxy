@@ -172,20 +172,63 @@ def patched(path):
              '                        std::to_string(tick)+" generation="+std::to_string(g)+\n'
              '                        " kind="+std::to_string(kind));'),
             'audit actual original tick transition separately from same-tick host state commit',edits)
-        # Original kind=2 journals include both actual simulation ticks and
-        # same-tick host-only mutations. A native step() cannot replay the
-        # latter without an independently authenticated host operation.
-        # Reject it explicitly; never reconstruct from invented snapshot data.
+        # Preserve the exact native Store::commit source witness for each
+        # same-tick host-only kind=2 generation. Only its *pruning* is changed,
+        # never a world state, SQL row, receipt, version or schema.
+        text=replace_one(text,
+            '"DELETE FROM snapshots WHERE generation > 1 AND generation < ?")',
+            ('"DELETE FROM snapshots WHERE generation > 1 AND generation < ? "\n'
+             '"AND generation NOT IN (SELECT h.generation FROM operation_log h "\n'
+             '"JOIN operation_log p ON p.generation=h.generation-1 "\n'
+             '"WHERE h.kind=2 AND h.tick=p.tick)")'),
+            'retain only real original host-only native generation snapshots',edits)
+        # For same-tick host commits, no original operation payload exists to
+        # re-execute. Replay the exact original SOURCE-WRITTEN checkpoint,
+        # authenticated against both journal and snapshot SHA/metadata.
+        # Any missing, tampered or source-inconsistent witness still refuses.
+        # Original physical ticks continue through native sim.step().
         text=replace_one(text,
             ('                    } else if (kind == 2) {\n'
              '                        sim.step();\n'
              '                    } else throw std::runtime_error("recovery: invalid journal kind");'),
             ('                    } else if (kind == 2) {\n'
-             '                        if(static_cast<std::uint64_t>(sqlite3_column_int64(journal.get(),4))==sim.tick())\n'
-             '                            throw std::runtime_error("recovery: same-tick host mutation lacks replayable source operation");\n'
-             '                        sim.step();\n'
+             '                        const auto native_tick=static_cast<std::uint64_t>(sqlite3_column_int64(journal.get(),4));\n'
+             '                        if(native_tick==sim.tick()) {\n'
+             '                            if(sqlite3_column_type(journal.get(),2)!=SQLITE_NULL)\n'
+             '                                throw std::runtime_error("recovery: host-only journal contains command");\n'
+             '                            Statement native(db_, "SELECT format,state,checksum,ore_total,credit_total "\n'
+             '                                "FROM snapshots WHERE generation=?");\n'
+             '                            native.i64(1,static_cast<std::int64_t>(g));\n'
+             '                            if(!native.row() || sqlite3_column_int(native.get(),0)!=1)\n'
+             '                                throw std::runtime_error("recovery: native host checkpoint missing");\n'
+             '                            const auto* ptr=static_cast<const char*>(sqlite3_column_blob(native.get(),1));\n'
+             '                            const int size=sqlite3_column_bytes(native.get(),1);\n'
+             '                            if(!ptr || size<=0 || size>16*1024*1024)\n'
+             '                                throw std::runtime_error("recovery: host checkpoint body invalid");\n'
+             '                            const std::string bytes(ptr,static_cast<std::size_t>(size));\n'
+             '                            auto witness=Simulation::from_snapshot(bytes);\n'
+             '                            if(witness.canonical_state()!=bytes || witness.tick()!=native_tick ||\n'
+             '                               witness.state_hash()==sim.state_hash() ||\n'
+             '                               witness.state_hash()!=parse_u64(sqlite3_column_text(native.get(),2)) ||\n'
+             '                               witness.state_hash()!=parse_u64(sqlite3_column_text(journal.get(),3)) ||\n'
+             '                               witness.total_ore()!=ore || witness.total_credits()!=credit_total ||\n'
+             '                               witness.total_material_kg()!=sim.total_material_kg() ||\n'
+             '                               witness.accepted_command_count()!=sim.accepted_command_count() ||\n'
+             '                               witness.events().size()!=sim.events().size() || native.row())\n'
+             '                                throw std::runtime_error("recovery: native host witness/journal mismatch");\n'
+             '                            Statement events(db_, "SELECT 1 FROM historical_events "\n'
+             '                                "WHERE generation=? LIMIT 1");\n'
+             '                            events.i64(1,static_cast<std::int64_t>(g));\n'
+             '                            if(events.row())\n'
+             '                                throw std::runtime_error("recovery: same-tick host forged executed event");\n'
+             '                            sim=std::move(witness);\n'
+             '                        } else {\n'
+             '                            if(native_tick!=sim.tick()+1)\n'
+             '                                throw std::runtime_error("recovery: invalid physical tick advance");\n'
+             '                            sim.step();\n'
+             '                        }\n'
              '                    } else throw std::runtime_error("recovery: invalid journal kind");'),
-            'reject unreplayable original host operation without data fabrication',edits)
+            'original source-written host checkpoint validated and reconsumed',edits)
         text=replace_one(text,
             ('        bool found = false;\n'
              '        while (cp.row()) {'),
