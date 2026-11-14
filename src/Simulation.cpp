@@ -2689,11 +2689,35 @@ Outcome Simulation::mine_status(const Entity& actor, EntityId target) const {
     const auto* deposit=geology(target);
     // Surface mining: full radius matters for kilometre-scale physical deposits.
     const std::int64_t access=kMiningRangeMm+(deposit ? deposit->radius_m*1000 : 0);
-    if(snapshot_version_>=119 && !within_native_3d_range(actor,asteroid,access))
+    const bool nominal_reach=snapshot_version_>=119 &&
+        within_native_3d_range(actor,asteroid,access);
+    bool witnessed_hull_contact=false;
+    // v125+ swept collision stops the 5.2m physical hull at the 10m rock
+    // surface (15,202mm including skin and integer roundoff), before the
+    // nominal 15,000mm center threshold. Do not move the hull through rock or
+    // expand passive mining range. ONLY an actual journaled original impact
+    // by this ship on this same rock permits mining at that safe boundary.
+    if(snapshot_version_>=125 && deposit && !nominal_reach) {
+        const auto safe_touch=deposit->radius_m*1000+
+            native_collision::kShipBoundingRadiusMm+
+            native_collision::kContactSkinMm+1;
+        if(within_native_3d_range(actor,asteroid,safe_touch)) {
+            for(auto it=activity_events_.rbegin();it!=activity_events_.rend();++it) {
+                if(it->tick>tick_ || tick_-it->tick>2)break;
+                if(it->kind==ActivityKind::ShipAsteroidContact &&
+                   it->actor==actor.id && it->target==target &&
+                   it->result==Outcome::Applied) {
+                    witnessed_hull_contact=true;
+                    break;
+                }
+            }
+        }
+    }
+    if(snapshot_version_>=119 && !nominal_reach && !witnessed_hull_contact)
         return Outcome::OutOfRange; // before potentially overflowing XY subtraction
     const auto dx = snapshot_version_>=120?0:actor.position.x - asteroid.position.x;
     const auto dy = snapshot_version_>=120?0:actor.position.y - asteroid.position.y;
-    if(snapshot_version_>=119 ? !within_native_3d_range(actor,asteroid,access) :
+    if(snapshot_version_<119 &&
        (dx < -access || dx > access || dy < -access || dy > access ||
         dx*dx + dy*dy > access*access)) return Outcome::OutOfRange;
     if (loaded_cargo_liters(actor) > actor.cargo_capacity*1000-1000) return Outcome::CargoFull;

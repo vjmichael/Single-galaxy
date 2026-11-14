@@ -84,14 +84,18 @@ with tempfile.TemporaryDirectory() as folder, ExitStack() as owned:
     result,contact=send(child,f"MINE|{session}|9|1|{rock}",session,9)
     assert result[0]=="SHIP" and result[5]!="0" and int(contact[8])==ore,(result,contact)
     req=9
-    # Original native 3D movement is finite per verified flight tick.
-    # The historic 10th FWD ends 15,202mm away, outside the true 15m
-    # mining cutoff. Follow only real decreasing ROCK distance receipts.
+    # Native swept collision and original ship/rock contact are authoritative.
+    # Never weaken the 15m normal mining limit or fabricate a through-rock pose.
     previous_range=int(contact[9])
     assert previous_range>=15000 and contact[0]=="ROCK",contact
+    # Genuine 10m geological rock + protected 5.2m native hull + 1mm skin
+    # and original integer contact rounding: no physics-authorized 15m pose.
+    # Continue only until an ORIGINAL ShipAsteroidContact receipt is observed.
+    hull_contact_limit=int(contact[12])+5200+1+1
+    assert hull_contact_limit==15202,contact
     completed_approaches=0
+    original_impact=False
     for _ in range(16):
-        if previous_range<15000: break
         req+=1
         result,contact=send(child,f"FLIGHT|{session}|{req}|1|FWD",session,req)
         assert result[0]=="SHIP" and result[5]=="0" and contact[0]=="ROCK",(result,contact)
@@ -99,7 +103,14 @@ with tempfile.TemporaryDirectory() as folder, ExitStack() as owned:
         assert 0<=next_range<previous_range,(previous_range,contact)
         previous_range=next_range
         completed_approaches+=1
-    assert completed_approaches>=1 and previous_range<15000,contact
+        # No invented contact or client range oracle; these two trailing
+        # fields are emitted from original native ActivityKind journal data.
+        assert len(contact)==19,contact
+        if int(contact[17])==rock and int(contact[18])==int(contact[5]):
+            original_impact=True
+            break
+    assert completed_approaches>=1 and original_impact,contact
+    assert 15000<previous_range<=hull_contact_limit,contact
     req+=1
     result,contact=send(child,f"MINE|{session}|{req}|1|{rock}",session,req)
     assert result[0]=="SHIP" and result[5]=="0" and contact[0]=="ROCK",(result,contact)
