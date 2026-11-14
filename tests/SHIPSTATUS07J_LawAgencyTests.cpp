@@ -54,6 +54,8 @@ int main(){
         world.establish_colony_conflict_agenda(
             3050,b,leader,colony_conflict::Agenda::Cooperative);
         CHECK(world.colony_governance(b).leader_id==leader);
+        CHECK(world.colony_governance(b).founding_event_id==3050 &&
+              world.colony_governance(b).event_id==0); // original founding epoch
         const bool agency_admitted=agency.establish(
             world,territory,8,b,4001);
         if(!agency_admitted){
@@ -71,8 +73,10 @@ int main(){
         CHECK(!agency.establish(world,territory,8,b,4002));
         const auto appointment=agency.active(world,8,b);
         CHECK(appointment.owner==8&&appointment.colony==b);
+        // The authoritative founding government is 3050; the later
+        // successor-event ID is correctly zero until an actual transition.
         CHECK(appointment.government_event==
-              world.colony_governance(b).event_id);
+              world.colony_governance(b).founding_event_id);
         CHECK(appointment.leader==leader && appointment.officer &&
               appointment.officer!=leader);
         CHECK(!agency.active(world,7,b).event_id);

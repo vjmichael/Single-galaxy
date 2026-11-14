@@ -12,6 +12,7 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
+#include <utility>
 
 namespace galaxy::stage7 {
 enum class DefensePosition : std::uint8_t { Contest=1, MediationRequested=2 };
@@ -67,6 +68,26 @@ class ProceduralJustice {
         return sqlite3_step(q.s)==SQLITE_ROW &&
                value(q.s,0)==world.generation();
     }
+    void bump(const char* name){
+        sql((std::string("UPDATE world_meta SET ")+name+"="+name+
+             "+1 WHERE singleton=1").c_str());
+        if(sqlite3_changes(db_)!=1)
+            throw std::runtime_error("POP10 justice original world anchor missing");
+    }
+    void verify_counts(){
+        for(const auto& entry:std::vector<std::pair<const char*,const char*>>{
+              {"sg_stage7_justice_case","stage7_justice_case_count"},
+              {"sg_stage7_justice_answer","stage7_justice_answer_count"},
+              {"sg_stage7_justice_disposition","stage7_justice_disposition_count"}}){
+            Stmt a(db_,(std::string("SELECT ")+entry.second+
+                        " FROM world_meta WHERE singleton=1").c_str());
+            Stmt b(db_,(std::string("SELECT COUNT(*) FROM ")+entry.first).c_str());
+            if(sqlite3_step(a.s)!=SQLITE_ROW ||
+               sqlite3_step(b.s)!=SQLITE_ROW ||
+               value(a.s,0)!=value(b.s,0))
+                throw std::runtime_error("POP10 justice event counter mismatch");
+        }
+    }
     static bool named_independent(const Simulation& sim,EntityId colony,
                                   std::uint64_t id){
         const auto n=sim.npc_records().find(id);
@@ -83,10 +104,12 @@ public:
                 SQLITE_OPEN_READWRITE|SQLITE_OPEN_FULLMUTEX,nullptr)!=SQLITE_OK)
                 throw std::runtime_error("POP10 justice original world unavailable");
             sqlite3_busy_timeout(db_,10000);
-            Stmt check(db_,"SELECT 1 FROM sqlite_master WHERE type='table' "
-                           "AND name='snapshots'");
-            if(sqlite3_step(check.s)!=SQLITE_ROW)
-                throw std::runtime_error("POP10 justice refuses secondary database");
+            {
+                Stmt check(db_,"SELECT 1 FROM sqlite_master WHERE type='table' "
+                               "AND name='snapshots'");
+                if(sqlite3_step(check.s)!=SQLITE_ROW)
+                    throw std::runtime_error("POP10 justice refuses secondary database");
+            } // finalize before schema writes on this same original SQLite
             sql("CREATE TABLE IF NOT EXISTS sg_stage7_justice_case("
                 "id INTEGER PRIMARY KEY,owner INTEGER NOT NULL,"
                 "colony INTEGER NOT NULL,referral INTEGER NOT NULL UNIQUE,"
@@ -116,7 +139,23 @@ public:
                     " BEGIN SELECT RAISE(ABORT,'immutable due process');END";
                 sql(u.c_str());sql(d.c_str());
             }
+            for(const char* name:{"stage7_justice_case_count",
+                                  "stage7_justice_answer_count",
+                                  "stage7_justice_disposition_count"}){
+                bool found=false;
+                Stmt cols(db_,"PRAGMA table_info(world_meta)");
+                for(int rc;(rc=sqlite3_step(cols.s))!=SQLITE_DONE;){
+                    if(rc!=SQLITE_ROW)
+                        throw std::runtime_error("POP10 invalid world meta schema");
+                    const auto* p=sqlite3_column_text(cols.s,1);
+                    if(p && std::string(reinterpret_cast<const char*>(p))==name)
+                        found=true;
+                }
+                if(!found)sql((std::string("ALTER TABLE world_meta ADD COLUMN ")+
+                    name+" INTEGER NOT NULL DEFAULT 0 CHECK("+name+">=0)").c_str());
+            }
             ship_notifications::Outbox::ensure_schema(db_);
+            verify_counts();
         }catch(...){if(db_)sqlite3_close(db_);db_=nullptr;throw;}
     }
     ~ProceduralJustice(){if(db_)sqlite3_close(db_);}
@@ -224,6 +263,7 @@ public:
             ship_notifications::Outbox::record_agency(db_,
                 found->reported_caller,case_id,colony,found->complaint,
                 sim.tick());
+            bump("stage7_justice_case_count");
             sql("COMMIT");return true;
         }catch(...){sqlite3_exec(db_,"ROLLBACK",nullptr,nullptr,nullptr);return false;}
     }
@@ -256,6 +296,7 @@ public:
             for(int i=0;i<5;++i)insert.number(i+1,vals[i]);
             if(sqlite3_step(insert.s)!=SQLITE_DONE)
                 throw std::runtime_error("POP10 duplicate answer");
+            bump("stage7_justice_answer_count");
             sql("COMMIT");return true;
         }catch(...){sqlite3_exec(db_,"ROLLBACK",nullptr,nullptr,nullptr);return false;}
     }
@@ -302,6 +343,7 @@ public:
             for(int i=0;i<6;++i)insert.number(i+1,vals[i]);
             if(sqlite3_step(insert.s)!=SQLITE_DONE)
                 throw std::runtime_error("POP10 duplicate disposition");
+            bump("stage7_justice_disposition_count");
             sql("COMMIT");return true;
         }catch(...){sqlite3_exec(db_,"ROLLBACK",nullptr,nullptr,nullptr);return false;}
     }

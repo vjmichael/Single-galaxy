@@ -12,6 +12,7 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
+#include <utility>
 
 namespace galaxy::stage7 {
 struct BarterTerms {
@@ -170,15 +171,22 @@ public:
                  SQLITE_OPEN_READWRITE|SQLITE_OPEN_FULLMUTEX,nullptr)!=SQLITE_OK)
                 throw std::runtime_error("POP10 cannot open original world");
             sqlite3_busy_timeout(db_,10000);
-            Query s(db_,"SELECT COUNT(*) FROM sqlite_master WHERE "
-                        "type='table' AND name='snapshots'");
-            if(!s.next() || s.num(0)!=1)
-                throw std::runtime_error("POP10 refuses shadow barter world");
+            {
+                Query s(db_,"SELECT COUNT(*) FROM sqlite_master WHERE "
+                            "type='table' AND name='snapshots'");
+                if(!s.next() || s.num(0)!=1)
+                    throw std::runtime_error("POP10 refuses shadow barter world");
+            } // release original read snapshot before DDL or world writes
             sql("CREATE TABLE IF NOT EXISTS sg_stage7_barter_terms("
                 "id TEXT PRIMARY KEY,export_a TEXT NOT NULL UNIQUE,"
                 "export_b TEXT NOT NULL UNIQUE,owner_a INTEGER NOT NULL,"
                 "owner_b INTEGER NOT NULL,generation INTEGER NOT NULL,"
                 "tick INTEGER NOT NULL)");
+            sql("CREATE TABLE IF NOT EXISTS sg_stage7_barter_leg_claim("
+                "contract_id TEXT PRIMARY KEY,"
+                "barter_id TEXT NOT NULL REFERENCES sg_stage7_barter_terms(id),"
+                "position INTEGER NOT NULL CHECK(position IN (1,2)),"
+                "UNIQUE(barter_id,position))");
             sql("CREATE TABLE IF NOT EXISTS sg_stage7_barter_consent("
                 "barter_id TEXT NOT NULL REFERENCES sg_stage7_barter_terms(id),"
                 "role INTEGER NOT NULL CHECK(role IN (1,2)),"
@@ -189,6 +197,7 @@ public:
                 "witness_a TEXT NOT NULL,witness_b TEXT NOT NULL,"
                 "generation INTEGER NOT NULL,tick INTEGER NOT NULL)");
             for(const char* name:{"sg_stage7_barter_terms",
+                                 "sg_stage7_barter_leg_claim",
                                  "sg_stage7_barter_consent",
                                  "sg_stage7_barter_close"}){
                 sql(std::string("CREATE TRIGGER IF NOT EXISTS ")+name+
@@ -199,6 +208,7 @@ public:
                     " BEGIN SELECT RAISE(ABORT,'immutable barter receipt');END");
             }
             for(const char* name:{"stage7_barter_terms_count",
+                                 "stage7_barter_claim_count",
                                  "stage7_barter_consent_count",
                                  "stage7_barter_close_count"}){
                 bool exists=false;
@@ -216,6 +226,7 @@ public:
     void verify(){
         shipping::verify_third_party_registry(path_);
         ensure_count("sg_stage7_barter_terms","stage7_barter_terms_count");
+        ensure_count("sg_stage7_barter_leg_claim","stage7_barter_claim_count");
         ensure_count("sg_stage7_barter_consent","stage7_barter_consent_count");
         ensure_count("sg_stage7_barter_close","stage7_barter_close_count");
         Query terms(db_,"SELECT id,export_a,export_b,owner_a,owner_b "
@@ -225,6 +236,13 @@ public:
             const auto owner_a=terms.num(3),owner_b=terms.num(4);
             if(!valid_pair(a,b,owner_a,owner_b))
                 throw std::runtime_error("POP10 counterfeit bilateral contract");
+            Query claimed(db_,"SELECT contract_id,position FROM "
+                "sg_stage7_barter_leg_claim WHERE barter_id=? ORDER BY position");
+            claimed.text(1,id);
+            if(!claimed.next() || claimed.str(0)!=a || claimed.num(1)!=1 ||
+               !claimed.next() || claimed.str(0)!=b || claimed.num(1)!=2 ||
+               claimed.next())
+                throw std::runtime_error("POP10 missing or reused physical leg");
             Query consents(db_,"SELECT role,principal FROM sg_stage7_barter_consent "
                                "WHERE barter_id=? ORDER BY role");
             consents.text(1,id);int n=0;
@@ -269,7 +287,19 @@ public:
             sent.text(1,sale_a);sent.text(2,sale_b);
             if(!sent.next() || sent.num(0)!=0)return false;
             sql("BEGIN IMMEDIATE");
-            if(!matched(world)){sql("ROLLBACK");return false;}
+            // Re-read original independently mutable consignment authority
+            // under the SAME SQLite write lock; a cancellation or dispatch
+            // cannot race the earlier read-only offer inspection.
+            if(!matched(world) ||
+               !valid_pair(sale_a,sale_b,a.seller,b.seller)){
+                sql("ROLLBACK");return false;
+            }
+            Query dispatch_now(db_,"SELECT COUNT(*) FROM sg_v57_dispatch "
+                                   "WHERE contract_id=? OR contract_id=?");
+            dispatch_now.text(1,sale_a);dispatch_now.text(2,sale_b);
+            if(!dispatch_now.next() || dispatch_now.num(0)!=0){
+                sql("ROLLBACK");return false;
+            }
             Query insert(db_,"INSERT INTO sg_stage7_barter_terms "
                "(id,export_a,export_b,owner_a,owner_b,generation,tick) "
                "VALUES(?,?,?,?,?,?,?)");
@@ -277,6 +307,15 @@ public:
             insert.number(4,a.seller);insert.number(5,b.seller);
             insert.number(6,world.generation());
             insert.number(7,world.world().tick());insert.done();
+            for(const auto& entry:std::vector<std::pair<std::string,int>>{
+                {sale_a,1},{sale_b,2}}){
+                Query claim(db_,"INSERT INTO sg_stage7_barter_leg_claim "
+                    "(contract_id,barter_id,position) VALUES(?,?,?)");
+                claim.text(1,entry.first);claim.text(2,id);
+                claim.number(3,static_cast<std::uint64_t>(entry.second));
+                claim.done();
+                bump("stage7_barter_claim_count");
+            }
             bump("stage7_barter_terms_count");sql("COMMIT");
             return true;
         }catch(...){sqlite3_exec(db_,"ROLLBACK",nullptr,nullptr,nullptr);return false;}
@@ -291,7 +330,10 @@ public:
             if(!role || !valid_pair(t.export_a,t.export_b,
                                    t.owner_a,t.owner_b))return false;
             sql("BEGIN IMMEDIATE");
-            if(!matched(world)){sql("ROLLBACK");return false;}
+            if(!matched(world) ||
+               !valid_pair(t.export_a,t.export_b,t.owner_a,t.owner_b)){
+                sql("ROLLBACK");return false;
+            }
             Query q(db_,"INSERT INTO sg_stage7_barter_consent "
                        "(barter_id,role,principal,generation) VALUES(?,?,?,?)");
             q.text(1,id);q.number(2,role);q.number(3,principal);
@@ -313,7 +355,11 @@ public:
                !delivered(leg(t.export_a)) || !delivered(leg(t.export_b)))
                 return false;
             sql("BEGIN IMMEDIATE");
-            if(!matched(world)){sql("ROLLBACK");return false;}
+            if(!matched(world) ||
+               !valid_pair(t.export_a,t.export_b,t.owner_a,t.owner_b) ||
+               !delivered(leg(t.export_a)) || !delivered(leg(t.export_b))){
+                sql("ROLLBACK");return false;
+            }
             Query q(db_,"INSERT INTO sg_stage7_barter_close "
                 "(barter_id,witness_a,witness_b,generation,tick) "
                 "VALUES(?,?,?,?,?)");
