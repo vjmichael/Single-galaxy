@@ -86,7 +86,8 @@ try {
   Run 'native-original-station-pipe' $powershell @('-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',('"'+$nativeSmoke+'"'))
   Run 'godot-project-import' $GodotExe @('--headless','--path',('"'+$root+'"'),'--editor','--quit')
   foreach($test in @('godot_smoke.gd','station_visual_smoke.gd',
-                     'native_station_protocol_smoke.gd','native_player_protocol_smoke.gd')){
+                     'native_station_protocol_smoke.gd','native_player_protocol_smoke.gd',
+                     'native_mining_04b_smoke.gd')){
     Run ('godot-'+$test) $GodotExe @('--headless','--path',('"'+$root+'"'),'--script',('res://tests/'+$test))
   }
   if(-not $HeadlessOnly){
