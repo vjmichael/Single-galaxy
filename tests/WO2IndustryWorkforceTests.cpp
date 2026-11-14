@@ -1,5 +1,6 @@
 #include "galaxy/WO2WorkPrograms.hpp"
 #include "galaxy/WO2IndustryWorkforce.hpp"
+#include "galaxy/Stage07AutonomousProduction.hpp"
 #include "galaxy/Stage07DelegatedLabor.hpp"
 #include "galaxy/Stage07SocietyEconomy.hpp"
 #include "galaxy/DockLogistics.hpp"
@@ -773,8 +774,27 @@ int main() {
         cross_site_job.id=722;cross_site_job.sequence=722;
         cross_site_job.target=ship; // a ship is not the original installed workshop
         CHECK(!managed.submit(cross_site_job));
-        CHECK(managed.submit(*job));
-        managed.step();
+        // POP-10A: original named-certified supervisor has a one-use,
+        // independently authenticated *standing* production authority.
+        // A trusted periodic scheduler chooses the job from actual material
+        // and engine capability; no fabricated factory or second job ledger.
+        stage7::AutonomousProduction autonomous(management_db);
+        CHECK(!autonomous.issue(managed,8,ship,site,WorkshopTrade::Cut,
+            1,managed.world().tick()+20,709,true));
+        CHECK(!autonomous.issue(managed,7,ship,site,WorkshopTrade::Cut,
+            1,managed.world().tick()+20,709,false));
+        CHECK(autonomous.issue(managed,7,ship,site,WorkshopTrade::Cut,
+            1,managed.world().tick()+20,709,true));
+        CHECK(!autonomous.issue(managed,7,ship,site,WorkshopTrade::Cut,
+            1,managed.world().tick()+20,709,true));
+        CHECK(autonomous.poll(managed,709,0).state==
+              stage7::ProductionState::Refused);
+        const auto admitted=autonomous.poll(managed,709,711);
+        CHECK(admitted.state==stage7::ProductionState::OriginalApplied);
+        CHECK(autonomous.poll(managed,709,712).state==
+              stage7::ProductionState::Refused); // immutable one-use ID
+        CHECK(autonomous.poll(managed,709,711).state==
+              stage7::ProductionState::OriginalApplied); // idempotent receipt
         CHECK(managed.world().events().back().command_id==711);
         CHECK(managed.world().events().back().result==Outcome::Applied);
         board=workforce02::workshop_job_board(managed.world(),7,ship,site);
