@@ -1,4 +1,4 @@
-name: Stage 7 population and authentic household lifecycle native acceptance
+name: Stage 7 population and household lifecycle native acceptance
 
 on:
   push:
@@ -9,12 +9,12 @@ permissions:
   contents: read
 
 concurrency:
-  group: stage07-pop01-native-${{ github.ref }}
+  group: stage07-native-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   original-population:
-    name: Original POP-01 SQLite native (${{ matrix.os }})
+    name: Original Stage 7 birth, custody and migration (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
     strategy:
@@ -25,21 +25,21 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.sha }}
-      - name: Pin clean exact source SHA
+      - name: Pin original source
         shell: bash
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
           test -z "$(git status --porcelain)"
-          mkdir -p original-pop01-evidence
-          printf '%s\n' "$GITHUB_SHA" > original-pop01-evidence/source-sha.txt
-      - name: Provision native Linux SQLite SDK
+          mkdir -p stage07-native-evidence
+          printf '%s\n' "$GITHUB_SHA" > stage07-native-evidence/source-sha.txt
+      - name: Install Linux native SQLite
         if: runner.os == 'Linux'
         shell: bash
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends ninja-build libsqlite3-dev
-      - name: Provision native Windows SQLite SDK
+      - name: Install Windows native SQLite
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
@@ -50,87 +50,60 @@ jobs:
           if($LASTEXITCODE -ne 0){throw 'Native Windows SQLite SDK provisioning failed'}
           "SG_TOOLCHAIN=$(Join-Path $root 'scripts\buildsystems\vcpkg.cmake')" >> $env:GITHUB_ENV
           (Join-Path $root 'installed\x64-windows\bin') >> $env:GITHUB_PATH
-      - name: Compile original native population and household test
+      - name: Compile original Stage 7 native executables
         shell: bash
         run: |
           set -euo pipefail
           if [ "$RUNNER_OS" = Windows ]; then
-            cmake -S . -B build/stage07-pop01 -G 'Visual Studio 17 2022' -A x64 \
-              "-DCMAKE_TOOLCHAIN_FILE=$SG_TOOLCHAIN" -DBUILD_TESTING=ON -DBUILD_BENCHMARKS=OFF
+            cmake -S . -B build/stage07-native -G 'Visual Studio 17 2022' -A x64 \
+              "-DCMAKE_TOOLCHAIN_FILE=$SG_TOOLCHAIN" -DBUILD_TESTING=ON
           else
-            cmake -S . -B build/stage07-pop01 -G Ninja -DCMAKE_BUILD_TYPE=Release \
-              -DBUILD_TESTING=ON -DBUILD_BENCHMARKS=OFF
+            cmake -S . -B build/stage07-native -G Ninja -DCMAKE_BUILD_TYPE=Release \
+              -DBUILD_TESTING=ON
           fi
-          cmake --build build/stage07-pop01 --target galaxy_stage07_population_household_tests galaxy_colony_auto04d4d2_physical_tests v59_paired_household_settlement \
-            --config Release --parallel 4
-      - name: Unchanged required native SQLite and independent-recovery test
+          cmake --build build/stage07-native --target \
+            galaxy_stage07_population_household_tests \
+            galaxy_colony_auto04d4d2_physical_tests \
+            v59_paired_household_settlement --config Release --parallel 4
+      - name: Verify unchanged original Stage 7 CTests
         shell: bash
         run: |
           set -euo pipefail
-          ctest --test-dir build/stage07-pop01 -C Release \
-            --output-on-failure --output-junit "$PWD/original-pop01-evidence/native-tests.xml" \
-            -R '^galaxy_stage07_(population_households|household_lifecycle_birth|household_lifecycle_migration)
-            | tee original-pop01-evidence/native-ctest.log
+          ctest --test-dir build/stage07-native -C Release \
+            --output-on-failure --output-junit "$PWD/stage07-native-evidence/native-tests.xml" \
+            -R '^(galaxy_stage07_population_households|galaxy_stage07_household_lifecycle_birth|galaxy_stage07_household_lifecycle_migration)$' \
+            --timeout 180 | tee stage07-native-evidence/native-ctest.log
           python - <<'PY'
           import hashlib,pathlib,xml.etree.ElementTree as ET
-          source=pathlib.Path('original-pop01-evidence/source-sha.txt').read_text().strip()
-          cases=list(ET.parse('original-pop01-evidence/native-tests.xml').iter('testcase'))
+          original=pathlib.Path('stage07-native-evidence/source-sha.txt').read_text().strip()
+          cases=list(ET.parse('stage07-native-evidence/native-tests.xml').iter('testcase'))
           required={'galaxy_stage07_population_households',
                     'galaxy_stage07_household_lifecycle_birth',
                     'galaxy_stage07_household_lifecycle_migration'}
           assert len(cases)==3 and {c.get('name') for c in cases}==required
           assert all(c.find(t) is None for c in cases for t in ('failure','error','skipped'))
-          runner=pathlib.Path('build/stage07-pop01')
-          binaries={}
-          for target in ('galaxy_stage07_population_household_tests',
-                         'galaxy_colony_auto04d4d2_physical_tests',
-                         'v59_paired_household_settlement'):
-              matches=list(runner.rglob(target+'*'))
-              exe=next(p for p in matches if p.is_file() and p.suffix in ('','.exe'))
-              binaries[target]=hashlib.sha256(exe.read_bytes()).hexdigest()
-          with pathlib.Path('original-pop01-evidence/acceptance.txt').open('w') as out:
-              out.write(f'exact_head={source}\n')
-              for case in sorted(required):
-                  out.write(f'native_test={case}:passed\n')
-              for target,sha in sorted(binaries.items()):
-                  out.write(f'executable_sha256:{target}={sha}\n')
-              out.write('physical_pc_or_release_gate=not_run\n')
+          root=pathlib.Path('build/stage07-native')
+          hashes={}
+          for name in ('galaxy_stage07_population_household_tests',
+                       'galaxy_colony_auto04d4d2_physical_tests',
+                       'v59_paired_household_settlement'):
+              exe=next(p for p in root.rglob(name+'*') if p.is_file() and p.suffix in ('','.exe'))
+              hashes[name]=hashlib.sha256(exe.read_bytes()).hexdigest()
+          with open('stage07-native-evidence/receipt.txt','w') as out:
+              out.write(f'exact_head={original}\n')
+              for test in sorted(required):
+                  out.write(f'native_test={test}:passed\n')
+              for name,digest in sorted(hashes.items()):
+                  out.write(f'executable_sha256:{name}={digest}\n')
+              out.write('installed_or_physical_pc=not_run\n')
           PY
-      - name: Preserve original native exact-source receipts
+      - name: Preserve original receipt and native failure logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: stage07-pop01-native-${{ matrix.os }}-${{ github.sha }}
+          name: stage07-native-${{ matrix.os }}-${{ github.sha }}
           path: |
-            original-pop01-evidence/
-            build/stage07-pop01/Testing/Temporary/LastTest.log
-            build/stage07-pop01/Testing/Temporary/LastTestsFailed.log
-          retention-days: 21
- --timeout 180 \
-            | tee original-pop01-evidence/native-ctest.log
-          python - <<'PY'
-          import hashlib,pathlib,xml.etree.ElementTree as ET
-          source=pathlib.Path('original-pop01-evidence/source-sha.txt').read_text().strip()
-          cases=list(ET.parse('original-pop01-evidence/native-tests.xml').iter('testcase'))
-          assert len(cases)==1 and cases[0].get('name')=='galaxy_stage07_population_households'
-          assert all(c.find(t) is None for c in cases for t in ('failure','error','skipped'))
-          runner=pathlib.Path('build/stage07-pop01')
-          matches=list(runner.rglob('galaxy_stage07_population_household_tests*'))
-          exe=next(p for p in matches if p.is_file() and p.suffix in ('','.exe'))
-          with pathlib.Path('original-pop01-evidence/acceptance.txt').open('w') as out:
-              out.write(f'exact_head={source}\n')
-              out.write(f'native_test={cases[0].get("name")}\n')
-              out.write('native_status=passed\n')
-              out.write(f'executable_sha256={hashlib.sha256(exe.read_bytes()).hexdigest()}\n')
-              out.write('physical_pc_or_release_gate=not_run\n')
-          PY
-      - name: Preserve original native exact-source receipts
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: stage07-pop01-native-${{ matrix.os }}-${{ github.sha }}
-          path: |
-            original-pop01-evidence/
-            build/stage07-pop01/Testing/Temporary/LastTest.log
-            build/stage07-pop01/Testing/Temporary/LastTestsFailed.log
+            stage07-native-evidence/
+            build/stage07-native/Testing/Temporary/LastTest.log
+            build/stage07-native/Testing/Temporary/LastTestsFailed.log
           retention-days: 21
