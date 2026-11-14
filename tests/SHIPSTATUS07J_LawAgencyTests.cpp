@@ -1,4 +1,5 @@
 #include "galaxy/ColonyLawAgency.hpp"
+#include "galaxy/Stage07ProceduralJustice.hpp"
 #include <sqlite3.h>
 #include <algorithm>
 #include <chrono>
@@ -106,6 +107,44 @@ int main(){
               !evidence.armed_intercept_authorized &&
               !evidence.property_seizure_authorized &&
               !evidence.police_dispatch_authorized);
+        // Stage 7 POP-10C: a genuine source-backed case can be *served* to
+        // the actual reported other owner, answered only by that owner, and
+        // independently assessed by a fourth original named local resident.
+        // The legally durable result is noncoercive: no guilt or fine.
+        stage7::ProceduralJustice tribunal(db);
+        CHECK(!tribunal.open(world,territory,calls,agency,7,b,7000,9000,true));
+        CHECK(!tribunal.open(world,territory,calls,agency,8,b,7000,9000,false));
+        CHECK(tribunal.open(world,territory,calls,agency,8,b,7000,9000,true));
+        CHECK(!tribunal.open(world,territory,calls,agency,8,b,7000,9001,true));
+        const auto matters=tribunal.cases();
+        CHECK(matters.size()==1 && matters.front().id==9000 &&
+              matters.front().respondent==7 &&
+              matters.front().officer==appointment.officer &&
+              matters.front().original_reviewer==filings.front().reviewer &&
+              matters.front().judge!=matters.front().officer &&
+              matters.front().judge!=matters.front().original_reviewer &&
+              matters.front().judge!=appointment.leader);
+        const auto actual_service=outbox.pending(7);
+        CHECK(std::any_of(actual_service.begin(),actual_service.end(),
+            [](const auto& n){return n.source_event==9000 &&
+                                   n.related==5005 && n.kind==7;}));
+        CHECK(!tribunal.answer(world,8,9000,stage7::DefensePosition::Contest));
+        CHECK(tribunal.answer(world,7,9000,stage7::DefensePosition::Contest));
+        CHECK(!tribunal.answer(world,7,9000,stage7::DefensePosition::MediationRequested));
+        CHECK(!tribunal.decide(world,agency,7,9000,9001,true));
+        CHECK(!tribunal.decide(world,agency,8,9000,9001,false));
+        CHECK(!tribunal.decide(world,agency,8,9000,9001,true));
+        world.step(); // respondent had an actual due-process answer interval
+        CHECK(tribunal.decide(world,agency,8,9000,9001,true));
+        CHECK(!tribunal.decide(world,agency,8,9000,9002,true));
+        CHECK(!tribunal.answer(world,7,9000,stage7::DefensePosition::Contest));
+        const auto judgments=tribunal.dispositions();
+        CHECK(judgments.size()==1 && judgments.front().id==9001 &&
+              judgments.front().independent_judge==matters.front().judge &&
+              judgments.front().result==
+                  stage7::ProceduralDisposition::NoFindingAfterContest);
+        CHECK(world.world().find(a)->hull>0);
+        CHECK(world.world().find(b)->hull>0);
         // Nonviolent investigation must use a real current physical contact.
         CHECK(!agency.investigate(world,territory,7,b,7000,a,8001));
         CHECK(!agency.investigate(world,territory,8,b,99999,a,8001));
@@ -169,6 +208,16 @@ int main(){
         CHECK(world.world().canonical_state()==canonical);
         CHECK(agency.appointments().size()==1 &&
               agency.appointments().front().event_id==4001);
+        stage7::ProceduralJustice recovered_justice(backup);
+        CHECK(recovered_justice.cases().size()==1);
+        CHECK(recovered_justice.answers().size()==1);
+        CHECK(recovered_justice.dispositions().size()==1 &&
+              recovered_justice.dispositions().front().result==
+                  stage7::ProceduralDisposition::NoFindingAfterContest);
+        CHECK(!recovered_justice.answer(
+            world,7,9000,stage7::DefensePosition::MediationRequested));
+        CHECK(!recovered_justice.decide(world,agency,8,9000,9002,true));
+
         CHECK(agency.referrals(8,b).size()==1);
         const auto recovered=agency.investigations(world,8,b);
         CHECK(recovered.size()==1 && recovered.front().native_flight_present &&
@@ -188,6 +237,12 @@ int main(){
             !=SQLITE_OK);
         CHECK(sqlite3_exec(raw,
             "UPDATE sg_colony_law07j SET owner=7",nullptr,nullptr,nullptr)
+            !=SQLITE_OK);
+        CHECK(sqlite3_exec(raw,
+            "UPDATE sg_stage7_justice_disposition SET outcome=2",
+            nullptr,nullptr,nullptr)!=SQLITE_OK);
+        CHECK(sqlite3_exec(raw,
+            "DELETE FROM sg_stage7_justice_case",nullptr,nullptr,nullptr)
             !=SQLITE_OK);
         sqlite3_close(raw);
     }

@@ -1,6 +1,7 @@
 #include "galaxy/RegionalProductionNetwork.hpp"
 #include "galaxy/ShipmentManifest.hpp"
 #include "galaxy/Stage07IndependentCommerce.hpp"
+#include "galaxy/Stage07ReciprocalBarter.hpp"
 #include "galaxy/NpcAppearanceGenome.hpp"
 #include <filesystem>
 #include <iostream>
@@ -199,6 +200,22 @@ int main(){
       w,contracts,*offer,7,true),
       "authenticated producer did not create genuine original three-owner contract");
   contracts.book(panels);
+  // POP-10B: two physical shipments in ONE direction are not reciprocal
+  // consideration, even if both finish delivery. An unrelated NPC cannot
+  // mint money or call these a settled exchange. The full two-way positive
+  // fixture must separately produce and ship goods from owner 9 to owner 7.
+  stage7::ReciprocalBarter barter(path,authenticate);
+  ck(!barter.propose(w,"invalid-retroactive-exchange",frames.id,
+                     panels.id,7,true),
+     "same-direction original shipments became counterfeit barter");
+  ck(!barter.propose(w,"unauthorized-terms",frames.id,
+                     panels.id,7,false),
+     "unapproved trade terms were posted");
+  ck(!barter.approve(w,"missing-barter",7),
+     "unrecorded barter was approved");
+  ck(!barter.settle(w,"missing-barter"),
+     "unrecorded trade settled without reciprocal native delivery");
+  barter.verify();
   reject([&]{contracts.load("frames-third-party");},"unsigned contract loaded before all three grants");
   active=8;reject([&]{contracts.approve("frames-third-party",7,1);},"carrier impersonated source authorization");
   active=7;reject([&]{contracts.approve("frames-third-party",7,2);},"source owner consented in carrier's role");
