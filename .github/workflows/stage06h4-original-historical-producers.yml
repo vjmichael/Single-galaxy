@@ -204,9 +204,9 @@ jobs:
                        '    seed.ensure_physical_celestial_systems();'),
                       'authoritative world pose before ecological snapshot upgrade',edits)
                   text=replace_one(text,
-                      '    new_world.ensure_physical_celestial_systems();',
+                      '    (void)stage6::provision_first_planet_seed(new_world);',
                       ('    new_world.enable_native_galactic_physics({{1,galactic::Point{{0,0},{0,0},{0,0}}}});\n'
-                       '    new_world.ensure_physical_celestial_systems();'),
+                       '    (void)stage6::provision_first_planet_seed(new_world);'),
                       'galactic pose for distinct regional ecology producer',edits)
               if path=='include/galaxy/PlanetaryContinuousSurface.hpp' and era=='v135-medical-atmosphere':
                   text=replace_one(text,
