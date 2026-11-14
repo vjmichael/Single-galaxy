@@ -21,6 +21,357 @@ jobs:
             source_sha: 23bad9be38936d61b8c29b5be5f3900bec87fa6d
             targets: galaxy_play13d_regional_facilities_tests
             test_regex: '^(galaxy_play13d_regional_facilities|galaxy_ship01c_manufactured_freight)$'
+          - era: v100-source-authentic-cyber
+            source_sha: 23bad9be38936d61b8c29b5be5f3900bec87fa6d
+            targets: galaxy_ship_status02_authoritative_tests
+            test_regex: '^galaxy_ship_status02_authoritative
+            source_sha: 44619e9b186f99fa836ae9494a88137f3f2bf3f5
+            targets: 'galaxy_wo3_planetary_housing_tests galaxy_wo3_planetary_utility_tests'
+            test_regex: '^galaxy_wo3_planetary_(housing|utility)$'
+          - era: v118-family-custody
+            source_sha: d47e5cdb0532b615ffc99ffce23358a92ab05724
+            targets: 'galaxy_wo3_planetary_housing_tests galaxy_wo3_planetary_utility_tests'
+            test_regex: '^galaxy_wo3_planetary_(housing|utility)$'
+          - era: v128-planetary-resource
+            source_sha: eb448b6735a6e90b20480b3ac5065e06f30ae1ad
+            targets: 'galaxy_stage06_finite_planet_genesis_tests galaxy_stage06_seasonal_environment_tests'
+            test_regex: '^galaxy_stage06_(finite_planet_genesis|seasonal_environment)$'
+          - era: v135-medical-atmosphere
+            source_sha: 8ccb4a37b76e6e1510ee3fa1751fc23a9cdbc685
+            targets: 'galaxy_stage06_physical_environment_tests galaxy_stage06_finite_planet_genesis_tests galaxy_stage06_ecology_industry_tests'
+            test_regex: '^galaxy_stage06_(physical_environment|finite_planet_genesis|ecology_industry)$'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Verify exact source and historical original commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test -z "$(git status --porcelain --untracked-files=no)"
+          git cat-file -e '${{ matrix.source_sha }}^{commit}'
+          mkdir -p original-evidence
+          git worktree add --detach ../historical-native-${{ matrix.era }} '${{ matrix.source_sha }}'
+          HIST="$(realpath ../historical-native-${{ matrix.era }})"
+          test "$(git -C "$HIST" rev-parse HEAD)" = '${{ matrix.source_sha }}'
+          test -z "$(git -C "$HIST" status --porcelain --untracked-files=no)"
+          echo '${{ matrix.source_sha }}' > original-evidence/historical-source-sha.txt
+          echo "$GITHUB_SHA" > original-evidence/observer-source-sha.txt
+      - name: Compile original native game and independent observer
+        shell: bash
+        run: |
+          set -euo pipefail
+          HIST="$(realpath ../historical-native-${{ matrix.era }})"
+          cc -std=c11 -fPIC -shared -Wall -Wextra -Werror \
+             -o original-evidence/libsg_h4_observer.so \
+             tools/history/SQLiteCommitObserver.c -ldl -lsqlite3
+          # Compiler adapters are ONLY in an independent shadow directory.
+          # The entire historical Git checkout remains untouched and hashed.
+          # Each isolated edit is in original-evidence/source-adapter-provenance.json.
+          ADAPTER="$PWD/original-evidence/source-adapter"
+          python3 - "$HIST" "$ADAPTER" original-evidence/source-adapter-provenance.json <<'PYADAPTER'
+          import hashlib,json,pathlib,re,subprocess,sys
+          original=pathlib.Path(sys.argv[1]).resolve(strict=True)
+          target=pathlib.Path(sys.argv[2]).resolve()
+          manifest=pathlib.Path(sys.argv[3])
+          source_sha=subprocess.check_output(['git','-C',str(original),'rev-parse','HEAD'],text=True).strip()
+          eras={
+              '23bad9be38936d61b8c29b5be5f3900bec87fa6d':'pre-v109-original-v92',
+              '44619e9b186f99fa836ae9494a88137f3f2bf3f5':'v111-planet-housing',
+              'd47e5cdb0532b615ffc99ffce23358a92ab05724':'v118-family-custody',
+              'eb448b6735a6e90b20480b3ac5065e06f30ae1ad':'v128-planetary-resource',
+              '8ccb4a37b76e6e1510ee3fa1751fc23a9cdbc685':'v135-medical-atmosphere'
+          }
+          if source_sha not in eras:raise RuntimeError('unrecognized exact historical source SHA')
+          era=eras[source_sha]
+          def pristine():
+              return not subprocess.check_output(['git','-C',str(original),'status',
+                                                  '--porcelain','--untracked-files=no'],text=True).strip()
+          if not pristine():raise RuntimeError('original historical source was modified')
+          target.mkdir(parents=True,exist_ok=False)
+          changes=[]
+          def digest(path):
+              return hashlib.sha256(path.read_bytes()).hexdigest()
+          def replace_one(text,from_text,to_text,label,edits):
+              count=text.count(from_text)
+              if count!=1:raise RuntimeError(f'{era} {label}: expected exactly one historical pattern; found {count}')
+              edits.append(label)
+              return text.replace(from_text,to_text,1)
+          def split_auto(text,edits):
+              output=[]; fixed=0
+              for line in text.splitlines(keepends=True):
+                  found=re.match(r'^([ \t]*)const auto (.+);([ \t]*(?://[^\n]*)?)(\n?)$',line)
+                  if not found:
+                      output.append(line);continue
+                  indent,fields,suffix,newline=found.groups()
+                  pieces=[];start=0;depth=0;quote=None;escaped=False
+                  for i,ch in enumerate(fields):
+                      if quote:
+                          if escaped:escaped=False
+                          elif ch=='\\':escaped=True
+                          elif ch==quote:quote=None
+                      elif ch in ('"',"'"):quote=ch
+                      elif ch in '([{':depth+=1
+                      elif ch in ')]}':depth-=1
+                      elif ch==',' and depth==0:
+                          pieces.append(fields[start:i].strip());start=i+1
+                  pieces.append(fields[start:].strip())
+                  if len(pieces)<=1 or not all(re.match(r'^[a-zA-Z_]\w*\s*=',p) for p in pieces):
+                      output.append(line);continue
+                  output.extend(indent+'const auto '+p+';'+(suffix if j==len(pieces)-1 else '')+newline
+                                for j,p in enumerate(pieces))
+                  fixed+=1
+              merged=''.join(output)
+              multiline=re.compile(
+                  r'(?m)^([ \t]*)const auto ((?:[A-Za-z_]\w*=(?:u64|i64)\(f\[\d+\]\),\s*)+[A-Za-z_]\w*=(?:u64|i64)\(f\[\d+\]\));'
+              )
+              def split_snapshot_fields(found):
+                  indent,fields=found.group(1),found.group(2)
+                  declarations=re.split(r',\s*(?=[A-Za-z_]\w*=)',fields)
+                  return '\n'.join(indent+'const auto '+x+';' for x in declarations)
+              merged,split_lines=multiline.subn(split_snapshot_fields,merged)
+              if fixed:edits.append(f'split {fixed} same-line auto-deduced declarations')
+              if split_lines:edits.append(f'split {split_lines} original multiline typed snapshot declarations')
+              return merged
+          def patched(path):
+              text=(original/path).read_text();edits=[]
+              if path=='CMakeLists.txt' and era in ('v111-planet-housing','v118-family-custody'):
+                  for wrong in ('// WO3-A: proposal-only colony construction planning and original-world actual',
+                                '// facility, census, utility, immutable SQLite copies and material conservation.'):
+                      text=replace_one(text,wrong,'#'+wrong[2:],'CMake vintage comment grammar',edits)
+              if path=='src/Simulation.cpp':
+                  if era in ('v111-planet-housing','v118-family-custody'):
+                      text=replace_one(text,'if(!ship || !c || !l || frame==ship_frames_.end() ||',
+                                       'if(!ship || c==colony_ships_.end() || l==life_support_.end() || frame==ship_frames_.end() ||',
+                                       'typed iterator end comparison',edits)
+                      text=replace_one(text,'plan.destination_frame.anchor_body,',
+                                       'plan.destination_frame.anchor_body_id,',
+                                       'actual LocalSpaceFrame member',edits)
+                      text=replace_one(text,'namespace galaxy {\nnamespace {\nconstexpr int kPlacementBound',
+                                       'namespace galaxy {\nnamespace {\nEntityId shuttle_transit_custody_id(const PlanetarySiteKey& key);\nconstexpr int kPlacementBound',
+                                       'native shuttle helper forward declaration',edits)
+                      if era=='v111-planet-housing':
+                          text=replace_one(text,
+                              'if(dependent.guardian_id==npc_id ||\n           dependent.co_guardian_id==npc_id)return false;',
+                              'if(dependent.guardian_id==npc_id)return false;',
+                              'v111 only has guardian_id; no co-guardian exists in this snapshot schema',edits)
+                      text=split_auto(text,edits)
+                  if era in ('v128-planetary-resource','v135-medical-atmosphere'):
+                      marker='            const bool genuine_station_visitor=[&](){\n'
+                      end_marker='            }();\n'
+                      if text.count(marker)!=1:raise RuntimeError('unrecognized visitor predicate')
+                      start=text.index(marker);end=text.find(end_marker,start)
+                      if end<0:raise RuntimeError('unterminated original visitor predicate')
+                      end+=len(end_marker)
+                      pred=text[start:end]
+                      text=text[:start]+text[end:]
+                      anchor='            if(!result.colony_ships_.count(n.home_ship) ||\n'
+                      text=replace_one(text,anchor,pred+'\n'+anchor,
+                                       'move original visitor predicate outside Boolean expression',edits)
+                  if era=='v135-medical-atmosphere':
+                      text=replace_one(text,
+                          '        for(const auto& body:bodies)\n            out<<"celestial|"',
+                          '        for(const auto& body:bodies) {\n            out<<"celestial|"',
+                          'bracket mass/atmosphere serializer per real celestial body',edits)
+                      text=replace_one(text,
+                          "            out<<'\\n';\n    if(snapshot_version_>=127) {",
+                          "            out<<'\\n';\n        }\n    if(snapshot_version_>=127) {",
+                          'close per-body serialization loop',edits)
+              if path=='src/DockWorkforce.cpp' and era in ('v128-planetary-resource','v135-medical-atmosphere'):
+                  text=split_auto(text,edits)
+              if path=='tests/Stage06FinitePlanetaryGenesisTests.cpp' and era in ('v128-planetary-resource','v135-medical-atmosphere'):
+                  wrong=('        CHECK(!seed.scan_planetary_region_source(\n'
+                         '            7,ship,body,first.first,second.second==first.second?\n'
+                         '            second.second+1:second.second));')
+                  correct=('        // One canonical cell that is neither of the two real funded cells.\n'
+                           '        std::uint16_t absent=0;\n'
+                           '        while(absent==first.first*72+first.second ||\n'
+                           '              absent==second.first*72+second.second)++absent;\n'
+                           '        CHECK(absent<36*72);\n'
+                           '        CHECK(!seed.scan_planetary_region_source(\n'
+                           '            7,ship,body,absent/72,absent%72));')
+                  text=replace_one(text,wrong,correct,
+                      'negative planetary source probe uses truly unallocated canonical cell',edits)
+                  text=replace_one(text,
+                      '        seed.ensure_physical_celestial_systems();',
+                      ('        seed.enable_native_galactic_physics({{1,galactic::Point{{0,0},{0,0},{0,0}}}});\n'
+                       '        seed.ensure_physical_celestial_systems();'),
+                      'source-derived galactic v120 pose before v127 terrain genesis',edits)
+                  text=replace_one(text,
+                      '        legacy.ensure_physical_celestial_systems();',
+                      ('        legacy.enable_native_galactic_physics({{1,galactic::Point{{0,0},{0,0},{0,0}}}});\n'
+                       '        legacy.ensure_physical_celestial_systems();'),
+                      'historical original galactic source before journaled v127 upgrade',edits)
+              if path=='tests/Stage06PhysicalEnvironmentTests.cpp' and era=='v135-medical-atmosphere':
+                  text=replace_one(text,
+                      '    sim.steps(80);',
+                      '    const auto original_tick_zero=sim;\n    sim.steps(80);',
+                      'preserve real tick-zero genesis for SQLite world writer',edits)
+                  text=replace_one(text,
+                      '        PersistentWorld world(db,std::move(sim));',
+                      ('        PersistentWorld world(db,std::move(original_tick_zero));\n'
+                       '        world.steps(80);\n'
+                       '        CHECK(world.world().canonical_state()==canonical);'),
+                      'replay original 80 ticks through canonical SQLite writer',edits)
+                  text=replace_one(text,
+                      '    sim.ensure_planetary_genesis_manifest();',
+                      ('    sim.enable_native_galactic_physics({{1,galactic::Point{{0,0},{0,0},{0,0}}}});\n'
+                       '    sim.ensure_planetary_genesis_manifest();'),
+                      'seed original v120 physical pose before v128 process codec',edits)
+                  text=replace_one(text,
+                      '    historical.ensure_planetary_genesis_manifest();',
+                      ('    historical.enable_native_galactic_physics({{1,galactic::Point{{0,0},{0,0},{0,0}}}});\n'
+                       '    historical.ensure_planetary_genesis_manifest();'),
+                      'explicit native v120 identity for historical genesis fixture',edits)
+              if path=='tests/Stage06EcologyIndustryTests.cpp' and era=='v135-medical-atmosphere':
+                  text=replace_one(text,
+                      '    seed.ensure_physical_celestial_systems();',
+                      ('    seed.enable_native_galactic_physics({{1,galactic::Point{{0,0},{0,0},{0,0}}}});\n'
+                       '    seed.ensure_physical_celestial_systems();'),
+                      'authoritative world pose before ecological snapshot upgrade',edits)
+                  text=replace_one(text,
+                      '    (void)stage6::provision_first_planet_seed(new_world);',
+                      ('    new_world.enable_native_galactic_physics({{1,galactic::Point{{0,0},{0,0},{0,0}}}});\n'
+                       '    (void)stage6::provision_first_planet_seed(new_world);'),
+                      'galactic pose for distinct regional ecology producer',edits)
+              if path=='include/galaxy/PlanetaryContinuousSurface.hpp' and era=='v135-medical-atmosphere':
+                  text=replace_one(text,
+                      '    const auto lat=lat_diff/scale,lon=lon_projected/scale,\n               limit=allowed/scale;',
+                      '    const auto lat=lat_diff/scale;\n    const auto lon=lon_projected/scale;\n    const auto limit=allowed/scale;',
+                      'separate distinct unsigned integer deduction types',edits)
+              return text,edits
+          for entry in original.iterdir():
+              if entry.name not in ('src','include','tests','CMakeLists.txt'):
+                  (target/entry.name).symlink_to(entry.resolve(),target_is_directory=entry.is_dir())
+          (target/'src').mkdir();(target/'include').mkdir();(target/'include'/'galaxy').mkdir()
+          (target/'tests').mkdir()
+          candidates={'CMakeLists.txt','src/Simulation.cpp','src/DockWorkforce.cpp',
+                      'include/galaxy/PlanetaryContinuousSurface.hpp',
+                      'tests/Stage06FinitePlanetaryGenesisTests.cpp',
+                      'tests/Stage06EcologyIndustryTests.cpp',
+                      'tests/Stage06PhysicalEnvironmentTests.cpp'}
+          for parent in ('src','include','tests'):
+              for entry in (original/parent).iterdir():
+                  if parent=='include' and entry.name=='galaxy':continue
+                  if (parent+'/'+entry.name) in candidates:continue
+                  (target/parent/entry.name).symlink_to(entry.resolve(),target_is_directory=entry.is_dir())
+          for entry in (original/'include'/'galaxy').iterdir():
+              if ('include/galaxy/'+entry.name) in candidates:continue
+              (target/'include'/'galaxy'/entry.name).symlink_to(entry.resolve(),target_is_directory=entry.is_dir())
+          for rel in sorted(candidates):
+              before=original/rel
+              if not before.is_file():continue
+              after=target/rel
+              result,edits=patched(rel)
+              if edits:
+                  after.write_text(result)
+                  changes.append(dict(path=rel,original_sha256=digest(before),
+                                      shadow_sha256=digest(after),repair_labels=edits))
+              else:after.symlink_to(before.resolve())
+          if not pristine():raise RuntimeError('compiler adapter modified original Git checkout')
+          report=dict(schema='SG-S6H4-VINTAGE-SHADOW-COMPILER-01',historical_commit=source_sha,
+                      era=era,original_git_unchanged=True,
+                      adapter_source_files=changes,compiled_using_adapter=bool(changes),
+                      original_untouched_binary=False if changes else True,
+                      no_synthetic_snapshot_versions=True,
+                      no_data_schema_rewrite=True,version_acceptance_requires_original_ctests=True)
+          manifest.write_text(json.dumps(report,sort_keys=True,indent=2)+'\n')
+          print(json.dumps(report,sort_keys=True))
+          PYADAPTER
+          SOURCE="$ADAPTER"
+          test -z "$(git -C "$HIST" status --porcelain --untracked-files=no)"
+          cmake -S "$SOURCE" -B original-evidence/build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON 2>&1 \
+            | tee original-evidence/original-cmake-configure.log
+          cmake --build original-evidence/build --parallel 3 --target ${{ matrix.targets }} \
+            2>&1 | tee original-evidence/original-native-build.log
+          test -z "$(git -C "$HIST" status --porcelain --untracked-files=no)"
+      - name: Run source-pinned adapter-compiled native CTests and observe only real committed SQLite
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p original-evidence/sqlite
+          export SG_H4_CAPTURE_DIR="$PWD/original-evidence/sqlite"
+          export SG_H4_CAPTURE_VERSIONS='86-135'
+          export LD_PRELOAD="$PWD/original-evidence/libsg_h4_observer.so"
+          ctest --test-dir original-evidence/build -N -R '${{ matrix.test_regex }}' \
+            | tee original-evidence/ctest-discovery.txt
+          grep -q 'Total Tests:' original-evidence/ctest-discovery.txt
+          if grep -q 'Total Tests: 0' original-evidence/ctest-discovery.txt; then
+            echo 'No historical CTests selected' >&2; exit 1
+          fi
+          ctest --test-dir original-evidence/build --output-on-failure \
+            --output-junit "$PWD/original-evidence/original-native-tests.xml" \
+            -j 1 -R '${{ matrix.test_regex }}' 2>&1 \
+            | tee original-evidence/native-original.log
+          test "${PIPESTATUS[0]}" = 0
+          unset LD_PRELOAD
+      - name: Independently verify historical native SQLite and executable identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          HIST="$(realpath ../historical-native-${{ matrix.era }})"
+          test "$(git -C "$HIST" rev-parse HEAD)" = '${{ matrix.source_sha }}'
+          test -z "$(git -C "$HIST" status --porcelain --untracked-files=no)"
+          read -ra TARGETS <<< '${{ matrix.targets }}'
+          EXE=()
+          for target in "${TARGETS[@]}"; do
+            test -x "original-evidence/build/$target"
+            EXE+=("original-evidence/build/$target")
+          done
+          python tests/Stage06H4HistoricalNativeCorpus.py \
+            --source-sha '${{ matrix.source_sha }}' --current-sha "$GITHUB_SHA" \
+            --source-clean --capture-dir original-evidence/sqlite \
+            --adapter-manifest original-evidence/source-adapter-provenance.json \
+            --observer original-evidence/libsg_h4_observer.so \
+            --output original-evidence/historical-corpus.json \
+            --test-names '${{ matrix.test_regex }}' \
+            --producer-executables "${EXE[@]}"
+      - name: Independent modern canonical and WAL recovery of historical native SQLite
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          cmake -S . -B original-evidence/current -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON 2>&1 | tee original-evidence/modern-consumer-configure.log
+          cmake --build original-evidence/current --parallel 3 --target galaxy_stage06h4_historical_recovery_tests 2>&1 | tee original-evidence/modern-consumer-build.log
+          read -ra TARGETS <<< '${{ matrix.targets }}'
+          EXE=()
+          for target in "${TARGETS[@]}"; do
+            test -x "original-evidence/build/$target"
+            EXE+=("original-evidence/build/$target")
+          done
+          python3 tests/Stage06H4NativeCompatibility.py \
+            --manifest original-evidence/historical-corpus.json \
+            --capture-dir original-evidence/sqlite \
+            --source-sha '${{ matrix.source_sha }}' \
+            --consumer original-evidence/current/galaxy_stage06h4_historical_recovery_tests \
+            --test-junit original-evidence/original-native-tests.xml \
+            --observer original-evidence/libsg_h4_observer.so \
+            --producer-executables "${EXE[@]}" \
+            --output original-evidence/vintage-to-current-recovery.json
+      - name: Retain original historical SQLite, manifests, failure logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage06h4-original-${{ matrix.era }}-${{ github.sha }}
+          path: |
+            original-evidence/historical-source-sha.txt
+            original-evidence/observer-source-sha.txt
+            original-evidence/historical-corpus.json
+            original-evidence/vintage-to-current-recovery.json
+            original-evidence/modern-consumer-configure.log
+            original-evidence/modern-consumer-build.log
+            original-evidence/sqlite/*.sqlite
+            original-evidence/native-original.log
+            original-evidence/original-native-tests.xml
+            original-evidence/ctest-discovery.txt
+            original-evidence/original-cmake-configure.log
+            original-evidence/original-native-build.log
+            original-evidence/source-adapter-provenance.json
+          if-no-files-found: warn
+          retention-days: 21
+
           - era: v111-planet-housing
             source_sha: 44619e9b186f99fa836ae9494a88137f3f2bf3f5
             targets: 'galaxy_wo3_planetary_housing_tests galaxy_wo3_planetary_utility_tests'
