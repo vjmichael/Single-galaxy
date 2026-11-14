@@ -172,6 +172,16 @@ def patched(path):
              '                        std::to_string(tick)+" generation="+std::to_string(g)+\n'
              '                        " kind="+std::to_string(kind));'),
             'audit actual original tick transition separately from same-tick host state commit',edits)
+    if path=='src/Persistence.cpp' and era=='pre-v109-original-v92':
+        # SurveyLocal's positive transferred count represents real SURVEY
+        # discoveries, not removed or deposited finite matter. Keep it in
+        # the immutable original command/event history, but do not report a
+        # fictitious material resource-ledger movement for this action.
+        text=replace_one(text,
+            '                if (ev.result == Outcome::Applied && ev.transferred > 0) {',
+            ('                if (ev.result == Outcome::Applied && ev.transferred > 0 &&\n'
+             '                    due_commands.at(ev.command_id).action != Action::SurveyLocal) {'),
+            'exclude actual SurveyLocal information count from physical transfer ledger only',edits)
     if path=='src/DockWorkforce.cpp' and era in ('v128-planetary-resource','v135-medical-atmosphere'):
         text=split_auto(text,edits)
     if path=='src/CyberIncidentJournal.cpp' and era in ('v111-planet-housing','v118-family-custody'):

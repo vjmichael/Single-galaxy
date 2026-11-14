@@ -16,6 +16,8 @@ import re
 import sqlite3
 import subprocess
 import sys
+import shutil
+import tempfile
 
 SOURCE_COMMIT = "23bad9be38936d61b8c29b5be5f3900bec87fa6d"
 SOURCE_BLOB = "6add9dfbf4cbb0a19794abaadd7e699239923e08"
@@ -100,8 +102,13 @@ def main():
     print("SOURCE-PINNED HISTORICAL REPRODUCTION; NOT AN ARCHIVED DATABASE",
           commit, "SQLite SHA256", world_sha)
     for native_test in sys.argv[1:]:
-        subprocess.run([native_test, str(world)], check=True)
-        # Rehash authentic original SQLite and producer after every consumer.
+        # Native recovery may checkpoint its input. Replay on exactly the
+        # source-attested SQLite bytes without changing the original file.
+        with tempfile.TemporaryDirectory(prefix="wo3-v85-recovery-") as scratch:
+            isolated = Path(scratch) / "source-produced-v85.sqlite"
+            shutil.copyfile(world, isolated)
+            verify(isolated, world_sha, "byte-identical isolated native source")
+            subprocess.run([native_test, str(isolated)], check=True)
         verify(world, world_sha, "original SQLite after independent native test")
         verify(binary, binary_sha, "producer executable after independent native test")
 

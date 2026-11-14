@@ -13,6 +13,8 @@ from pathlib import Path
 import re
 import sqlite3
 import subprocess
+import shutil
+import tempfile
 import xml.etree.ElementTree as ET
 
 SHA40=re.compile(r'^[0-9a-f]{40}$')
@@ -106,8 +108,15 @@ def main(args):
             match=HEAD.match(row[0]) if row and isinstance(row[0],bytes) else None
             demand(match is not None and int(match.group(1))==version,
                    'version must come from original native snapshot bytes')
-        subprocess.run([str(consumer),'--source-produced',str(native)],
-                       check=True,timeout=args.timeout_seconds)
+        # This native recovery executable opens its input read/write while
+        # exercising WAL checkpoints. Never give it the attested original.
+        with tempfile.TemporaryDirectory(prefix='s6h4-modern-replay-') as scratch:
+            isolated=Path(scratch)/filename
+            shutil.copyfile(native,isolated)
+            demand(digest(isolated)==claimed,
+                   'isolated input differs from attested historical SQLite')
+            subprocess.run([str(consumer),'--source-produced',str(isolated)],
+                           check=True,timeout=args.timeout_seconds)
         demand(digest(native)==claimed,
                'modern replay mutated original historic SQLite source')
         accepted.append({'version':version,'sqlite_file':filename,
