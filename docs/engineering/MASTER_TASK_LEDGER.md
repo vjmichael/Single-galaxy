@@ -84,6 +84,13 @@ The resulting main tree contains 1,495 regular files and **exactly the six exist
 
 **Batch acceptance:** source merge is a grouped engineering checkpoint, **not a full group acceptance boundary**. Do not run Windows/Linux after this interim source batch or for each later fix. Collect and repair remaining INT-02 source conflicts in batches. When the defined integration group is feature-complete, request one combined exact-source Windows/Linux acceptance of the original tests and newly registered tests, then reconcile results. Last historical diagnostic remained 19/20 both OS on pre-merge PR #135 `bace7988`, not proof at new main SHA.
 
+### INT-02 source recovery — browser first-person parity, without a second 3D authority (2026-11-13)
+
+- Reviewed divergent PR #102 against newer main Godot and SGVIEW. Its original optional WebGL2 first-person untextured 3D browser cockpit was genuinely absent. Ported the legacy renderer and source-identity/no-command tests additively, with browser 2D/3D toggle, 2D fallback, and no new native/world-writing endpoint. It is an XY-plane proxy view only; the newer Godot player, 3D physical rules, original C++ authority and historical saves remain unchanged.
+- Improved historical projection security: the `FLEET_PILOT_ITEM` is the only accepted source of a heading tied to the selected fleet ship; resetting/changing the pilot clears that binding. Generic `HEADING` telemetry is not enough to authorize a 3D vessel camera. Anonymous foreign hulls, invalid or stale identity, and unsafe cargo remain rejected by the original projector.
+- Original PR #96's projection parity test is already present and stronger on `main`; its old copy is not replayed. PR #119's legacy workflow and PR #124's legacy CI recipe remain omitted to preserve six main workflows and batch acceptance. PR #66's divergence is documentation-only; original unified flight already exists through the inherited source. Remaining original #50 and #110 conflicts, optional old native-Godot mining smoke, older family/custody and historical H4 cases remain for explicit semantic review.
+- This is **interim source convergence**, not an end-of-group acceptance run. Commit with `[skip ci]`, preserve all group Windows/Linux, original SQLite, Godot and POP-10/H4 gates; do not report a passing CI/physical/Radeon result.
+
 ## P1 — remaining feature backlog, AFTER convergence is underway
 
 - **POP-10B positive genuine reciprocal barter:** actual two-direction manufactured goods, independent original-source/carrier/receiver approvals, physical pickup, carrier travel/unload, bilateral settlement, original SQLite recovery. Source authorization exists but complete positive two-way native proof is open.

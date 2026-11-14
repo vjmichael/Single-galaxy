@@ -131,6 +131,7 @@ function resize() {
 }
 function draw() {
   const state=visualState()||selectedState();if(!state)return;
+  window.GalaxyFirstPersonUI?.update(state);
   const w=canvas.clientWidth,h=canvas.clientHeight;if(!w||!h)return;
   ctx.clearRect(0,0,w,h);
   const gradient=ctx.createRadialGradient(w*.45,h*.4,0,w*.5,h*.5,Math.max(w,h)*.8);
@@ -265,6 +266,7 @@ canvas.addEventListener('wheel',event=>{
  window.GalaxyFlightCameraActions.zoom(event.deltaY<0?1.2:1/1.2);
 },{passive:false});
 window.addEventListener('resize',resize);
+window.GalaxyFirstPersonUI=window.GalaxyFirstPerson?.init();
 setScenario('ten',window.GalaxyRecordings?.ten||'');
 resize();requestAnimationFrame(animate);
 })();

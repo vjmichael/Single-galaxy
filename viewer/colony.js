@@ -1105,6 +1105,9 @@
    }
  }catch{/* Optional browser preference; never game authority. */}
  window.GalaxyActivePilotedShipId=null;
+ // An optional read-only 3D projection needs original fleet identity, not an inferred heading.
+ window.GalaxyShipHeadingShipId=null;
+ window.GalaxyFirstPersonVerifiedHeading=null;
  window.GalaxyActivePilotedCelestialBody=null;
  window.GalaxySalvageStock=salvageWrecks;
  window.GalaxyColonyGeology=geology;
@@ -1609,6 +1612,7 @@
  window.GalaxyColony={
    reset(){fleetShips.clear();fleetRosterActive=false;fleetRestorePending=true;
      fleetRequested=0;window.GalaxyActivePilotedShipId=null;
+     window.GalaxyShipHeadingShipId=null;window.GalaxyFirstPersonVerifiedHeading=null;
      contractList.replaceChildren();
      contractState.textContent='Awaiting actual shipyard purchase orders.';
      universalList.replaceChildren();universalDirectives.replaceChildren();
@@ -1753,6 +1757,9 @@
        }
      }
      if(e.type==='FLEET_SELECTED'||e.type==='FLEET_FALLBACK'){
+       // Never reuse another vessel's earlier projection heading.
+       window.GalaxyShipHeadingShipId=null;
+       window.GalaxyFirstPersonVerifiedHeading=null;
        window.GalaxyActivePilotedShipId=e.ship;
        window.GalaxyActivePilotedCelestialBody=null;
        window.GalaxyColonyHomeShipId=e.home;
@@ -1811,6 +1818,8 @@
            ' · food '+e.food+' kg · water '+e.water+' kg · oxygen '+
            e.oxygen+' kg · world generation '+e.generation;
          window.GalaxyShipHeading=e.heading;
+       window.GalaxyShipHeadingShipId=e.ship;
+       window.GalaxyFirstPersonVerifiedHeading=e.heading;
        }
      }
      if(e.type==='CELESTIAL_HEADER'){
