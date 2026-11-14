@@ -752,7 +752,11 @@ static int run_host(int argc,char** argv){
                     deny(req,"missing-owned-ship");continue;
                 }
                 Command c{};
-                c.id=flight_base|req;
+                // Bit 60 is reserved for the separately authorized cockpit
+                // flight IPC. Ordinary owner equipment commands must carry
+                // a distinct session/request ID, not impersonate a flight.
+                // The native SQLite/Simulation authorization still applies.
+                c.id=(flight_base&((std::uint64_t{1}<<60)-1))|req;
                 c.sequence=c.id;
                 c.execute_tick=world.world().tick()+1;
                 c.issuer=kLocalOwner;c.actor=previous.ship;

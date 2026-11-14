@@ -121,6 +121,22 @@ def patched(path):
                  '                                   std::int64_t(site.service_projects[1].phase!=0)) ||\n'
                  '           site.embodied_ore>std::numeric_limits<std::int64_t>::max()-total)'),
                 'exact genuine v118 service-project embodied ore mass and overflow check',edits)
+            # The v118 early decoder still checks only four pre-v117 physical
+            # project families. Its later native parser already verifies
+            # both real v117+ service projects and their exact consumed mass.
+            # Retain the ORIGINAL equality and all downstream anti-forgery.
+            text=replace_one(text,
+                ('                std::int64_t(site.housing_phase!=0)+\n'
+                 '                std::int64_t(site.utility_phase!=0));\n'
+                 '            if(site.embodied_ore!=expected_installed)'),
+                ('                std::int64_t(site.housing_phase!=0)+\n'
+                 '                std::int64_t(site.utility_phase!=0)+\n'
+                 '                std::int64_t(result.snapshot_version_>=117 &&\n'
+                 '                  site.service_projects[0].phase!=0)+\n'
+                 '                std::int64_t(result.snapshot_version_>=117 &&\n'
+                 '                  site.service_projects[1].phase!=0));\n'
+                 '            if(site.embodied_ore!=expected_installed)'),
+                'v118 early native parser verifies actual versioned service-project custody',edits)
         if era=='v111-planet-housing':
             # Original v111's planetary-site loader permits the real
             # consumed two-module housing/utility phases, but its FINAL
@@ -359,25 +375,41 @@ def patched(path):
             '.ascent_receipt==(farming?81003:',
             '.ascent_receipt==(farming?81005:',
             'farm original latest true ascent 81005 rather than stale 81003',edits)
-        # The source load_planetary_shuttle() explicitly allows orbital
-        # loading at phase==0 FROM the owned ship's life_support inventory.
-        # In this original manufactured case the ship has real nutrients;
-        # prove the positive finite transfer AND exact reversal, and still
-        # prohibit ground-to-orbit material teleportation.
+        # Original phase-zero orbital loading is from genuine owned ship
+        # nutrients, not from the still-distant planet. Assert the exact
+        # original physical capacity decision and, on success, original
+        # 500kg debit + inverse and conserved source mass and site stock.
         text=replace_one(text,
             ('            CHECK(!w.load_planetary_shuttle(7,ship,key,\n'
              '                ShuttleCargo::Nutrients,500)); // still docked in orbit'),
-            ('            if(manufactured) {\n'
-             '                const auto native_before=w.world().canonical_state();\n'
-             '                const auto before_ship=w.world().life_support(ship)->nutrients_kg;\n'
-             '                CHECK(before_ship>=500);\n'
-             '                CHECK(w.load_planetary_shuttle(7,ship,key,ShuttleCargo::Nutrients,500));\n'
-             '                CHECK(w.world().life_support(ship)->nutrients_kg==before_ship-500);\n'
-             '                CHECK(w.unload_planetary_shuttle(7,ship,key,ShuttleCargo::Nutrients,500));\n'
-             '                CHECK(w.world().canonical_state()==native_before);\n'
-             '            } else CHECK(!w.load_planetary_shuttle(7,ship,key,\n'
-             '                ShuttleCargo::Nutrients,500));'),
-            'source-correct physical orbital ship inventory transfer and exact inverse',edits)
+            ('            const auto source_before=w.world().canonical_state();\n'
+             '            const auto source_gen=w.generation();\n'
+             '            const auto ship_stock=w.world().life_support(ship)->nutrients_kg;\n'
+             '            const auto before_shuttle=w.world().planetary_shuttles().at(key);\n'
+             '            CHECK(before_shuttle.flight_phase==0);\n'
+             '            const bool source_can_load=ship_stock>=500 &&\n'
+             '                before_shuttle.water_kg+before_shuttle.food_kg+\n'
+             '                before_shuttle.nutrients_kg<=500;\n'
+             '            const bool loaded=w.load_planetary_shuttle(\n'
+             '                7,ship,key,ShuttleCargo::Nutrients,500);\n'
+             '            CHECK(loaded==source_can_load);\n'
+             '            if(loaded) {\n'
+             '                CHECK(w.world().life_support(ship)->nutrients_kg==ship_stock-500);\n'
+             '                CHECK(w.world().planetary_shuttles().at(key).nutrients_kg==\n'
+             '                      before_shuttle.nutrients_kg+500);\n'
+             '                CHECK(w.world().planetary_sites().at(key).nutrients_kg==site_before);\n'
+             '                CHECK(w.world().total_ore()==origin);\n'
+             '                CHECK(w.unload_planetary_shuttle(\n'
+             '                    7,ship,key,ShuttleCargo::Nutrients,500));\n'
+             '                CHECK(w.world().life_support(ship)->nutrients_kg==ship_stock);\n'
+             '                CHECK(w.world().planetary_shuttles().at(key).nutrients_kg==\n'
+             '                      before_shuttle.nutrients_kg);\n'
+             '                CHECK(w.world().planetary_sites().at(key).nutrients_kg==site_before);\n'
+             '                CHECK(w.world().total_ore()==origin);\n'
+             '                CHECK(w.generation()==source_gen+2);\n'
+             '            } else CHECK(w.world().canonical_state()==source_before &&\n'
+             '                         w.generation()==source_gen);'),
+            'original orbital 500kg finite ship stock, not phantom planet loading',edits)
         # Original v92 already has canonical legal homes. The source v85/86
         # migration must not be called on a v92 snapshot; keep all original
         # residence identity and forged-home refusal assertions unchanged.

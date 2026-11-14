@@ -67,11 +67,22 @@ with tempfile.TemporaryDirectory() as folder, ExitStack() as owned:
     assert result[0]=="SHIP" and result[5]=="0" and result[16]=="0",result
     assert contact[0]=="ROCK" and int(contact[7])==rock,contact
     req=4
-    for _ in range(10):
+    # Original native 3D movement is finite per verified flight tick.
+    # The historic 10th FWD ends 15,202mm away, outside the true 15m
+    # mining cutoff. Follow only real decreasing ROCK distance receipts.
+    previous_range=int(contact[9])
+    assert previous_range>=15000 and contact[0]=="ROCK",contact
+    completed_approaches=0
+    for _ in range(16):
+        if previous_range<15000: break
         req+=1
         result,contact=ask(c,f"FLIGHT|{session}|{req}|1|FWD",session,req)
-        assert result[0]=="SHIP" and result[5]=="0",result
-    assert int(contact[9])<15000,contact
+        assert result[0]=="SHIP" and result[5]=="0" and contact[0]=="ROCK",(result,contact)
+        next_range=int(contact[9])
+        assert 0<=next_range<previous_range,(previous_range,contact)
+        previous_range=next_range
+        completed_approaches+=1
+    assert completed_approaches>=1 and previous_range<15000,contact
     req+=1
     result,contact=ask(c,f"MINE|{session}|{req}|1|{rock}",session,req)
     assert result[0]=="SHIP" and result[5]=="0",(result,contact)
