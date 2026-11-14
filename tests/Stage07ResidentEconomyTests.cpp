@@ -133,8 +133,12 @@ int main(){
     std::uint64_t civic_event=0,civic_npc=0,civic_generation=0;
     {
         Simulation seed(47009);
-        civic_ship=seed.add_colony_ship(7,{0,0},100,8);
-        seed.provision_colony_genesis(civic_ship,24,24,1000,1000,1000);
+        // The real genesis demands >=100 kg per compartment and an exact
+        // 1,000-kg total multiple. Thirty actual adult residents (not
+        // synthetic census entries) make 100 kg below the native four-window
+        // 120-kg reserve while keeping the colony physically provisioned.
+        civic_ship=seed.add_colony_ship(7,{0,0},100,30);
+        seed.provision_colony_genesis(civic_ship,100,100,300,200,300);
         seed.enable_individual_workforce();
         seed.upgrade_assignment_snapshot_format();
         seed.enable_passenger_life_support();

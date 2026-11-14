@@ -1,4 +1,4 @@
-name: Stage 7 POP-08 integrated original households, duty, society and civic law
+name: Stage 7 POP-09 integrated original households, duty, society and civic law
 
 on:
   push:
@@ -72,14 +72,15 @@ jobs:
             galaxy_colony_exit01d_bounded_tests \
             galaxy_wo4_resource_demand_tests \
             galaxy_wo5_physical_logistics_tests \
-            galaxy_stage07_resident_economy_tests
+            galaxy_stage07_resident_economy_tests \
+            v59_third_party_custody
       - name: Require full original plus additive Stage 7 acceptance
         shell: bash
         run: |
           set -euo pipefail
           ctest --test-dir build/stage07-pop07 -C Release --output-on-failure \
             --output-junit "$PWD/stage07-pop07-evidence/native-tests.xml" \
-            -R '^(galaxy_stage07_population_households|galaxy_stage07_household_lifecycle_birth|galaxy_stage07_household_lifecycle_migration|galaxy_stage07_delegated_labor|galaxy_stage07_society_economy|galaxy_stage07_civic_policy|galaxy_stage07_duty_workshop|galaxy_stage07_duty_medical|galaxy_stage07_duty_dock|galaxy_wo2_industry_workforce|v59_medical_recovery|galaxy_dock03_physical_workforce|galaxy_colony_conflict01b3_governance|galaxy_colony_exit01d_bounded|galaxy_wo4_resource_demand|galaxy_wo5_physical_logistics|galaxy_stage07_resident_economy|galaxy_stage07_resident_legal_consequence)$' \
+            -R '^(galaxy_stage07_population_households|galaxy_stage07_household_lifecycle_birth|galaxy_stage07_household_lifecycle_migration|galaxy_stage07_delegated_labor|galaxy_stage07_society_economy|galaxy_stage07_civic_policy|galaxy_stage07_duty_workshop|galaxy_stage07_duty_medical|galaxy_stage07_duty_dock|galaxy_wo2_industry_workforce|v59_medical_recovery|galaxy_dock03_physical_workforce|galaxy_colony_conflict01b3_governance|galaxy_colony_exit01d_bounded|galaxy_wo4_resource_demand|galaxy_wo5_physical_logistics|galaxy_stage07_resident_economy|galaxy_stage07_resident_legal_consequence|v59_third_party_custody)$' \
             --timeout 180 | tee stage07-pop07-evidence/native-ctest.log
           python - <<'PY'
           from pathlib import Path
@@ -104,7 +105,8 @@ jobs:
           galaxy_wo4_resource_demand
           galaxy_wo5_physical_logistics
           galaxy_stage07_resident_economy
-          galaxy_stage07_resident_legal_consequence'''.split())
+          galaxy_stage07_resident_legal_consequence
+          v59_third_party_custody'''.split())
           assert len(actual)==len(required), (len(actual),len(required))
           assert {c.attrib['name'] for c in actual}==required
           assert all(c.find(x) is None for c in actual for x in ('failure','error','skipped'))
@@ -119,7 +121,8 @@ jobs:
                        'galaxy_colony_exit01d_bounded_tests',
                        'galaxy_wo4_resource_demand_tests',
                        'galaxy_wo5_physical_logistics_tests',
-                       'galaxy_stage07_resident_economy_tests']
+                       'galaxy_stage07_resident_economy_tests',
+                       'v59_third_party_custody']
           with (evidence/'receipts.txt').open('w') as receipt:
               receipt.write('exact_head='+ (evidence/'source-sha.txt').read_text().strip()+'\n')
               for name in sorted(required):
