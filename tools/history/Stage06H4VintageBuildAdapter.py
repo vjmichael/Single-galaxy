@@ -130,17 +130,48 @@ def patched(path):
                 "            out<<'\\n';\n    if(snapshot_version_>=127) {",
                 "            out<<'\\n';\n        }\n    if(snapshot_version_>=127) {",
                 'close per-body serialization loop',edits)
-    if path=='src/Persistence.cpp' and era=='pre-v109-original-v92':
-        # Preserve the original rejection. A historical operator now sees
-        # which genuine operation_log generation/tick/kind first collided.
-        # This is diagnostic-only in the attested shadow executable.
+    if path=='src/Persistence.cpp' and era in (
+            'pre-v109-original-v92','v111-planet-housing','v118-family-custody'):
+        # The ORIGINAL Store::commit writes kind=2 for both advances made by
+        # step() and host-only in-place state mutations, without changing the
+        # durable operation log schema. The original GRSM tick validator
+        # incorrectly classifies the latter as a second physical tick.
+        # Validate the immediately preceding committed generation, its
+        # immutable state hash, and absence of executed historical_events.
+        # Only a changed-state, same-tick kind=2 may be excluded from the
+        # PHYSICAL TICK map. Advancing or rolled-back ticks still fail closed.
+        # This is a vintage-only shadow validator correction, not rewriting
+        # SQLite rows, version headers, provenance, or the original Git source.
         text=replace_one(text,
-            'throw std::runtime_error("SQLite: duplicate historical step generation");',
-            ('throw std::runtime_error('
-             '"SQLite: duplicate historical step generation tick="+'
-             'std::to_string(tick)+" generation="+std::to_string(g)+'
-             '" kind="+std::to_string(kind));'),
-            'retain duplicate tick rejection with original operation ID diagnostics',edits)
+            ('                if (g <= 0 || tick <= 0 || !tick_generation.emplace(static_cast<std::uint64_t>(tick),\n'
+             '                    static_cast<std::uint64_t>(g)).second)\n'
+             '                    throw std::runtime_error("SQLite: duplicate historical step generation");'),
+            ('                if(g<=1 || tick<0)\n'
+             '                    throw std::runtime_error("SQLite: invalid historical operation generation");\n'
+             '                Statement previous(db_, "SELECT tick,state_hash FROM operation_log WHERE generation=?");\n'
+             '                previous.i64(1,g-1);\n'
+             '                if(!previous.row())\n'
+             '                    throw std::runtime_error("SQLite: missing preceding original operation");\n'
+             '                const auto prior_tick=sqlite3_column_int64(previous.get(),0);\n'
+             '                if(kind==2 && tick==prior_tick) {\n'
+             '                    Statement current(db_, "SELECT state_hash FROM operation_log WHERE generation=?");\n'
+             '                    current.i64(1,g);\n'
+             '                    if(!current.row() ||\n'
+             '                       sqlite_str(previous.get(),1)==sqlite_str(current.get(),0))\n'
+             '                        throw std::runtime_error("SQLite: duplicate or no-op historical host commit");\n'
+             '                    Statement executed(db_, "SELECT 1 FROM historical_events WHERE generation=? LIMIT 1");\n'
+             '                    executed.i64(1,g);\n'
+             '                    if(executed.row())\n'
+             '                        throw std::runtime_error("SQLite: host-only journal row conceals executed event");\n'
+             '                    continue; // real host mutation, never a simulation tick\n'
+             '                }\n'
+             '                if(tick<=0 || tick!=prior_tick+1 ||\n'
+             '                   !tick_generation.emplace(static_cast<std::uint64_t>(tick),\n'
+             '                                            static_cast<std::uint64_t>(g)).second)\n'
+             '                    throw std::runtime_error("SQLite: duplicate historical step generation tick="+\n'
+             '                        std::to_string(tick)+" generation="+std::to_string(g)+\n'
+             '                        " kind="+std::to_string(kind));'),
+            'audit actual original tick transition separately from same-tick host state commit',edits)
     if path=='src/DockWorkforce.cpp' and era in ('v128-planetary-resource','v135-medical-atmosphere'):
         text=split_auto(text,edits)
     if path=='src/CyberIncidentJournal.cpp' and era in ('v111-planet-housing','v118-family-custody'):
