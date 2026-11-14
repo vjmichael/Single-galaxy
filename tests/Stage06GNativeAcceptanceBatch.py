@@ -84,6 +84,10 @@ CUSTODY=(
     "galaxy_stage06g_cgroup_admission_contract",
     "galaxy_stage06g_multiworld_crash_recovery",
 )
+STAGE7=(
+    # First additive feature gate; original Stage 6/H4 acceptance is unchanged.
+    "galaxy_stage07_population_households",
+)
 GODOT=(
     "galaxy_stage6f5e_godot_tile_window",
     "galaxy_stage6f5f_godot_shuttle_source",
@@ -105,6 +109,7 @@ GROUPS={
     # real OS guardian / process-tree / original SQLite bridge fails later.
     "process_custody_and_recovery": CUSTODY,
     "godot_source_only": GODOT,
+    "stage07_population_and_household_identity": STAGE7,
 }
 
 def run(argv, timeout, cwd=None):
