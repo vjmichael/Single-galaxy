@@ -64,14 +64,15 @@ jobs:
           cmake --build build/stage07-native --target \
             galaxy_stage07_population_household_tests \
             galaxy_colony_auto04d4d2_physical_tests \
-            v59_paired_household_settlement --config Release --parallel 4
+            v59_paired_household_settlement \
+            galaxy_wo2_industry_workforce_tests --config Release --parallel 4
       - name: Verify unchanged original Stage 7 CTests
         shell: bash
         run: |
           set -euo pipefail
           ctest --test-dir build/stage07-native -C Release \
             --output-on-failure --output-junit "$PWD/stage07-native-evidence/native-tests.xml" \
-            -R '^(galaxy_stage07_population_households|galaxy_stage07_household_lifecycle_birth|galaxy_stage07_household_lifecycle_migration)$' \
+            -R '^(galaxy_stage07_population_households|galaxy_stage07_household_lifecycle_birth|galaxy_stage07_household_lifecycle_migration|galaxy_wo2_industry_workforce|galaxy_stage07_delegated_labor)$' \
             --timeout 180 | tee stage07-native-evidence/native-ctest.log
           python - <<'PY'
           import hashlib,pathlib,xml.etree.ElementTree as ET
@@ -79,14 +80,17 @@ jobs:
           cases=list(ET.parse('stage07-native-evidence/native-tests.xml').iter('testcase'))
           required={'galaxy_stage07_population_households',
                     'galaxy_stage07_household_lifecycle_birth',
-                    'galaxy_stage07_household_lifecycle_migration'}
-          assert len(cases)==3 and {c.get('name') for c in cases}==required
+                    'galaxy_stage07_household_lifecycle_migration',
+                    'galaxy_wo2_industry_workforce',
+                    'galaxy_stage07_delegated_labor'}
+          assert len(cases)==5 and {c.get('name') for c in cases}==required
           assert all(c.find(t) is None for c in cases for t in ('failure','error','skipped'))
           root=pathlib.Path('build/stage07-native')
           hashes={}
           for name in ('galaxy_stage07_population_household_tests',
                        'galaxy_colony_auto04d4d2_physical_tests',
-                       'v59_paired_household_settlement'):
+                       'v59_paired_household_settlement',
+                       'galaxy_wo2_industry_workforce_tests'):
               exe=next(p for p in root.rglob(name+'*') if p.is_file() and p.suffix in ('','.exe'))
               hashes[name]=hashlib.sha256(exe.read_bytes()).hexdigest()
           with open('stage07-native-evidence/receipt.txt','w') as out:

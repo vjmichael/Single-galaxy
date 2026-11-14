@@ -1,5 +1,6 @@
 #include "galaxy/WO2WorkPrograms.hpp"
 #include "galaxy/WO2IndustryWorkforce.hpp"
+#include "galaxy/Stage07DelegatedLabor.hpp"
 #include "galaxy/Persistence.hpp"
 #include <chrono>
 #include <filesystem>
@@ -258,6 +259,21 @@ int main() {
         foreign.action=Action::TrainWorkshopTrade;foreign.amount=static_cast<std::int64_t>(first_id);
         foreign.thrust_x=1;
         CHECK(!w.submit(foreign));
+        // Stage 7 POP-03: one original living qualified resident is
+        // nominated without any new person, job, wage or resource.
+        const auto stage7_offer=stage7::offer_original_workshop_labor(
+            w,7,ship,site,false);
+        CHECK(stage7_offer.has_value() && stage7_offer->worker==first_id &&
+              stage7_offer->source_generation==w.generation());
+        CHECK(!stage7::offer_original_workshop_labor(
+            w,8,ship,site,false).has_value());
+        CHECK(!stage7::authorize_original_workshop_labor(
+            w,*stage7_offer,22,false).has_value());
+        const auto stage7_approved=stage7::authorize_original_workshop_labor(
+            w,*stage7_offer,22,true);
+        CHECK(stage7_approved.has_value() &&
+              stage7_approved->issuer==7 &&
+              stage7_approved->amount==static_cast<std::int64_t>(first_id));
         auto proposed=workforce02::approved_original_assignment(
             w.world(),7,ship,site,false,first_id,22,true);
         CHECK(proposed.has_value());
@@ -266,6 +282,9 @@ int main() {
               proposed->target==site && proposed->amount==static_cast<std::int64_t>(first_id));
         CHECK(w.submit(*proposed));w.step();
         CHECK(w.world().events().back().result==Outcome::Applied);
+        CHECK(stage7::original_labor_applied(w,*stage7_offer,22));
+        CHECK(!stage7::authorize_original_workshop_labor(
+            w,*stage7_offer,22,true).has_value()); // stale and spent
         CHECK(w.world().workshop(site)->operator_npc_id==first_id);
         CHECK(w.world().workshop(site)->reserved_aluminum_kg==20);
         CHECK(w.world().total_material_kg()==initial_mass);
