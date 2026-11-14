@@ -140,6 +140,12 @@ This disposition is a **functional source/coverage decision**, not a claim that 
 - Added a pure standard-library negative fixture CTest `galaxy_stage06h4_provenance_contracts`. Verified locally with Python bytecode compilation and two tests covering unrelated/failed/skipped JUnit, forged version/receipt/hash counts and unchanged metadata. This **does not** constitute an original native producer pass.
 - The next group requirement is to compile/replay all available original tests with source+adapter+executable+SQLite SHA evidence, complete genuine v86–v135 coverage where original producers exist, and run a single genuine Windows/Linux main-anchored group. No CI dispatched or historic-source/PR mutation.
 
+### INT-03 main-only grouped native candidate script staged (2026-11-14)
+
+- Added `scripts/INT03MainNativeAcceptance.py`, a reusable source-pin native acceptance runner, with a locally passing `--check-contract` inventory self-check. It accepts only an exact detached `main` SHA and clean original sources, then, **when explicitly run later**, builds eight canonical C++ targets on original Linux/Ninja or Windows/MSVC/vcpkg, checks the original source pinned `23bad9be` Git commit and test blob, executes its observation-only native v85 producer to create real original SQLite, reattests the emitted original native binary/database, then checks all 10 required source-native/WO3/H4/two-household CTests with exact case names and failure/skip refusal.
+- The script outputs an explicit **subset receipt** with `full_int03_accepted=false` and `h4_v86_to_v135_corpus_accepted=false`, even if all those tests eventually pass. No full historical v86–v135 producer acceptance is fabricated. It is ready for a **future manual main-only task-group lane**; no workflow was dispatched as part of development.
+- Developer policy remains: use the single master ledger, one main, no new PRs, preserve six original registered workflows, and launch one combined Windows/Linux native gate only at the feature-complete group boundary.
+
 ## P1 — remaining feature backlog, AFTER convergence is underway
 
 - **POP-10B positive genuine reciprocal barter:** actual two-direction manufactured goods, independent original-source/carrier/receiver approvals, physical pickup, carrier travel/unload, bilateral settlement, original SQLite recovery. Source authorization exists but complete positive two-way native proof is open.
