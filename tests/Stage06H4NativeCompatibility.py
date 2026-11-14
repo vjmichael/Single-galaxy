@@ -98,7 +98,7 @@ def main(args):
         demand(digest(native)==claimed,'original emitted bytes do not match')
         with sqlite3.connect(native.as_uri()+'?mode=ro&immutable=1',uri=True) as db:
             verify_source_record(record,db)
-            demand(db.execute('PRAGMA integrity_check').fetchone()==('ok',)
+            demand(db.execute('PRAGMA integrity_check').fetchone()==('ok',),
                    'original SQLite file damaged')
             row=db.execute('SELECT state FROM snapshots ORDER BY generation DESC LIMIT 1').fetchone()
             match=HEAD.match(row[0]) if row and isinstance(row[0],bytes) else None
