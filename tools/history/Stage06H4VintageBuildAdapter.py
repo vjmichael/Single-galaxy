@@ -99,14 +99,14 @@ def patched(path):
             # final equality with installed physical projects (not a broad
             # mass exemption); the original SQLite fields remain unchanged.
             text=replace_one(text,
-                ('            if(site.embodied_ore!=4+4*(std::int64_t(site.farm)+\\n'
-                 '                                        std::int64_t(site.extractor)))\\n'
+                ('            if(site.embodied_ore!=4+4*(std::int64_t(site.farm)+\n'
+                 '                                        std::int64_t(site.extractor)))\n'
                  '                throw std::runtime_error("snapshot: invalid regional module custody");'),
-                ('            const auto s6h4_expected_site_mass=4+4*(\\n'
-                 '                std::int64_t(site.farm)+std::int64_t(site.extractor)+\\n'
-                 '                std::int64_t(site.housing_phase!=0)+\\n'
-                 '                std::int64_t(site.utility_phase!=0));\\n'
-                 '            if(site.embodied_ore!=s6h4_expected_site_mass)\\n'
+                ('            const auto s6h4_expected_site_mass=4+4*(\n'
+                 '                std::int64_t(site.farm)+std::int64_t(site.extractor)+\n'
+                 '                std::int64_t(site.housing_phase!=0)+\n'
+                 '                std::int64_t(site.utility_phase!=0));\n'
+                 '            if(site.embodied_ore!=s6h4_expected_site_mass)\n'
                  '                throw std::runtime_error("snapshot: invalid regional module custody");'),
                 'v111 installed housing and utility mass final audit uses original physical project flags',edits)
         if era in ('v128-planetary-resource','v135-medical-atmosphere'):
