@@ -2818,3 +2818,15 @@ if(BUILD_TESTING)
     TIMEOUT 120
     LABELS "stage07;original-world;population;households;sqlite;recovery")
 endif()
+
+# Stage 7 POP-02: same original native family/physical custody executables,
+# now asserting the Stage 7 current-world birth and migration projections.
+if(BUILD_TESTING)
+  add_test(NAME galaxy_stage07_household_lifecycle_birth
+    COMMAND galaxy_colony_auto04d4d2_physical_tests)
+  add_test(NAME galaxy_stage07_household_lifecycle_migration
+    COMMAND v59_paired_household_settlement)
+  set_tests_properties(galaxy_stage07_household_lifecycle_birth
+    galaxy_stage07_household_lifecycle_migration PROPERTIES TIMEOUT 180
+    LABELS "stage07;original-world;household-lifecycle;sqlite;recovery")
+endif()

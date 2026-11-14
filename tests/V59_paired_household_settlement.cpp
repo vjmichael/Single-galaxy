@@ -1,4 +1,5 @@
 #include "galaxy/MedicalSocietyBridge.hpp"
+#include "galaxy/Stage07HouseholdLifecycle.hpp"
 #include "galaxy/RegionalModeAuthority.hpp"
 #include <sqlite3.h>
 #include <filesystem>
@@ -56,6 +57,15 @@ int main(){
         birth.expected_region_revision=2;birth.expected_family_revision=1;
         birth.event_id=2002;birth.child_id=kid2;
         world.step_with_atomic_dependent_birth(birth);
+        {
+            const auto life=stage7::audit_household_lifecycle(
+                world,family,path,{2001,2002});
+            check(life.unregistered_births==2 &&
+                  life.registered_children==0 &&
+                  life.original_census.named_living==18 &&
+                  life.children.at(kid1).legal_home==source,
+                  "Stage 7 birth cohort was cloned into physical labor");
+        }
         check(world.submit(command(world,20,Action::RequestJump,destination,gate)),
               "destination gate jump submit");step_applied(world,20);
         world.steps(Simulation::kJumpTransitTicks+Simulation::kArrivalCloakTicks+1);
@@ -186,6 +196,16 @@ int main(){
               world.world().colony_ship(source)->crew==4 &&
               world.world().colony_ship(destination)->crew==8,
               "paired household population or custody did not reconcile");
+        {
+            const auto life=stage7::audit_household_lifecycle(
+                world,family,path,{2001,2002});
+            check(life.relocated_children==2 &&
+                  life.children.at(kid1).legal_home==destination &&
+                  life.children.at(kid2).phase==
+                      stage7::ChildPhase::LegallyRelocated &&
+                  life.original_census.named_living==18,
+                  "Stage 7 two-parent legal migration failed lifecycle audit");
+        }
         check(family.get_move(90026).npc_id==2,
               "second parent has no durable family move receipt");
         {PersistentWorld reopened(path,Simulation(8800));

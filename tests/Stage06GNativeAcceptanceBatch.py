@@ -87,6 +87,8 @@ CUSTODY=(
 STAGE7=(
     # First additive feature gate; original Stage 6/H4 acceptance is unchanged.
     "galaxy_stage07_population_households",
+    "galaxy_stage07_household_lifecycle_birth",
+    "galaxy_stage07_household_lifecycle_migration",
 )
 GODOT=(
     "galaxy_stage6f5e_godot_tile_window",

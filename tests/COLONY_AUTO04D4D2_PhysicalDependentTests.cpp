@@ -1,4 +1,5 @@
 #include "galaxy/Persistence.hpp"
+#include "galaxy/Stage07HouseholdLifecycle.hpp"
 #include "galaxy/NpcAppearanceGenome.hpp"
 #include "galaxy/RegionalModeAuthority.hpp"
 #include <sqlite3.h>
@@ -65,6 +66,16 @@ try{
         birth.regional_colony="home";
         world.step_with_atomic_dependent_birth(birth);
         CHECK(world.generation()==2 && world.world().tick()==1);
+        {
+            NpcAppearanceStore family(path,scope,seed,[&](auto id){
+                return world.world().npc_records().count(id)!=0;});
+            const auto life=stage7::audit_household_lifecycle(
+                world,family,path,{7401});
+            CHECK(life.unregistered_births==1 && life.registered_children==0 &&
+                  life.children.at(child).phase==
+                      stage7::ChildPhase::BornWithoutPhysicalRegistration &&
+                  life.original_census.named_living==4);
+        }
         Command cmd{};
         cmd.id=8101;cmd.sequence=8101;cmd.issuer=Simulation::kServerAuthority;
         cmd.actor=home;cmd.target=home;
@@ -84,10 +95,27 @@ try{
         CHECK(crashed);
         CHECK(world.world().physical_dependents().empty());
         CHECK(world.world().tick()==1);
+        {
+            NpcAppearanceStore family(path,scope,seed,[&](auto id){
+                return world.world().npc_records().count(id)!=0;});
+            CHECK(stage7::audit_household_lifecycle(world,family,path,{7401})
+                  .unregistered_births==1);
+        }
         world.step_with_dependent_registration();
         CHECK(world.world().physical_dependents().count(child)==1);
         CHECK(world.world().physical_dependents().at(child).guardian_id==1);
         CHECK(world.world().physical_dependents().at(child).home_ship==home);
+        {
+            NpcAppearanceStore family(path,scope,seed,[&](auto id){
+                return world.world().npc_records().count(id)!=0;});
+            const auto life=stage7::audit_household_lifecycle(
+                world,family,path,{7401});
+            CHECK(life.registered_children==1 && life.unregistered_births==0 &&
+                  life.children.at(child).phase==
+                      stage7::ChildPhase::PhysicallyRegistered &&
+                  life.children.at(child).registration_command==8101 &&
+                  life.original_census.all_living_people()==5);
+        }
         CHECK(world.world().npc_records().size()==4); // child is NOT crew
         CHECK(world.world().children_physically_aboard(home)==1);
         CHECK(world.world().total_material_kg()==mass);
@@ -114,6 +142,14 @@ try{
         PersistentWorld replay(copy,Simulation(3));
         CHECK(replay.world().children_physically_aboard(home)==1);
         CHECK(replay.world().physical_dependents().at(child).registration_command==8101);
+        {
+            NpcAppearanceStore family(copy,scope,seed,[&](auto id){
+                return replay.world().npc_records().count(id)!=0;});
+            const auto life=stage7::audit_household_lifecycle(
+                replay,family,copy,{7401});
+            CHECK(life.registered_children==1 &&
+                  life.children.at(child).physical_location==home);
+        }
         CHECK(replay.world().life_support(home)->food_kg==97);
         CHECK(replay.world().total_material_kg()==mass);
     }
