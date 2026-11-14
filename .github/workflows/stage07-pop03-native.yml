@@ -1,0 +1,95 @@
+name: Stage 7 POP-03 original delegated labor native evidence
+
+on:
+  push:
+    branches: [sg/stage7-pop03-delegated-labor-20261113]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: stage07-pop03-native-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  labor:
+    name: Real owner-authorized original workshop labor (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2022]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - name: Pin clean source and original labor tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test -z "$(git status --porcelain)"
+          mkdir -p stage07-pop03-evidence
+          printf '%s\n' "$GITHUB_SHA" > stage07-pop03-evidence/source-sha.txt
+      - name: Native Linux SQLite dependencies
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ninja-build libsqlite3-dev
+      - name: Native Windows SQLite dependencies
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $root=$env:VCPKG_INSTALLATION_ROOT
+          if(-not $root){$root='C:\vcpkg'}
+          & (Join-Path $root 'vcpkg.exe') install sqlite3:x64-windows --classic
+          if($LASTEXITCODE -ne 0){throw 'Native Windows SQLite SDK provisioning failed'}
+          "SG_TOOLCHAIN=$(Join-Path $root 'scripts\buildsystems\vcpkg.cmake')" >> $env:GITHUB_ENV
+          (Join-Path $root 'installed\x64-windows\bin') >> $env:GITHUB_PATH
+      - name: Build original industrial-world delegated labor source
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "$RUNNER_OS" = Windows ]; then
+            cmake -S . -B build/stage07-pop03 -G 'Visual Studio 17 2022' -A x64 \
+              "-DCMAKE_TOOLCHAIN_FILE=$SG_TOOLCHAIN" -DBUILD_TESTING=ON
+          else
+            cmake -S . -B build/stage07-pop03 -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
+          fi
+          cmake --build build/stage07-pop03 --target galaxy_wo2_industry_workforce_tests --config Release --parallel 4
+      - name: Require original WO2 test AND additive Stage 7 labor test
+        shell: bash
+        run: |
+          set -euo pipefail
+          ctest --test-dir build/stage07-pop03 -C Release --output-on-failure \
+            --output-junit "$PWD/stage07-pop03-evidence/native-tests.xml" \
+            -R '^(galaxy_wo2_industry_workforce|galaxy_stage07_delegated_labor)$' \
+            --timeout 180 | tee stage07-pop03-evidence/native-ctest.log
+          python - <<'PY'
+          from pathlib import Path
+          import hashlib,xml.etree.ElementTree as ET
+          tests=list(ET.parse('stage07-pop03-evidence/native-tests.xml').iter('testcase'))
+          required={'galaxy_wo2_industry_workforce','galaxy_stage07_delegated_labor'}
+          assert len(tests)==2 and {t.get('name') for t in tests}==required
+          assert all(t.find(s) is None for t in tests for s in ('failure','error','skipped'))
+          exe=next(x for x in Path('build/stage07-pop03').rglob('galaxy_wo2_industry_workforce_tests*') if x.is_file() and x.suffix in ('','.exe'))
+          with open('stage07-pop03-evidence/receipt.txt','w') as receipt:
+              receipt.write('source_head='+Path('stage07-pop03-evidence/source-sha.txt').read_text().strip()+'\n')
+              receipt.write('original_native_wo2_and_stage07=passed\n')
+              receipt.write('exe_sha256='+hashlib.sha256(exe.read_bytes()).hexdigest()+'\n')
+              receipt.write('owner_pc_or_release=not_tested\n')
+          PY
+      - name: Preserve original CTest and exact-byte provenance
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage07-pop03-native-${{ matrix.os }}-${{ github.sha }}
+          path: |
+            stage07-pop03-evidence/
+            build/stage07-pop03/Testing/Temporary/LastTest.log
+            build/stage07-pop03/Testing/Temporary/LastTestsFailed.log
+          retention-days: 14
