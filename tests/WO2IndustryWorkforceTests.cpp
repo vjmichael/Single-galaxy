@@ -1,6 +1,7 @@
 #include "galaxy/WO2WorkPrograms.hpp"
 #include "galaxy/WO2IndustryWorkforce.hpp"
 #include "galaxy/Stage07DelegatedLabor.hpp"
+#include "galaxy/Stage07SocietyEconomy.hpp"
 #include "galaxy/Persistence.hpp"
 #include <chrono>
 #include <filesystem>
@@ -78,6 +79,10 @@ int main() {
         s.enable_individual_workforce();
         initial_mass=s.total_material_kg();
         PersistentWorld w(db,std::move(s));
+        // Real immutable founding agenda is a legal boundary; it neither
+        // provides a fictional citizen nor authorizes autonomous jobs.
+        w.establish_colony_conflict_agenda(
+            92001,ship,1,colony_conflict::Agenda::Cooperative);
         applied(w,ship,1,Action::Mine,bulk,80);
         applied(w,ship,2,Action::RefineOre,0,80);
         applied(w,ship,3,Action::FabricateModule,0,20);
@@ -301,6 +306,20 @@ int main() {
         // Operator must produce REAL panels before shape practice is allowed.
         w.steps(8);
         CHECK(w.world().workshop(site)->panels_kg>=3);
+        {
+            const auto economy=stage7::assess_original_society(w,7,ship,site);
+            CHECK(economy.population.named_living==8);
+            CHECK(economy.effective_governance.leader_id==1);
+            CHECK(economy.economy.actual_workshop);
+            CHECK(economy.economy.operator_npc==first_id);
+            CHECK(economy.economy.cut_batches>0 &&
+                  economy.economy.panels_kg>=3);
+            CHECK(w.world().total_material_kg()==initial_mass);
+            bool refused_foreign=false;
+            try{(void)stage7::assess_original_society(w,8,ship,site);}
+            catch(const std::invalid_argument&){refused_foreign=true;}
+            CHECK(refused_foreign);
+        }
         for(std::uint64_t training_id=280;training_id<283;++training_id){
             auto training=workforce02::approved_original_trade_training(
                 w.world(),7,ship,site,second_id,WorkshopTrade::Shape,

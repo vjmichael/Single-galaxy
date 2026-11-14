@@ -2839,3 +2839,15 @@ if(BUILD_TESTING)
   set_tests_properties(galaxy_stage07_delegated_labor PROPERTIES TIMEOUT 180
     LABELS "stage07;original-world;delegated-labor;sqlite;real-production")
 endif()
+
+# Stage 7 POP-04: original citizen appraisal and independently verified
+# actual workshop material/skill economy, with existing governance authority.
+if(BUILD_TESTING)
+  add_executable(galaxy_stage07_society_economy_tests
+    tests/Stage07SocietyEconomyTests.cpp)
+  target_link_libraries(galaxy_stage07_society_economy_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_stage07_society_economy
+    COMMAND galaxy_stage07_society_economy_tests)
+  set_tests_properties(galaxy_stage07_society_economy PROPERTIES TIMEOUT 180
+    LABELS "stage07;autonomous-society;actual-economy;original-law;sqlite;recovery")
+endif()
