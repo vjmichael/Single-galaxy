@@ -1,0 +1,99 @@
+name: Stage 7 POP-01 original population and household native acceptance
+
+on:
+  push:
+    branches: [sg/stage6f5e-installed-terrain-recovery-20261112]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: stage07-pop01-native-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  original-population:
+    name: Original POP-01 SQLite native (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2022]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - name: Pin clean exact source SHA
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test -z "$(git status --porcelain)"
+          mkdir -p original-pop01-evidence
+          printf '%s\n' "$GITHUB_SHA" > original-pop01-evidence/source-sha.txt
+      - name: Provision native Linux SQLite SDK
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ninja-build libsqlite3-dev
+      - name: Provision native Windows SQLite SDK
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $root=$env:VCPKG_INSTALLATION_ROOT
+          if(-not $root){$root='C:\vcpkg'}
+          & (Join-Path $root 'vcpkg.exe') install sqlite3:x64-windows --classic
+          if($LASTEXITCODE -ne 0){throw 'Native Windows SQLite SDK provisioning failed'}
+          "SG_TOOLCHAIN=$(Join-Path $root 'scripts\buildsystems\vcpkg.cmake')" >> $env:GITHUB_ENV
+          (Join-Path $root 'installed\x64-windows\bin') >> $env:GITHUB_PATH
+      - name: Compile original native population and household test
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "$RUNNER_OS" = Windows ]; then
+            cmake -S . -B build/stage07-pop01 -G 'Visual Studio 17 2022' -A x64 \
+              "-DCMAKE_TOOLCHAIN_FILE=$SG_TOOLCHAIN" -DBUILD_TESTING=ON -DBUILD_BENCHMARKS=OFF
+          else
+            cmake -S . -B build/stage07-pop01 -G Ninja -DCMAKE_BUILD_TYPE=Release \
+              -DBUILD_TESTING=ON -DBUILD_BENCHMARKS=OFF
+          fi
+          cmake --build build/stage07-pop01 --target galaxy_stage07_population_household_tests \
+            --config Release --parallel 4
+      - name: Unchanged required native SQLite and independent-recovery test
+        shell: bash
+        run: |
+          set -euo pipefail
+          ctest --test-dir build/stage07-pop01 -C Release \
+            --output-on-failure --output-junit "$PWD/original-pop01-evidence/native-tests.xml" \
+            -R '^galaxy_stage07_population_households$' --timeout 120 \
+            | tee original-pop01-evidence/native-ctest.log
+          python - <<'PY'
+          import hashlib,pathlib,xml.etree.ElementTree as ET
+          source=pathlib.Path('original-pop01-evidence/source-sha.txt').read_text().strip()
+          cases=list(ET.parse('original-pop01-evidence/native-tests.xml').iter('testcase'))
+          assert len(cases)==1 and cases[0].get('name')=='galaxy_stage07_population_households'
+          assert all(c.find(t) is None for c in cases for t in ('failure','error','skipped'))
+          runner=pathlib.Path('build/stage07-pop01')
+          matches=list(runner.rglob('galaxy_stage07_population_household_tests*'))
+          exe=next(p for p in matches if p.is_file() and p.suffix in ('','.exe'))
+          with pathlib.Path('original-pop01-evidence/acceptance.txt').open('w') as out:
+              out.write(f'exact_head={source}\n')
+              out.write(f'native_test={cases[0].get("name")}\n')
+              out.write('native_status=passed\n')
+              out.write(f'executable_sha256={hashlib.sha256(exe.read_bytes()).hexdigest()}\n')
+              out.write('physical_pc_or_release_gate=not_run\n')
+          PY
+      - name: Preserve original native exact-source receipts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage07-pop01-native-${{ matrix.os }}-${{ github.sha }}
+          path: |
+            original-pop01-evidence/
+            build/stage07-pop01/Testing/Temporary/LastTest.log
+            build/stage07-pop01/Testing/Temporary/LastTestsFailed.log
+          retention-days: 21
