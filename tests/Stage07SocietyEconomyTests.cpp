@@ -21,7 +21,7 @@ int main(){
           std::chrono::steady_clock::now().time_since_epoch().count())));
     const auto path=root.string()+".sqlite",saved=path+".recovered";
     EntityId home=0;
-    std::uint64_t original_generation=0;
+    std::uint64_t original_generation=0,observed_named_npc=0;
     std::int64_t original_mass=0;
     try {
         {
@@ -66,14 +66,23 @@ int main(){
                   pulse.after.population.named_living);
             const auto again=stage7::observe_original_society(w,7,home,3);
             CHECK(again.observed.examined==3 && again.observed.observed==0);
-            CHECK(w.colony_personal_outlook(home,2).has_value());
+            // The original finite scheduler rotates a scan budget of 3
+            // across 11 eligible adults. There is no contractual promise
+            // that named NPC #2 is in this initial slice.
+            for(const auto& [id,npc]:w.world().npc_records()){
+                if(npc.home_ship==home && id!=1 &&
+                   w.colony_personal_outlook(home,id)){
+                    observed_named_npc=id;break;
+                }
+            }
+            CHECK(observed_named_npc!=0);
             original_generation=w.generation();
         }
         {
             PersistentWorld reopened(path,Simulation(8903));
             CHECK(reopened.generation()==original_generation);
             CHECK(reopened.world().total_material_kg()==original_mass);
-            CHECK(reopened.colony_personal_outlook(home,2).has_value());
+            CHECK(reopened.colony_personal_outlook(home,observed_named_npc).has_value());
             const auto facts=stage7::assess_original_society(reopened,7,home);
             CHECK(facts.population.named_living==12);
             CHECK(facts.effective_governance.leader_id==1);
@@ -83,7 +92,7 @@ int main(){
             PersistentWorld copy(saved,Simulation(8904));
             CHECK(copy.generation()==original_generation);
             CHECK(copy.world().total_material_kg()==original_mass);
-            CHECK(copy.colony_personal_outlook(home,2).has_value());
+            CHECK(copy.colony_personal_outlook(home,observed_named_npc).has_value());
             CHECK(stage7::assess_original_society(copy,7,home)
                   .population.named_living==12);
         }
