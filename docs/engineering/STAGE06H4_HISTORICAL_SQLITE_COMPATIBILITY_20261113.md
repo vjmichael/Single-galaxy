@@ -48,3 +48,36 @@ v85 by a clearly documented observation-only vintage test patch. The
 v85→v86 legal-home conversion remains in-memory only; **v86 historical
 saved SQLite is still unverified**. No user-PC, installed or Radeon
 testing is required for this engineering backlog.
+
+## 2026-11-13/14 — Original historical native producers: accepted subset vs open corpus
+
+The earlier statement that only v85 was source-produced describes the *initial*
+H4 inventory, before the new H4 original-source matrix. On GitHub Actions
+[run 43540889618](https://github.com/vjmichael/Single-galaxy/actions/runs/43540889618)
+at observer exact SHA `d0a0d774a2de6ad4ef33dfaaba8945a077a86c0e`,
+the native v128 producer (original `eb448b6735a6e90b20480b3ac5065e06f30ae1ad`)
+and v135 producer (original `8ccb4a37b76e6e1510ee3fa1751fc23a9cdbc685`)
+completed provenance, original CTests, captured SQLite integrity and the
+independent current-kernel replay checks. This does **not** verify every
+historical version 86–135 or establish a pass at a later observer SHA.
+
+The remaining six matrix cases failed their original CTests and MUST remain
+rejected until rerun unchanged after a demonstrated repair. Source-observed
+causes include rejected real housing-module transfer (v111/v118), pre-v109
+duplicate historical operation-log tick generation, absence of a naturally
+qualified pre-v109 planetary source region, a synthetic advanced-tick v118
+historical-writer seed and v111 invalid regional module custody. A captured
+SQLite file from a failed native test is **not accepted** merely because its
+header or checksum exists.
+
+The source-anchored shadow adapter has a finite-ore, real-`FabricateModule`
+fixture repair for the missing physical modules, plus fail-closed
+tick/generation/kind diagnostics for the old duplicate-generation rejection.
+These are original-code test observations, never production migrations. Preserve
+each historical detached checkout untouched; do not relax original assertions,
+replace original receipts, modify the saved version header or forge legal homes.
+
+The next exact-head historical producer matrix must independently reconfirm
+the previously passing v128/v135 and retest every remaining failure. The H4
+full historical corpus and release migration remain **OPEN**. Stage 7 may
+advance independently, as required by the feature-first ledger.
