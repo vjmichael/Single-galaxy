@@ -100,14 +100,14 @@ def patched(path):
             # Keep every original issuer, guardian, vessel and child check:
             # only allow this one same-ship host action to reach them.
             text=replace_one(text,
-                ('                c.action!=Action::Mine &&\n'
-                 '                c.action!=Action::StartMining &&\n'
-                 '                c.action!=Action::StopMining){'),
-                ('                c.action!=Action::Mine &&\n'
-                 '                c.action!=Action::StartMining &&\n'
-                 '                c.action!=Action::StopMining &&\n'
-                 '                !(c.action==Action::HostRegisterDependent &&\n'
-                 '                  c.actor==c.target && c.issuer==kServerAuthority)){'),
+                ('               c.action!=Action::Mine &&\n'
+                 '               c.action!=Action::StartMining &&\n'
+                 '               c.action!=Action::StopMining){'),
+                ('               c.action!=Action::Mine &&\n'
+                 '               c.action!=Action::StartMining &&\n'
+                 '               c.action!=Action::StopMining &&\n'
+                 '               !(c.action==Action::HostRegisterDependent &&\n'
+                 '                 c.actor==c.target && c.issuer==kServerAuthority)){'),
                 'real same-ship host child registration reaches strict guardian checks',edits)
             # Original v117+ serializer/parser already accounts for two real
             # planetary service projects, each consuming four embodied ore.
