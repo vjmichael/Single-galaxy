@@ -1,5 +1,13 @@
 # Engineering Handoff — 2026-10-31
 
+> **CURRENT PRIORITY OVERRIDE (2026-11-13):** This historical handoff
+> is retained for provenance; work priorities have moved to
+> [MASTER_TASK_LEDGER.md](MASTER_TASK_LEDGER.md).
+> Repository integration into a single `main` is P0. No new branches/PRs.
+> Windows/Linux CI is batched at completed integration-group boundaries
+> under [CI_TASK_GROUP_ACCEPTANCE_POLICY.md](CI_TASK_GROUP_ACCEPTANCE_POLICY.md).
+>
+
 ## Latest verified artifact
 
 `SingleGalaxy_B7_0n_Individual_Workforce_Cohorts_Source_Tests_2026-10-31.zip` is the baseline of this repository. It was extracted to its contents without changing its C++/JS program files for this documentation commit.

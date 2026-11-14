@@ -2,6 +2,28 @@
 
 **Adopted 2026-11-09 by repository owner direction.**
 
+## 2026-11-13 owner-directed convergence reset
+
+**The [master ledger](MASTER_TASK_LEDGER.md) on `main` is the authoritative
+work-order priority. P0 is repository integration/consolidation into ONE
+`main`, not new Stage7 PRs or individual CI repair tasks. Do not create new
+feature/integration branches or pull requests for ongoing Single-Galaxy
+groups. Preserve and reconcile existing branches and reviews.
+
+The task-group rule above is **literal**: intermediate source changes and
+fixes are not CI events. Batch related implementation changes and repair
+the failures found by local review. Only request a Windows/Linux gate when
+a meaningful end-to-end task group is actually complete; after a failing
+group gate, combine corrections and run the affected group once, not once
+per edit. Retain the final multi-group consolidated acceptance separately.
+All historic `[skip ci]` and source/receipt safeguards remain binding.
+
+The exact open PR dependency snapshot is
+[PR_CONVERGENCE_INVENTORY_20261113.tsv](PR_CONVERGENCE_INVENTORY_20261113.tsv).
+Before any deliberate merge, prove the reviewed head's unique source,
+retained original tests and resulting main SHA. Do not treat a PR chain
+of 114 drafts as 114 independent acceptance requests.
+
 ## Binding rule
 
 Run Windows/Linux GitHub Actions *acceptance gates at the end of each completed
