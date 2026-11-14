@@ -92,6 +92,23 @@ def patched(path):
                     'if(dependent.guardian_id==npc_id)return false;',
                     'v111 only has guardian_id; no co-guardian exists in this snapshot schema',edits)
             text=split_auto(text,edits)
+        if era=='v111-planet-housing':
+            # Original v111's planetary-site loader permits the real
+            # consumed two-module housing/utility phases, but its FINAL
+            # verifier still checks only the v77 bare-site mass. Align the
+            # final equality with installed physical projects (not a broad
+            # mass exemption); the original SQLite fields remain unchanged.
+            text=replace_one(text,
+                ('            if(site.embodied_ore!=4+4*(std::int64_t(site.farm)+\\n'
+                 '                                        std::int64_t(site.extractor)))\\n'
+                 '                throw std::runtime_error("snapshot: invalid regional module custody");'),
+                ('            const auto s6h4_expected_site_mass=4+4*(\\n'
+                 '                std::int64_t(site.farm)+std::int64_t(site.extractor)+\\n'
+                 '                std::int64_t(site.housing_phase!=0)+\\n'
+                 '                std::int64_t(site.utility_phase!=0));\\n'
+                 '            if(site.embodied_ore!=s6h4_expected_site_mass)\\n'
+                 '                throw std::runtime_error("snapshot: invalid regional module custody");'),
+                'v111 installed housing and utility mass final audit uses original physical project flags',edits)
         if era in ('v128-planetary-resource','v135-medical-atmosphere'):
             marker='            const bool genuine_station_visitor=[&](){\n'
             end_marker='            }();\n'
