@@ -62,6 +62,13 @@ def main(args):
         fail('original test executable missing')
     directory=Path(args.capture_dir)
     if not directory.is_dir():fail('capture directory missing')
+    adapter=json.loads(Path(args.adapter_manifest).read_text())
+    if (adapter.get('schema')!='SG-S6H4-VINTAGE-SHADOW-COMPILER-01' or
+        adapter.get('historical_commit')!=args.source_sha or
+        adapter.get('original_git_unchanged') is not True or
+        adapter.get('no_synthetic_snapshot_versions') is not True or
+        adapter.get('no_data_schema_rewrite') is not True):
+        fail('unattested historical compilation adapter')
     records=[]
     for f in sorted(directory.glob('v*-pid*.sqlite')):
         item=inspect(f)
@@ -73,7 +80,9 @@ def main(args):
                 source_git_status_clean=True,observer_binary_sha256=sha(observer),
                 native_test_binary_sha256={x.name:sha(x) for x in binaries},
                 original_executed_test_names=args.test_names,
-                instrumentation='LD_PRELOAD observes only successful sqlite3_exec(COMMIT) and independently copies original SQLite; original game and tests unchanged',
+                instrumentation='LD_PRELOAD observes successful sqlite3_exec(COMMIT); a SHA-attested shadow build applies only declared compiler repairs; the pinned original Git tree remains unchanged',
+                historical_compiler_adapter=adapter,
+                pristine_historical_executable=not adapter['compiled_using_adapter'],
                 saved_sqlite_artifacts=len(records),verified_historical_versions=known,
                 verified_native_sqlite_records=records,
                 complete_v86_v135_coverage=len(known)==50,
@@ -92,4 +101,5 @@ if __name__=='__main__':
     p.add_argument('--test-names',nargs='+',required=True)
     p.add_argument('--producer-executables',nargs='+',required=True)
     p.add_argument('--source-clean',action='store_true')
+    p.add_argument('--adapter-manifest',required=True)
     main(p.parse_args())
