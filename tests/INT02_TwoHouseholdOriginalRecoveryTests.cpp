@@ -5,11 +5,13 @@
 #include "galaxy/NpcAppearanceGenome.hpp"
 #include "galaxy/RegionalModeAuthority.hpp"
 #include "galaxy/ColonySafety.hpp"
+#include <sqlite3.h>
 #include <array>
 #include <chrono>
 #include <filesystem>
 #include <iostream>
 #include <stdexcept>
+#include <string>
 #include <vector>
 using namespace galaxy;
 namespace re=galaxy::regional_events;
@@ -17,6 +19,21 @@ namespace re=galaxy::regional_events;
 static void clean(const std::string& file){
     std::error_code ec;
     for(auto suffix:{"","-wal","-shm"})std::filesystem::remove(file+suffix,ec);
+}
+// Historical v74 one-ferry custody denial, adapted to the current atomic executor.
+// The read-only family audit MUST not authorize a second move of an in-flight
+// child merely because ART02 still records that child's last settled address.
+static void sql_fixture(const std::string& path,const std::string& statement){
+    sqlite3* raw=nullptr;
+    const int opened=sqlite3_open_v2(path.c_str(),&raw,SQLITE_OPEN_READWRITE,nullptr);
+    if(opened!=SQLITE_OK){sqlite3_close(raw);throw std::runtime_error("cannot open family fixture");}
+    char* error=nullptr;
+    const int executed=sqlite3_exec(raw,statement.c_str(),nullptr,nullptr,&error);
+    const std::string message=error?error:"";
+    sqlite3_free(error);
+    const int closed=sqlite3_close(raw);
+    if(executed!=SQLITE_OK)throw std::runtime_error("family fixture SQL: "+message);
+    CHECK(closed==SQLITE_OK);
 }
 int main(){
 try {
@@ -116,6 +133,34 @@ try {
         plan.receiver_colony="receiver";
         plan.member_event_ids={92401,92402,92403,92404,92405,92406};
         CHECK(world.audit_colony_family_departure(plan.family).ready_for_transaction);
+        // A child whose physical custody is an existing ferry voyage is not
+        // eligible for an atomic whole-household evacuation, irrespective of
+        // unmodified birth ledger, census, guardian or ship capacity.
+        const auto transit_generation=world.generation();
+        sql_fixture(db,"CREATE TABLE sg_dependent_travel ("
+            "child_id TEXT NOT NULL,status INTEGER NOT NULL,"
+            "destination TEXT NOT NULL,board_generation INTEGER NOT NULL)");
+        const auto child_text=std::to_string(children[1]);
+        sql_fixture(db,"INSERT INTO sg_dependent_travel VALUES ('"+
+            child_text+"',1,'"+std::to_string(destination)+"',2)");
+        const auto in_flight=world.audit_colony_family_departure(plan.family);
+        CHECK(!in_flight.ready_for_transaction && !in_flight.evacuated);
+        CHECK(in_flight.refusal.find("physically aboard or arrived elsewhere")!=std::string::npos);
+        // A forged 'arrived' status at the receiving ship is still not
+        // evidence of a return to the originating physical household.
+        sql_fixture(db,"UPDATE sg_dependent_travel SET status=2,"
+            "destination='"+std::to_string(destination)+"'");
+        const auto offsite=world.audit_colony_family_departure(plan.family);
+        CHECK(!offsite.ready_for_transaction && !offsite.evacuated);
+        // Only a recorded RETURN to the same source ends this blocking state.
+        sql_fixture(db,"UPDATE sg_dependent_travel SET destination='"+
+            std::to_string(source)+"'");
+        CHECK(world.audit_colony_family_departure(plan.family).ready_for_transaction);
+        sql_fixture(db,"DROP TABLE sg_dependent_travel");
+        CHECK(world.audit_colony_family_departure(plan.family).ready_for_transaction);
+        CHECK(world.generation()==transit_generation);
+        CHECK(world.world().children_physically_aboard(source)==2);
+        CHECK(world.world().total_material_kg()==conserved_material);
         auto omit_second_family=plan.family;
         omit_second_family.adult_ids={1,2};
         omit_second_family.children.pop_back();
