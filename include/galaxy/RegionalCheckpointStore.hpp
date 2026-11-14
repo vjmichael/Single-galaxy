@@ -31,6 +31,13 @@ public:
     CheckpointStore& operator=(const CheckpointStore&)=delete;
     std::optional<VersionedCheckpoint> load() const;
     const std::string& scope() const noexcept {return scope_;}
+    // WO5-E trusted-host provenance: bind independent authority and the
+    // original physical world audit to the exact SAME SQLite filename.
+    // Never exposes the writable sqlite3 connection to a client.
+    std::string database_path() const {
+        const auto* path=sqlite3_db_filename(db_,"main");
+        return path?std::string(path):std::string{};
+    }
     // Atomic optimistic update. Must pass the revision obtained from load(),
     // or zero only if no checkpoint exists. Includes pending notices and escrow.
     // Caller should only replace its in-memory committed state after success.
@@ -58,7 +65,8 @@ public:
         std::uint64_t expected_owner_generation,std::uint64_t tick,
         const std::string& origin,const std::string& destination,
         std::uint64_t origin_population,std::uint64_t destination_population,
-        const std::string& command_id,std::uint64_t person_count=1) const;
+        const std::string& command_id,std::uint64_t person_count=1,
+        const std::string& receipt_actor="society-migration-host") const;
     // Host-only primitive: apply a purely in-memory operation and write the
     // region checkpoint AND immutable command receipt in the SAME SQLite txn.
     // Caller must have already authenticated/authorized request via host policy.

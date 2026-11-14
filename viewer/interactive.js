@@ -1,38 +1,180 @@
 /* B4.3 live browser: no player IDs, target IDs or authority supplied by UI. */
 (function(){'use strict';
 let source=null,token=null, colonyMode=false;
+let assist=null,assistPending=false,latestProjection=null;
+let brake=null,brakePending=false;
+function brakeMessage(status){
+ const label=el('flightBrakeStatus'),button=el('flightBrake');
+ if(label)label.textContent=status;
+ if(button)button.textContent=brake?'Cancel braking (B)':'Brake to zero (B)';
+}
+function cancelBrake(status='Braking cancelled. Ship retains its real momentum.'){
+ brake=null;brakePending=false;brakeMessage(status);
+}
+function startBrake(){
+ if(brake){cancelBrake();return;}
+ cancelAssist('cancelled');
+ const frame=latestProjection, home=window.GalaxyColonyHomeShipId,
+       active=window.GalaxyActivePilotedShipId;
+ if(!token||!colonyMode||!frame){brakeMessage('Waiting for an authenticated live ship frame.');return;}
+ if(Number.isSafeInteger(active)&&Number.isSafeInteger(home)&&active!==home){
+    brakeMessage('Select your home ship to brake; another vessel has control.');return;
+ }
+ const ship=Number.isSafeInteger(home)&&home>0?frame.entities.get(home):
+   [...frame.entities.values()].find(e=>e.entityType===0&&e.owner===7);
+ if(!ship||ship.entityType!==0||ship.owner!==7){
+   brakeMessage('No verified owned ship in view. No thrust issued.');return;
+ }
+ const result=window.GalaxyFlightBrake.plan(ship,{
+   dockState:frame.docks.get(ship.id)?.state??0,
+   inTransition:!!frame.jumps?.get(ship.id)
+ });
+ if(result.status==='stopped'){brakeMessage('Ship stationary: 0 mm/tick.');return;}
+ if(result.status!=='thrust'){brakeMessage('Cannot brake: '+result.reason);return;}
+ brake={shipId:ship.id,sessionToken:token,lastTick:-1};
+ brakeMessage('Braking: counter-thrust commanded once per verified native tick.');
+ void updateBrake(frame);
+}
+async function updateBrake(frame){
+ const current=brake;
+ if(!current||brakePending||!token||current.sessionToken!==token)return;
+ if(window.GalaxyActivePilotedShipId&&window.GalaxyActivePilotedShipId!==current.shipId){
+   cancelBrake('Braking cancelled: active ship changed.');return;
+ }
+ const ship=frame.entities.get(current.shipId);
+ const result=window.GalaxyFlightBrake.plan(ship,{
+   dockState:frame.docks.get(current.shipId)?.state??0,
+   inTransition:!!frame.jumps?.get(current.shipId)
+ });
+ if(result.status==='stopped'){cancelBrake('Ship stationary: 0 mm/tick.');return;}
+ if(result.status!=='thrust'){cancelBrake('Braking paused: '+result.reason);return;}
+ if(frame.tick<=current.lastTick)return;
+ current.lastTick=frame.tick;brakePending=true;
+ const ok=await command('thrust',result.command.extra,true);
+ brakePending=false;
+ if(brake!==current)return;
+ if(!ok)cancelBrake('Braking paused: native thrust request rejected.');
+}
+
+function assistMessage(mode,description='destination'){
+ const label=el('assistStatus');
+ if(label)label.textContent=window.GalaxyTravelAssist?.statusText(mode,description)||mode;
+ if(el('assistCancel'))el('assistCancel').disabled=!assist;
+}
+window.GalaxyAssistNativeOutcome=outcome=>{if(assist&&outcome!=='APPLIED')cancelAssist('paused');if(brake&&outcome!=='APPLIED')cancelBrake('Braking paused: native command was not applied ('+outcome+').');};
+function cancelAssist(mode='cancelled'){
+ const old=assist;assist=null;assistPending=false;
+ if(old)assistMessage(mode,old.description);
+ else if(mode!=='cancelled')assistMessage(mode);
+}
+function startAssist(kind){
+ const frame=latestProjection;
+ if(!colonyMode||!token||!frame){message('Waiting for a verified live world frame.');return;}
+ const home=window.GalaxyColonyHomeShipId;
+ const active=window.GalaxyActivePilotedShipId;
+ if(Number.isSafeInteger(home)&&Number.isSafeInteger(active)&&
+    home!==active){
+   message('Mining/return assist belongs to the home colony. Use the fleet cockpit for freighter movement.');
+   return;
+ }
+ const player=active?
+   frame.entities.get(active):
+   [...frame.entities.values()].find(e=>e.entityType===0&&e.owner===7);
+ if(!player){message('Selected ship is not in this physical view.');return;}
+ let id,description;
+ if(kind==='rock'){
+   id=window.GalaxySelectedRockId;
+   if(!Number.isSafeInteger(id)||id<1){message('Scan and select an asteroid first.');return;}
+   description='scanned asteroid #'+id;
+ }else{
+   const cargo=window.GalaxyCargoReturn?.plan(frame,7,window.GalaxyColonyOutpostIds);
+   id=cargo?.site?.id;description='outpost #'+id;
+ }
+ const target=window.GalaxyTravelAssist?.target(frame,kind,id,window.GalaxyColonyOutpostIds);
+ if(!target||target.system!==player.system){
+   message('Travel target is not a verified, visible destination in this system.');return;
+ }
+ const dock=frame.docks.get(player.id)?.state??0;
+ if(dock!==0){message('Undock before using travel assist.');return;}
+ assist={kind,id,description,startedTick:frame.tick,lastTick:-1,sessionToken:token,shipId:player.id};
+ assistMessage('travel',description);
+}
+async function updateAssist(frame){
+ const current=assist;
+ if(!current||assistPending||!token||current.sessionToken!==token)return;
+ if(window.GalaxyActivePilotedShipId&&
+    current.shipId!==window.GalaxyActivePilotedShipId){
+   cancelAssist('paused');return;
+ }
+ const player=frame.entities.get(current.shipId);
+ const dest=window.GalaxyTravelAssist?.target(frame,current.kind,current.id,window.GalaxyColonyOutpostIds);
+ if(!player||!dest||player.owner!==7||player.system!==dest.system||
+    frame.tick-current.startedTick>window.GalaxyTravelAssist.MAX_TICKS){
+    cancelAssist('paused');return;
+ }
+ const dock=frame.docks.get(player.id)?.state??0;
+ const instruction=window.GalaxyTravelAssist.plan(player,dest,{
+   dockState:dock,jumpActive:!!frame.jumps?.get(player.id),tolerance:500
+ });
+ if(instruction.status==='arrived'){cancelAssist('arrived');return;}
+ if(instruction.status!=='thrust'){cancelAssist('paused');return;}
+ if(frame.tick<=current.lastTick)return;
+ // At most one queued native acceleration request for each committed frame.
+ current.lastTick=frame.tick;assistPending=true;
+ const accepted=await command('thrust',instruction.command.extra,true);
+ assistPending=false;
+ if(assist!==current)return;
+ if(!accepted)cancelAssist('paused');
+}
+window.GalaxyColonyMode=false;
+window.GalaxyFleetSelectionChanged=()=>{cancelAssist('paused');if(brake)cancelBrake('Braking cancelled: fleet selection changed.');};
 const el=id=>document.getElementById(id);
 const message=text=>{el('commandMessage').textContent=text;};
-async function command(action,extra={}){
- if(!token){message('No local session available');return;}
+async function command(action,extra={},assisted=false){
+ if(!assisted&&assist)cancelAssist('cancelled');
+ if(!assisted&&brake)cancelBrake();
+ if(!token){message('No local session available');return false;}
  try{
    const response=await fetch('/command',{method:'POST',headers:{'Content-Type':'application/json'},
      body:JSON.stringify({token,action,...extra})});
    const result=await response.json();
    if(!response.ok)throw new Error(result.error||'Command rejected');
-   message('Command queued (not yet committed); next simulation tick will decide.');
- }catch(ex){message('Command not accepted: '+ex.message);}
+   if(!assisted)message('Command queued (not yet committed); next simulation tick will decide.');
+   return true;
+ }catch(ex){message('Command not accepted: '+ex.message);return false;}
 }
 async function connect(){
+ cancelAssist('paused');cancelBrake('No automatic thrust. Connect to see ship speed.');latestProjection=null;
  if(source){source.close();source=null;}
+ window.GalaxyColonyMode=false;
+ window.GalaxyCyberControls?.reset();
+ window.GalaxySecurityDesk?.reset();
+ window.GalaxyResetExpedition?.();
  const bridge=window.GalaxyLiveBridge;bridge.reset();window.GalaxySurveyBridge?.reset();window.GalaxyColony?.reset();message('Connecting to one running local world…');
  try{
    const response=await fetch('/session',{cache:'no-store'});
    if(!response.ok)throw new Error('Session unavailable');
    const data=await response.json();token=data.token;window.GalaxyTickMs=data.tick_ms;
    colonyMode=!!data.colony_mode;
+   window.GalaxyColonyMode=colonyMode;
    el('qaPanel').hidden=!data.qa_mode;
    el('interactiveControls').hidden=colonyMode;
    el('surveyPanel').hidden=colonyMode;
    el('colonyPanel').hidden=!colonyMode;
+   el('flightCameraControls').hidden=!colonyMode;
+   if(colonyMode)window.GalaxyFlightCameraActions?.reset();
    document.querySelector('.view .help').textContent=colonyMode?
      'Colony start: one ship, 24 colonists, no prebuilt infrastructure. Scan, mine, refine, fabricate, and construct your first outpost.':
      'Legacy gated region: developer-only scenario fixtures.';
    source=new EventSource('/events');
    source.addEventListener('colony',e=>{
      if(!colonyMode)return;
-     try{window.GalaxyColony?.accept(atob(e.data));}
-     catch(ex){message('Colony telemetry rejected: '+ex.message);}
+     try{
+       const raw=atob(e.data);
+       if(!window.GalaxyCyberControls?.accept(raw) &&
+          !window.GalaxySecurityDesk?.accept(raw))
+         window.GalaxyColony?.accept(raw);
+     }catch(ex){message('Colony telemetry rejected: '+ex.message);}
    });
    source.addEventListener('survey',e=>{
      try{window.GalaxySurveyBridge?.accept(atob(e.data));}
@@ -42,9 +184,15 @@ async function connect(){
      try{bridge.accept(atob(e.data));}
      catch(ex){source.close();source=null;bridge.fail('Frame rejected: '+ex.message);}
    });
-   source.addEventListener('complete',()=>{bridge.complete();message('Run completed. Reconnect to review the finished world.');source.close();source=null;});
-   source.addEventListener('failed',e=>{bridge.fail('Host failed: '+e.data);source.close();source=null;if(e.data==='Session expired')window.GalaxyDisconnect?.();});
-   source.addEventListener('error',()=>{if(source){source.close();source=null;bridge.fail('Stream lost. Use Reconnect to replay and catch up.');}});
+   // The authenticated host enumerates real hulls; saved UI selection
+   // is never trusted until FLEET_SELECTED confirms it.
+   if(colonyMode){
+     void command('colonyFleetStatus',{},true);
+     void command('colonySecurityRefresh',{},true);
+   }
+   source.addEventListener('complete',()=>{cancelBrake('Host completed.');cancelAssist('paused');bridge.complete();message('Run completed. Reconnect to review the finished world.');source.close();source=null;});
+   source.addEventListener('failed',e=>{cancelBrake('Host failed; braking stopped.');cancelAssist('paused');bridge.fail('Host failed: '+e.data);source.close();source=null;if(e.data==='Session expired')window.GalaxyDisconnect?.();});
+   source.addEventListener('error',()=>{if(source){cancelBrake('Stream lost; cannot verify ship velocity.');cancelAssist('paused');source.close();source=null;bridge.fail('Stream lost. Use Reconnect to replay and catch up.');}});
    message(colonyMode?'Connected: colony ship in open space; no stations or gates.':'Connected: developer legacy world.');
  }catch(ex){bridge.fail(ex.message);message('Connection failed: '+ex.message);}
 }
@@ -72,9 +220,218 @@ for(const [id,action] of [['colonySafetyAssess','colonySafetyAssess'],['colonySa
    if(!Number.isSafeInteger(site)||site<1){message('Waiting for verified ship telemetry');return;}
    command(action,{site});
  });
+// PLAY-03: optional pilot shortcuts and mouse controls. Native host handles physics.
+for(const [id,x,y] of [['flightLeft',-1,0],['flightRight',1,0],
+  ['flightUp',0,-1],['flightDown',0,1],['flightDrift',0,0]])
+ el(id).addEventListener('click',()=>command('thrust',{x,y}));
+el('flightBrake').addEventListener('click',startBrake);
+el('flightYawLeft').addEventListener('click',()=>command('yaw',{delta:-15}));
+el('flightYawRight').addEventListener('click',()=>command('yaw',{delta:15}));
+for(const [id,act] of [
+ ['returnDock','colonyDockBase'],['returnUnload','colonyUnloadBase'],
+ ['returnLoad','colonyLoadBase'],['returnUndock','colonyUndockBase']
+])el(id).addEventListener('click',()=>command(act));
+let lastReturnShip=null;
+let expedition=window.GalaxyExpeditionFeedback?.initial();
+window.GalaxyResetExpedition=()=>{
+ expedition=window.GalaxyExpeditionFeedback?.initial();
+ el('expeditionMined').textContent='0 t';
+ el('expeditionDelivered').textContent='0 t';
+ el('expeditionTarget').textContent='—';
+ el('expeditionStatus').textContent='Waiting for committed ship and outpost state.';
+ el('expeditionOutcome').textContent='Awaiting an actual native result';
+};
+el('returnBrake').addEventListener('click',startBrake);
+for(const [id,method,arg] of [
+ ['cameraFollow','follow'],['cameraOverview','overview'],
+ ['cameraZoomIn','zoom',1.2],['cameraZoomOut','zoom',1/1.2],
+ ['cameraReset','reset']
+])el(id).addEventListener('click',()=>window.GalaxyFlightCameraActions?.[method]?.(arg));
+window.GalaxyTargetFeedback=text=>message(text);
+el('assistRock').addEventListener('click',()=>startAssist('rock'));
+el('assistHome').addEventListener('click',()=>startAssist('home'));
+el('assistCancel').addEventListener('click',()=>cancelAssist());
+el('salvageTarget').addEventListener('change',()=>{
+ el('salvageRecover').disabled=!el('salvageTarget').value;
+});
+el('salvageRecover').addEventListener('click',()=>{
+ const target=Number(el('salvageTarget').value);
+ if(!Number.isSafeInteger(target)||target<=0){message('Choose a reported physical wreck first.');return;}
+ command('colonySalvageWreck',{target,amount:6});
+});
+el('combatTarget').addEventListener('change',()=>{
+ el('combatFire').disabled=!el('combatTarget').value||el('combatCharges').textContent==='0';
+});
+el('combatFire').addEventListener('click',()=>{
+ const target=Number(el('combatTarget').value);
+ if(!Number.isSafeInteger(target)||target<=0){message('Choose a native training drone first.');return;}
+ command('colonyFireTraining',{target});
+});
+el('flightScan').addEventListener('click',()=>command('colonyScan'));
+el('droneTarget').addEventListener('change',()=>{
+ el('droneLaunch').disabled=!el('droneTarget').value;
+});
+el('droneLaunch').addEventListener('click',()=>{
+ const target=Number(el('droneTarget').value);
+ if(Number.isSafeInteger(target)&&target>0)command('colonyDroneLaunch',{target});
+});
+el('probeLaunch').addEventListener('click',()=>command('colonyProbeDeploy'));
+el('probeTarget').addEventListener('change',()=>{
+ const selected=el('probeTarget').value!=='';
+ el('probeSurvey').disabled=!selected;
+ el('probeRetrieve').disabled=!selected;
+ el('signatureFocus').disabled=el('signatureMode').value!=='anomaly'||!selected||!el('signatureTarget').value;
+ el('signatureCancel').disabled=!selected;
+});
+el('signatureTarget').addEventListener('change',()=>{
+ el('signatureFocus').disabled=el('signatureMode').value!=='anomaly'||!el('probeTarget').value||!el('signatureTarget').value;
+});
+el('probeSurvey').addEventListener('click',()=>{
+ const probe=Number(el('probeTarget').value);
+ if(Number.isSafeInteger(probe)&&probe>0)command('colonyProbeScan',{probe});
+});
+el('signatureMode').addEventListener('change',()=>{
+ const anomaly=el('signatureMode').value==='anomaly';
+ el('signatureRange').disabled=!anomaly;
+ el('signatureFocus').disabled=!anomaly||!el('probeTarget').value||!el('signatureTarget').value;
+ message(anomaly?'Anomaly scan: select a signature to investigate.':
+   'Catalogue and environmental readings are host-sourced metadata, not physical planets or active hazards.');
+});
+el('signatureScan').addEventListener('click',()=>{
+ const mode=el('signatureMode').value;
+ if(mode==='anomaly')command('colonySignatureScan',{rangeMm:Number(el('signatureRange').value)});
+ else if(mode==='celestial')command('colonyCelestialScan');
+ else if(mode==='environmental')command('colonyEnvironmentScan');
+});
+el('signatureFocus').addEventListener('click',()=>{
+ if(el('signatureMode').value!=='anomaly'){
+   message('Only anomaly focus is implemented in the native host.');return;
+ }
+ const probe=Number(el('probeTarget').value);
+ const signature=Number(el('signatureTarget').value);
+ if(!Number.isSafeInteger(probe)||probe<=0||
+    !Number.isSafeInteger(signature)||signature<=0){
+   message('Deploy a probe and select a detected signature first.');return;
+ }
+ command('colonyProbeFocus',{probe,signature});
+});
+el('signatureCancel').addEventListener('click',()=>{
+ const probe=Number(el('probeTarget').value);
+ if(!Number.isSafeInteger(probe)||probe<=0){
+   message('Select a deployed probe to cancel its mission.');return;
+ }
+ command('colonyProbeCancel',{probe});
+});
+el('probeRetrieve').addEventListener('click',()=>{
+ const probe=Number(el('probeTarget').value);
+ if(Number.isSafeInteger(probe)&&probe>0)command('colonyProbeRecover',{probe});
+});
+el('explorationScan').addEventListener('click',()=>command('colonyScan'));
+el('fitScanner').addEventListener('click',()=>command('colonyConfigureScanner',{mode:1}));
+el('unfitScanner').addEventListener('click',()=>command('colonyConfigureScanner',{mode:-1}));
+el('flightMine').addEventListener('click',()=>command('colonyMine',{amount:8}));
+el('flightMineSelected').addEventListener('click',()=>{
+ const id=Number(el('colonyRockTarget').value);
+ if(!Number.isSafeInteger(id)||id<=0){message('Scan and select a real asteroid first.');return;}
+ command('colonyMineTarget',{target:id,amount:8});
+});
+document.addEventListener('keydown',event=>{
+ if(!colonyMode||!token)return;
+ const active=document.activeElement;
+ const editable=!!active&&(active.isContentEditable||
+  ['INPUT','TEXTAREA','SELECT','BUTTON'].includes(active.tagName));
+ const mapped=window.GalaxyFlightControls?.flightInput(
+   event.key,editable,event.repeat,event.altKey,event.ctrlKey,event.metaKey);
+ if(!mapped)return;
+ event.preventDefault();
+ if(mapped.action==='brake')startBrake();
+ else command(mapped.action,mapped.extra);
+});
 window.onGalaxyLiveProjection=function(state){
- const ship=[...state.entities.values()].find(e=>e.entityType===0&&e.owner===7);
- if(!ship)return;
+ latestProjection=state;
+ if(colonyMode&&brake)void updateBrake(state);
+ if(colonyMode&&assist)void updateAssist(state);
+ const controlled=window.GalaxyActivePilotedShipId;
+ const ship=controlled?
+   state.entities.get(controlled):
+   [...state.entities.values()].find(e=>e.entityType===0&&e.owner===7);
+ if(!ship||ship.entityType!==0||ship.owner!==7)return;
+ const managingElsewhere=!!window.GalaxyColonyHomeShipId&&
+   ship.id!==window.GalaxyColonyHomeShipId;
+ const wreckId=Number(el('salvageTarget').value);
+ const wreck=Number.isSafeInteger(wreckId)&&wreckId>0?state.entities.get(wreckId):null;
+ if(wreck?.entityType===4){
+   const distance=Math.hypot(wreck.x-ship.x,wreck.y-ship.y);
+   const inRange=distance<=2500;
+   el('salvageRecover').disabled=managingElsewhere||!inRange||ship.cargo>=ship.capacity||
+     !(window.GalaxySalvageStock?.get(wreckId)>0);
+   el('salvageFeedback').textContent='Wreck #'+wreckId+' · '+Math.ceil(distance)+' mm away.'+
+      (inRange?' Within salvage reach.':' Pilot within 2,500 mm to recover stock.');
+ }
+ const combatId=Number(el('combatTarget').value);
+ const opponent=Number.isSafeInteger(combatId)&&combatId>0?state.entities.get(combatId):null;
+ if(opponent?.entityType===4){
+   el('combatFeedback').textContent='Training drone #'+combatId+' destroyed; physical wreck remains in the galaxy.';
+   el('combatFire').disabled=true;
+ }else if(opponent?.entityType===0){
+   const dist=Math.hypot(opponent.x-ship.x,opponent.y-ship.y);
+   el('combatFire').disabled=managingElsewhere||dist>12000||el('combatCharges').textContent==='0';
+ }
+ const nearby=[...state.entities.values()].filter(e=>
+   e.entityType===1 && e.system===ship.system);
+ const sorted=nearby.map(rock=>({rock,range:window.GalaxyFlightControls?.rockRange(ship,rock)}))
+   .filter(item=>item.range!==null).sort((a,b)=>a.range-b.range);
+ const first=sorted[0];
+ const speed=Math.hypot(ship.vx||0,ship.vy||0);
+ if(!brake)brakeMessage(speed>0?'Coasting at '+speed.toFixed(0)+' mm/tick. No thrust is being applied; use Brake to zero (B).':'Ship stationary: 0 mm/tick. No automatic thrust.');
+ el('flightTelemetry').textContent=
+   'Piloting ship #'+ship.id+(managingElsewhere?' · managing home colony remotely':' · home colony')+
+   ' · Position '+ship.x.toLocaleString()+', '+ship.y.toLocaleString()+
+   ' · speed '+speed.toFixed(0)+' mm/tick'+
+   (first?' · nearest visible asteroid #'+first.rock.id+
+      ' at '+first.range.toFixed(0)+' mm':' · no asteroid currently visible');
+ const chosen=Number(el('colonyRockTarget').value);
+ const selected=Number.isSafeInteger(window.GalaxySelectedRockId)&&window.GalaxySelectedRockId>0?
+   window.GalaxySelectedRockId:(Number.isSafeInteger(chosen)&&chosen>0?chosen:null);
+ const mine=window.GalaxyExpeditionFeedback?.target(ship,nearby,selected);
+ el('assistRock').disabled=!colonyMode||managingElsewhere||!selected||!window.GalaxyTravelAssist?.target(
+    state,'rock',selected,window.GalaxyColonyOutpostIds);
+ const docked=state.docks.get(ship.id)?.state??0;
+ const home=window.GalaxyCargoReturn?.plan(state,7,window.GalaxyColonyOutpostIds)?.site;
+ el('assistHome').disabled=!colonyMode||managingElsewhere||!home||docked!==0;
+ el('expeditionTarget').textContent=mine?
+   '#'+mine.id+' · '+Math.ceil(mine.distance).toLocaleString()+' mm · '+mine.ore.toLocaleString()+' t visible ore':
+   'No mineable asteroid currently visible';
+ const cargo=window.GalaxyCargoReturn?.plan(state,7,window.GalaxyColonyOutpostIds);
+ lastReturnShip=ship;
+ if(cargo?.site && window.GalaxyExpeditionFeedback){
+   const homeBay=cargo.bayOre;
+   const valid=Number.isSafeInteger(homeBay)&&Number.isSafeInteger(ship.cargo)&&
+     Number.isSafeInteger(state.tick);
+   if(valid){
+     expedition=window.GalaxyExpeditionFeedback.advance(expedition,{
+       tick:state.tick,hold:ship.cargo,bay:homeBay,home:cargo.site.id,
+       docked:cargo.dockState===1&&state.docks.get(ship.id)?.station===cargo.site.id
+     });
+     el('expeditionMined').textContent=expedition.mined+' t';
+     el('expeditionDelivered').textContent=expedition.delivered+' t';
+     el('expeditionStatus').textContent=window.GalaxyExpeditionFeedback.status(expedition);
+   }
+ }else if(cargo?.ready){
+   el('expeditionStatus').textContent='No player-built home outpost visible. Complete your first settlement before a full cargo-return expedition.';
+ }
+ if(cargo){
+   el('returnTelemetry').textContent=cargo.message+
+     (cargo.site?' Direction to home: ΔX '+cargo.dx.toFixed(0)+' mm, ΔY '+cargo.dy.toFixed(0)+' mm.':'');
+   el('returnHold').textContent=cargo.ready?ship.cargo+' t':'—';
+   el('returnBay').textContent=cargo.site?cargo.bayOre+' t':'—';
+   for(const [id,ready] of [['returnDock',cargo.canDock],
+     ['returnUnload',cargo.canUnload],['returnLoad',cargo.canLoad],
+     ['returnUndock',cargo.canUndock]])
+     el(id).disabled=!colonyMode||managingElsewhere||!ready;
+   el('returnBrake').disabled=!colonyMode||managingElsewhere||
+     !(ship.vx||ship.vy)||cargo.dockState!==0;
+ }
  const docking=state.docks.get(ship.id)?.state||0;
  el('undock').disabled=docking!==1;
  // Leave Dock enabled in open space, even when distant/moving, so authoritative
@@ -96,12 +453,16 @@ window.onGalaxyLiveProjection=function(state){
 window.GalaxyColonyCommand=command;
 window.GalaxyReconnect=connect;
 window.GalaxyDisconnect=()=>{
+ cancelBrake('Signed out; automatic braking cancelled.');cancelAssist('paused');latestProjection=null;
+ lastReturnShip=null;
  if(source){source.close();source=null;}token=null;
- window.GalaxyLiveBridge?.reset();window.GalaxyColony?.reset();window.GalaxySurveyBridge?.reset();
+ colonyMode=false;window.GalaxyColonyMode=false;
+ window.GalaxyLiveBridge?.reset();window.GalaxyColony?.reset();window.GalaxyCyberControls?.reset();window.GalaxySecurityDesk?.reset();window.GalaxySurveyBridge?.reset();
  el('interactiveControls').hidden=true;el('colonyPanel').hidden=true;el('surveyPanel').hidden=true;
+ el('flightCameraControls').hidden=true;
  el('qaPanel').hidden=true;
  message('Signed out. Colony world data is no longer available in this session.');
 };
-window.addEventListener('beforeunload',()=>{if(source)source.close();});
+window.addEventListener('beforeunload',()=>{cancelBrake('Page closed.');cancelAssist('paused');if(source)source.close();});
 connect();
 })();

@@ -19,6 +19,8 @@ struct SocietyMedicalProjection {
     std::uint64_t medically_unavailable=0,traveling=0,affected_dependents=0;
     std::array<std::uint64_t,3> ready_workers{{0,0,0}};
     std::array<std::uint64_t,3> assigned_workers{{0,0,0}};
+    // v86 surface workforce counts do not masquerade as ship/habitat jobs.
+    std::uint64_t ready_planetary_workers=0,assigned_planetary_workers=0;
     // Recomputed from authoritative snapshots, never stored as people.
     bool reconciled=false;
 };

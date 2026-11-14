@@ -1,0 +1,27 @@
+# DOCK-07 — Unified Colony-Local Industrial Inventory and Manufacturing Services
+
+**Date:** November 11, 2026. **Status:** Source staged; compiler, native runtime, installed Windows and owner acceptance remain OPEN. No routine CI, PR, merge or release submission.
+
+## Implemented on the DOCK development branch
+
+The existing **I** colony panel remains the only local interface, and the original Simulation/PersistentWorld and SQLite remain the only inventory/manufacturing authority. There is **no galaxy-wide player inventory** and no new persistence table for stock.
+
+- **Physical custody projection:** include/galaxy/ColonyIndustrialService.hpp projects native current-station owner hangar ore, source-tagged refinery mineral kg, installed workshop aluminum/panels/frames/scrap buffers, constructed warehouse goods and individual original bins, and reserved network escrow (visibly reserved, not available stock). A physically docked, owned founding ship exposes its real goods and its *discrete* finite construction-module count, labeled as items, not kg. No row is added without a real original stock source, and at most 64 rows are presented.
+- **Original locality:** the selected station must be the physically present PlayerPerson station, a real Station entity and original constructed outpost; the constructed source ship must be a real colony ship owned by that player, and any workshop/storage must share the exact original site/founding-ship identity. Invalid owner/site and remote station are refused; no client-selected arbitrary site gains authority.
+- **Native one-use operations:** src/desktop_station_host.cpp exposes INDVIEW, INDAPPROVE, INDSTEP, INDMOVE under the existing exclusive native writer, person/session/generation/replay/rate guards. All effects use the original PersistentWorld submit/step, applied Event and journal/source ledger. There is no second inventory writer or detached worker.
+- **Real bounded manufacturing:** INDAPPROVE delegates to the existing original workforce02 approved_workshop_job, only for 1 batch of native_cut_aluminum_panel (20 kg real aluminum to 19 kg panels and 1 kg scrap) or native_shape_aluminum_frame (20 kg panels to 19 kg frames and 1 kg scrap). An actual existing supervised original workshop is required. INDSTEP advances one explicit native simulation tick against an already active original work program. Original workforce, shift, machine, energy, material, capacity and output buffers remain authoritative.
+- **Physical local logistics:** INDMOVE sends original Action::TransferStorageStack with fixed selectors, masses and original site/hull: 20 kg ship aluminum to main warehouse; 20 kg warehouse aluminum to workshop; 19 kg workshop panels to warehouse; 19 kg workshop frames to warehouse; or 1 kg workshop scrap to warehouse. Only a real, owned founding hull physically docked at this station with a real workshop and storage may request it; native cargo, volume, action and durable receipt determine success or refusal.
+- **One existing UI:** Godot native_station_session.gd validates the new IHEAD/ISTOCK/IJOB/IEND readback by exact session, request, station, tick, generation and bounded source rows/job count, without a UI-side stock ledger. main.gd wires the original native commands. refinery_terminal_ui.gd displays original dock/ore/refinery alongside workshop, bins, construction modules, source-bound labor and finished materials, with explicit buttons and conservative disabled states. The panel requests industrial readback after its original COLVIEW, without overlapping the writer.
+- **Staged test:** tests/Dock07ColonyIndustryTests.cpp and CMake galaxy_dock07_local_industry stage a source-proven outpost/workshop/storage, finite raw mining and geological aluminum, two 20 kg native physical transfers, local ownership isolation, missing-supervisor refusal, read-only conservation, SQLite reopen and source-frame equality. **Not yet executed.**
+
+## Deferred and intentionally NOT fabricated
+
+Station-refinery concentrates such as mineral/nickel_iron are not automatically eligible as good/aluminum manufacturing feed. The INDUSTRY-01 candidate catalogue is not an executable recipe registry; no substitute transmutation or fictitious drill is permitted. The only permitted jobs are original installed native panel/frame trades with original workforce and utility requirements.
+
+Full original-world workforce supervisor appointment, training, shift renewal, plant construction/power/maintenance orchestration and arbitrary warehouse-bin routing are not yet connected as production-ready one-click colony operations. Other native industry/cold-region logistics remain independent and require a separate physical custody bridge. A new/unbuilt test station cannot manufacture by pressing a button without first building and staffing a real plant and obtaining legitimate aluminum stock.
+
+## Final acceptance still open
+
+Run one later consolidated native compiler/test batch and installed Windows/Godot acceptance: wrong owner and remote colony denial, local ship/warehouse/workshop stock conservation, original journal exact events and fault/restart evidence, manufactured panel/frame/scrap with real NPCs and power, native session parser and on-foot colony panel. Do not claim anything has passed until real results are inspected. This group does not authorize a PR merge or main/release promotion.
+
+**Engineering handoff:** DOCK-07 source can be parked while continuing development; source/installed acceptance remains open.

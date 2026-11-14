@@ -17,10 +17,10 @@ else()
     find_package(SQLite3 REQUIRED)
     message(STATUS "Using OS SQLite SDK (amalgamation not present)")
 endif()
-add_library(galaxy_kernel STATIC src/Simulation.cpp src/ColonyResilience.cpp
+add_library(galaxy_kernel STATIC src/PlanetaryAgriculture.cpp src/Simulation.cpp src/PlanetarySurfaceMovement.cpp src/DockWorkforce.cpp src/ColonyResilience.cpp
   src/ColonyRecovery.cpp src/ColonyPolicy.cpp src/PopulationCohorts.cpp
-    src/ColonyWaterSupply.cpp src/Persistence.cpp src/EconomyPrototype.cpp src/QuantifiedProduction.cpp src/Inventory.cpp src/InventoryLogistics.cpp src/FactoryLayout.cpp src/BlueprintConstruction.cpp src/HostBlueprintRegistry.cpp src/ClientContract.cpp src/Galaxy.cpp src/Navigation.cpp src/GateTransit.cpp src/Region.cpp
-  src/ColdColonyNeeds.cpp src/MacroNeeds.cpp src/ColonySafety.cpp src/NpcAppearanceGenome.cpp src/MedicalSocietyBridge.cpp src/DependentIncidentAccounting.cpp src/DependentIncidentJournal.cpp src/DependentGuardianship.cpp src/SplitRescueIntent.cpp src/RegionalCheckpointStore.cpp src/RegionalPopulationAudit.cpp src/RegionalEventScheduler.cpp src/RegionalModeAuthority.cpp src/RegionalFactoryHandoff.cpp src/RegionalProductionNetwork.cpp src/RegionalShipmentReconciliation.cpp src/ShipmentManifest.cpp src/ThirdPartyShipment.cpp src/CanonicalShippingHost.cpp src/ShipmentStatusView.cpp
+    src/ColonyWaterSupply.cpp src/Persistence.cpp src/NativeCellProcessRunner.cpp src/EconomyPrototype.cpp src/QuantifiedProduction.cpp src/Industry01Catalog.generated.cpp src/WO2ProfessionCatalog.generated.cpp src/Inventory.cpp src/InventoryLogistics.cpp src/FactoryLayout.cpp src/BlueprintConstruction.cpp src/HostBlueprintRegistry.cpp src/ClientContract.cpp src/Galaxy.cpp src/Navigation.cpp src/GateTransit.cpp src/Region.cpp
+  src/ColdColonyNeeds.cpp src/MacroNeeds.cpp src/ColonySafety.cpp src/ColonySafetyJournal.cpp src/ColonySafetyNotice.cpp src/ColonyDefense.cpp src/ColonyConflict.cpp src/TerritoryJournal.cpp src/CyberIncidentJournal.cpp src/ColonyEvacuation.cpp src/ColonyFamilyDeparture.cpp src/NpcAppearanceGenome.cpp src/MedicalSocietyBridge.cpp src/DependentIncidentAccounting.cpp src/DependentIncidentJournal.cpp src/DependentGuardianship.cpp src/SplitRescueIntent.cpp src/RegionalCheckpointStore.cpp src/RegionalPopulationAudit.cpp src/RegionalEventScheduler.cpp src/RegionalModeAuthority.cpp src/RegionalFactoryHandoff.cpp src/RegionalProductionNetwork.cpp src/RegionalShipmentReconciliation.cpp src/ShipmentManifest.cpp src/ThirdPartyShipment.cpp src/CanonicalShippingHost.cpp src/ShipmentStatusView.cpp
   src/RegionalHostCommands.cpp src/RegionalInterestManager.cpp src/RegionalCustodyLedger.cpp src/RegionalPersistentWorldBridge.cpp)
 target_include_directories(galaxy_kernel PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(galaxy_kernel PUBLIC SQLite::SQLite3)
@@ -83,6 +83,19 @@ target_link_libraries(galaxy_live_scenario_host PRIVATE galaxy_kernel)
 # B4.3 local command-capable development process: all world writes remain in C++.
 add_executable(galaxy_interactive_host src/interactive_host.cpp)
 target_link_libraries(galaxy_interactive_host PRIVATE galaxy_kernel)
+
+# FP3D-02B.0 opt-in direct desktop C++ view, no browser or Python relay.
+# Child stdin is intentionally ignored: no game command authority exposed yet.
+add_executable(galaxy_desktop_readonly_host src/desktop_readonly_host.cpp)
+target_link_libraries(galaxy_desktop_readonly_host PRIVATE galaxy_kernel)
+if(BUILD_TESTING)
+  find_package(Python3 COMPONENTS Interpreter QUIET)
+  if(Python3_Interpreter_FOUND)
+    add_test(NAME galaxy_fp3d02b_native_desktop_readonly
+      COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/FP3D02B_ReadonlyDesktopPipeTests.py
+              $<TARGET_FILE:galaxy_desktop_readonly_host>)
+  endif()
+endif()
 
 # B5 game-start station, undock/dock lifecycle and private local hangar acceptance.
 if(BUILD_TESTING)
@@ -890,4 +903,2031 @@ if(BUILD_TESTING)
       --bridge $<TARGET_FILE:galaxy_shipping_status_bridge>)
     set_tests_properties(galaxy_colony_auto04b_authenticated_relay PROPERTIES TIMEOUT 35)
   endif()
+endif()
+
+# COLONY-AUTO-04D.2: threshold notices share the single durable world writer.
+if(BUILD_TESTING)
+    add_executable(galaxy_colony_auto04d2_tests tests/COLONY_AUTO04D2_DurableResponseTests.cpp)
+    target_link_libraries(galaxy_colony_auto04d2_tests PRIVATE galaxy_kernel)
+    add_test(NAME galaxy_colony_auto04d2_durable_response COMMAND galaxy_colony_auto04d2_tests)
+endif()
+
+# COLONY-AUTO-04D.3: individual NPC emergency outbox and durable delivery.
+if(BUILD_TESTING)
+    add_executable(galaxy_colony_auto04d3_tests tests/COLONY_AUTO04D3_NpcNoticeTests.cpp)
+    target_link_libraries(galaxy_colony_auto04d3_tests PRIVATE galaxy_kernel)
+    add_test(NAME galaxy_colony_auto04d3_npc_notice COMMAND galaxy_colony_auto04d3_tests)
+endif()
+
+if(BUILD_TESTING)
+    add_executable(galaxy_colony_auto04d3_repair_tests tests/COLONY_AUTO04D3_PhysicalRepairTests.cpp)
+    target_link_libraries(galaxy_colony_auto04d3_repair_tests PRIVATE galaxy_kernel)
+    add_test(NAME galaxy_colony_auto04d3_physical_repair COMMAND galaxy_colony_auto04d3_repair_tests)
+endif()
+
+# AUTO-04D3E: actual rescue-ferry physical passenger custody, not whole-colony evacuation.
+if(BUILD_TESTING)
+    add_executable(galaxy_colony_auto04d3_ferry_tests tests/COLONY_AUTO04D3_FerryRescueTests.cpp)
+    target_link_libraries(galaxy_colony_auto04d3_ferry_tests PRIVATE galaxy_kernel)
+    add_test(NAME galaxy_colony_auto04d3_ferry_rescue COMMAND galaxy_colony_auto04d3_ferry_tests)
+endif()
+
+# COLONY-AUTO-04D.4: cargo and named passenger life support custody.
+if(BUILD_TESTING)
+    add_executable(galaxy_colony_auto04d4_custody_tests tests/COLONY_AUTO04D4_ResourceCustodyTests.cpp)
+    target_link_libraries(galaxy_colony_auto04d4_custody_tests PRIVATE galaxy_kernel)
+    add_test(NAME galaxy_colony_auto04d4_resource_custody COMMAND galaxy_colony_auto04d4_custody_tests)
+endif()
+
+# AUTO-04D4B: whole-colony roster and physical receiving capacity survey.
+if(BUILD_TESTING)
+    add_executable(galaxy_colony_auto04d4_manifest_tests tests/COLONY_AUTO04D4_DepartureManifestTests.cpp)
+    target_link_libraries(galaxy_colony_auto04d4_manifest_tests PRIVATE galaxy_kernel)
+    add_test(NAME galaxy_colony_auto04d4_departure_manifest COMMAND galaxy_colony_auto04d4_manifest_tests)
+endif()
+
+# AUTO-04D.4C: full bounded-adult colony departure, durable v58 replay.
+if(BUILD_TESTING)
+    add_executable(galaxy_colony_auto04d4c_departure_tests tests/COLONY_AUTO04D4C_AtomicDepartureTests.cpp)
+    target_link_libraries(galaxy_colony_auto04d4c_departure_tests PRIVATE galaxy_kernel)
+    add_test(NAME galaxy_colony_auto04d4c_atomic_departure COMMAND galaxy_colony_auto04d4c_departure_tests)
+endif()
+
+if(BUILD_TESTING)
+    add_executable(galaxy_colony_auto04d4c_staffed_tests tests/COLONY_AUTO04D4C_StaffedColonyDepartureTests.cpp)
+    target_link_libraries(galaxy_colony_auto04d4c_staffed_tests PRIVATE galaxy_kernel)
+    add_test(NAME galaxy_colony_auto04d4c_staffed_colony COMMAND galaxy_colony_auto04d4c_staffed_tests)
+endif()
+
+# 04D.4D1: real ART02 birth/guardian/census closure, no phantom child rescue.
+if(BUILD_TESTING)
+    add_executable(galaxy_colony_auto04d4d_family_tests tests/COLONY_AUTO04D4D_FamilyProofTests.cpp)
+    target_link_libraries(galaxy_colony_auto04d4d_family_tests PRIVATE galaxy_kernel)
+    add_test(NAME galaxy_colony_auto04d4d_family_proof COMMAND galaxy_colony_auto04d4d_family_tests)
+endif()
+
+# AUTO-04D.4D2A: ART02 born-child physical occupancy, local needs and replay.
+if(BUILD_TESTING)
+    add_executable(galaxy_colony_auto04d4d2_physical_tests tests/COLONY_AUTO04D4D2_PhysicalDependentTests.cpp)
+    target_link_libraries(galaxy_colony_auto04d4d2_physical_tests PRIVATE galaxy_kernel)
+    add_test(NAME galaxy_colony_auto04d4d2_physical_dependents COMMAND galaxy_colony_auto04d4d2_physical_tests)
+endif()
+
+# AUTO-04D.4D2B1: native all-person colony transfer of physical dependents.
+if(BUILD_TESTING)
+    add_executable(galaxy_colony_auto04d4d2b_native_family_tests tests/COLONY_AUTO04D4D2B_NativeFamilyTransferTests.cpp)
+    target_link_libraries(galaxy_colony_auto04d4d2b_native_family_tests PRIVATE galaxy_kernel)
+    add_test(NAME galaxy_colony_auto04d4d2b_native_family COMMAND galaxy_colony_auto04d4d2b_native_family_tests)
+endif()
+
+# AUTO-04D.4D2B2: one actual SQLite world + ART02 + ECON03 family departure.
+if(BUILD_TESTING)
+    add_executable(galaxy_colony_auto04d4d2b2_atomic_family_tests tests/COLONY_AUTO04D4D2B2_AtomicFamilyTests.cpp)
+    target_link_libraries(galaxy_colony_auto04d4d2b2_atomic_family_tests PRIVATE galaxy_kernel)
+    add_test(NAME galaxy_colony_auto04d4d2b2_atomic_family COMMAND galaxy_colony_auto04d4d2b2_atomic_family_tests)
+endif()
+
+# AUTO-04D.4D2C: multiple physical children and independent guardian custody
+# across a real interrupted cold/detailed region handoff.
+if(BUILD_TESTING)
+    add_executable(galaxy_colony_auto04d4d2c_mixed_guardians_tests
+        tests/COLONY_AUTO04D4D2C_MixedGuardiansFaultMatrixTests.cpp)
+    target_link_libraries(galaxy_colony_auto04d4d2c_mixed_guardians_tests PRIVATE galaxy_kernel)
+    add_test(NAME galaxy_colony_auto04d4d2c_mixed_guardians
+        COMMAND galaxy_colony_auto04d4d2c_mixed_guardians_tests)
+endif()
+
+# AUTO-04D.5A: observed NPC leader and real multi-recipient autonomous rescue
+# admission, with the existing v76 one-transaction family execution.
+if(BUILD_TESTING)
+    add_executable(galaxy_colony_auto04d5a_autonomous_emergency_tests
+        tests/COLONY_AUTO04D5A_AutonomousEmergencyTests.cpp)
+    target_link_libraries(galaxy_colony_auto04d5a_autonomous_emergency_tests PRIVATE galaxy_kernel)
+    add_test(NAME galaxy_colony_auto04d5a_autonomous_emergency
+        COMMAND galaxy_colony_auto04d5a_autonomous_emergency_tests)
+endif()
+
+# AUTO-04D.5B: host-loop NPC alert consumption and SQLite-only rescue replay.
+if(BUILD_TESTING)
+    add_executable(galaxy_colony_auto04d5b_durable_supervisor_tests
+        tests/COLONY_AUTO04D5B_DurableSupervisorTests.cpp)
+    target_link_libraries(galaxy_colony_auto04d5b_durable_supervisor_tests PRIVATE galaxy_kernel)
+    add_test(NAME galaxy_colony_auto04d5b_durable_supervisor
+        COMMAND galaxy_colony_auto04d5b_durable_supervisor_tests)
+endif()
+
+# AUTO-04D.5C1: physical emergency habitat supply from staffed colony ship.
+if(BUILD_TESTING)
+    add_executable(galaxy_colony_auto04d5c1_npc_resupply_tests
+        tests/COLONY_AUTO04D5C1_NpcResupplyTests.cpp)
+    target_link_libraries(galaxy_colony_auto04d5c1_npc_resupply_tests PRIVATE galaxy_kernel)
+    add_test(NAME galaxy_colony_auto04d5c1_npc_resupply
+        COMMAND galaxy_colony_auto04d5c1_npc_resupply_tests)
+endif()
+
+# DEF-01A: local crew watch evidence; not a weapon or attack simulation.
+if(BUILD_TESTING)
+    add_executable(galaxy_colony_defense01a_watch_tests
+        tests/COLONY_DEFENSE01A_LocalWatchTests.cpp)
+    target_link_libraries(galaxy_colony_defense01a_watch_tests PRIVATE galaxy_kernel)
+    add_test(NAME galaxy_colony_defense01a_local_watch
+        COMMAND galaxy_colony_defense01a_watch_tests)
+endif()
+
+# CONFLICT-01A: emerging aggression from real NPC agendas and witnessed targets.
+if(BUILD_TESTING)
+    add_executable(galaxy_colony_conflict01a_aggressive_intent_tests
+        tests/COLONY_CONFLICT01A_AggressiveIntentTests.cpp)
+    target_link_libraries(galaxy_colony_conflict01a_aggressive_intent_tests PRIVATE galaxy_kernel)
+    add_test(NAME galaxy_colony_conflict01a_aggressive_intent
+        COMMAND galaxy_colony_conflict01a_aggressive_intent_tests)
+endif()
+
+# CONFLICT-01B1: one real event can generate different subjective colony
+# relationships; later real incidents revise that score without altering facts.
+if(BUILD_TESTING)
+    add_executable(galaxy_colony_conflict01b1_grievance_tests
+        tests/COLONY_CONFLICT01B1_GrievanceBeliefTests.cpp)
+    target_link_libraries(galaxy_colony_conflict01b1_grievance_tests PRIVATE galaxy_kernel)
+    add_test(NAME galaxy_colony_conflict01b1_grievance
+        COMMAND galaxy_colony_conflict01b1_grievance_tests)
+endif()
+
+# CONFLICT-01B2: epoch-fenced diplomatic strategy never rewrites historical intent.
+if(BUILD_TESTING)
+    add_executable(galaxy_colony_conflict01b2_diplomacy_epoch_tests
+        tests/COLONY_CONFLICT01B2_DiplomacyEpochTests.cpp)
+    target_link_libraries(galaxy_colony_conflict01b2_diplomacy_epoch_tests PRIVATE galaxy_kernel)
+    add_test(NAME galaxy_colony_conflict01b2_diplomacy_epoch
+        COMMAND galaxy_colony_conflict01b2_diplomacy_epoch_tests)
+endif()
+
+# CONFLICT-01B3: physical NPC governance succession and historical intent replay.
+if(BUILD_TESTING)
+    add_executable(galaxy_colony_conflict01b3_governance_tests
+        tests/COLONY_CONFLICT01B3_GovernanceEpochTests.cpp)
+    target_link_libraries(galaxy_colony_conflict01b3_governance_tests PRIVATE galaxy_kernel)
+    add_test(NAME galaxy_colony_conflict01b3_governance
+        COMMAND galaxy_colony_conflict01b3_governance_tests)
+endif()
+
+# EXIT-01A: individual real-NPC critical survival pressure, never an election.
+if(BUILD_TESTING)
+    add_executable(galaxy_colony_exit01a_survival_tests
+        tests/COLONY_EXIT01A_SurvivalPressureTests.cpp)
+    target_link_libraries(galaxy_colony_exit01a_survival_tests PRIVATE galaxy_kernel)
+    add_test(NAME galaxy_colony_exit01a_survival
+        COMMAND galaxy_colony_exit01a_survival_tests)
+endif()
+
+# EXIT-01B: real player-owner-accepted NPC immigration with existing
+# HostEmbarkPassengers / HostDisembarkPassengers / HostSettleMigrant and
+# atomic native ART02 + ECON03 society and workforce settlement.
+if(BUILD_TESTING)
+    add_executable(galaxy_colony_exit01b_immigration_tests
+        tests/COLONY_EXIT01B_PhysicalVoluntaryImmigrationTests.cpp)
+    target_link_libraries(galaxy_colony_exit01b_immigration_tests PRIVATE galaxy_kernel)
+    add_test(NAME galaxy_colony_exit01b_immigration
+        COMMAND galaxy_colony_exit01b_immigration_tests)
+endif()
+
+# EXIT-01C: individual history, directional social appraisal and recovered
+# personal decision; the actual immigrant remains the original ART02 record.
+if(BUILD_TESTING)
+    add_executable(galaxy_colony_exit01c_personal_tests
+        tests/COLONY_EXIT01C_PersonalHistoryTests.cpp)
+    target_link_libraries(galaxy_colony_exit01c_personal_tests PRIVATE galaxy_kernel)
+    add_test(NAME galaxy_colony_exit01c_personal
+        COMMAND galaxy_colony_exit01c_personal_tests)
+endif()
+
+# EXIT-01D: deterministic native-host observer/selector with authenticated
+# receiving-owner route; real boarding and ART02/ECON03 immigration follow.
+if(BUILD_TESTING)
+    add_executable(galaxy_colony_exit01d_scheduler_tests
+        tests/COLONY_EXIT01D_HostMigrationSchedulerTests.cpp)
+    target_link_libraries(galaxy_colony_exit01d_scheduler_tests PRIVATE galaxy_kernel)
+    add_test(NAME galaxy_colony_exit01d_scheduler
+        COMMAND galaxy_colony_exit01d_scheduler_tests)
+endif()
+
+# EXIT-01D second regression: fixed 8-tick host cadence, bounded rotating
+# roster, duplicate suppression and conservative no-governor/no-offer refusal.
+if(BUILD_TESTING)
+    add_executable(galaxy_colony_exit01d_bounded_tests
+        tests/COLONY_EXIT01D_BoundedSchedulerTests.cpp)
+    target_link_libraries(galaxy_colony_exit01d_bounded_tests PRIVATE galaxy_kernel)
+    add_test(NAME galaxy_colony_exit01d_bounded
+        COMMAND galaxy_colony_exit01d_bounded_tests)
+endif()
+
+# PLAY-01: a single finite-crew opening, restarting between mining, production
+# and first outpost, with recovered-copy conservation checks.
+if(BUILD_TESTING)
+  add_executable(galaxy_play01_opening_tests
+    tests/PLAY01_FirstOutpostRegressionTests.cpp)
+  target_link_libraries(galaxy_play01_opening_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_play01_opening COMMAND galaxy_play01_opening_tests)
+endif()
+
+# PLAY-04: physically persistent ship yaw, construction, real outpost bay
+# custody, and recovery of ship/bay ore across world restarts.
+if(BUILD_TESTING)
+  add_executable(galaxy_play04_yaw_cargo_tests
+    tests/PLAY04_YawCargoReturnTests.cpp)
+  target_link_libraries(galaxy_play04_yaw_cargo_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_play04_yaw_cargo COMMAND galaxy_play04_yaw_cargo_tests)
+endif()
+
+# PLAY-08 native training combat: authorized firing, range/ammo/cooldown,
+# persistent hull damage and physically durable wreck conversion.
+if(BUILD_TESTING)
+  add_executable(galaxy_play08_training_combat_tests
+    tests/PLAY08_TrainingCombatTests.cpp)
+  target_link_libraries(galaxy_play08_training_combat_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_play08_training_combat COMMAND galaxy_play08_training_combat_tests)
+endif()
+
+# PLAY-09 physically conserved training wreck material, live cargo authority
+# and restart/recovery-copy validation.
+if(BUILD_TESTING)
+  add_executable(galaxy_play09_wreck_salvage_tests
+    tests/PLAY09_WreckSalvageTests.cpp)
+  target_link_libraries(galaxy_play09_wreck_salvage_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_play09_wreck_salvage COMMAND galaxy_play09_wreck_salvage_tests)
+endif()
+
+# PLAY-10 authoritative durable local surveying and first-discovery records.
+if(BUILD_TESTING)
+  add_executable(galaxy_play10_exploration_tests
+    tests/PLAY10_ExplorationPersistenceTests.cpp)
+  target_link_libraries(galaxy_play10_exploration_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_play10_exploration COMMAND galaxy_play10_exploration_tests)
+endif()
+
+# PLAY-11 hardpoint fitting, installed survey equipment, conservation,
+# strict module/rack snapshot recovery, and persistent discovery gating.
+if(BUILD_TESTING)
+  add_executable(galaxy_play11_fitting_tests
+    tests/PLAY11_FittingExplorationTests.cpp)
+  target_link_libraries(galaxy_play11_fitting_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_play11_fitting COMMAND galaxy_play11_fitting_tests)
+endif()
+
+# PLAY-12 owner-authorized physical survey probes, accounting and durable recovery.
+if(BUILD_TESTING)
+  add_executable(galaxy_play12_probe_tests tests/PLAY12_ProbeLifecycleTests.cpp)
+  target_link_libraries(galaxy_play12_probe_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_play12_probes COMMAND galaxy_play12_probe_tests)
+endif()
+
+# PLAY-13 host-supervised geological drone flight and physical core sampling.
+if(BUILD_TESTING)
+  add_executable(galaxy_play13_drone_tests tests/PLAY13_GeologicalDroneTests.cpp)
+  target_link_libraries(galaxy_play13_drone_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_play13_drones COMMAND galaxy_play13_drone_tests)
+endif()
+
+# PLAY-13C.2: host-custody celestial arrival preflight, built against real kernel.
+if(BUILD_TESTING)
+  add_executable(galaxy_play13c_celestial_transition_tests
+    tests/PLAY13C_CelestialTransitionTests.cpp)
+  target_link_libraries(galaxy_play13c_celestial_transition_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_play13c_celestial_transition
+    COMMAND galaxy_play13c_celestial_transition_tests)
+endif()
+
+# PLAY-13C.2B: persisted v71 per-ship frame custody, strict restore and recover-copy.
+if(BUILD_TESTING)
+  add_executable(galaxy_play13c_durable_frames_tests
+    tests/PLAY13C_DurableShipFramesTests.cpp)
+  target_link_libraries(galaxy_play13c_durable_frames_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_play13c_durable_frames
+    COMMAND galaxy_play13c_durable_frames_tests)
+endif()
+
+# PLAY-13C.2C: actual authority-scoped ship frame migration with SQLite
+# durable pending/completed receipts, cross-frame isolation and restart.
+if(BUILD_TESTING)
+  add_executable(galaxy_play13c_actual_transit_tests
+    tests/PLAY13C_ActualFrameTransitTests.cpp)
+  target_link_libraries(galaxy_play13c_actual_transit_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_play13c_actual_transit
+    COMMAND galaxy_play13c_actual_transit_tests)
+endif()
+
+# PLAY-13C.3: frame-local owner projections, client deltas, scanner visibility
+# and SQLite restart isolation across physical celestial arrivals.
+if(BUILD_TESTING)
+  add_executable(galaxy_play13c_frame_visibility_tests
+    tests/PLAY13C_FrameVisibilityTests.cpp)
+  target_link_libraries(galaxy_play13c_frame_visibility_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_play13c_frame_visibility
+    COMMAND galaxy_play13c_frame_visibility_tests)
+endif()
+
+# PLAY-13C.4: generated deposits are debited from finite existing ore,
+# spatially anchored, exactly persisted, mined, and never reseeded.
+if(BUILD_TESTING)
+  add_executable(galaxy_play13c_local_region_tests
+    tests/PLAY13C_LocalRegionGenerationTests.cpp)
+  target_link_libraries(galaxy_play13c_local_region_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_play13c_local_region
+    COMMAND galaxy_play13c_local_region_tests)
+endif()
+
+# PLAY-13C.5: independently verified persistent geology, deterministic
+# environment identity and mass-conserving mineral separation.
+if(BUILD_TESTING)
+  add_executable(galaxy_play13c_local_environment_tests
+    tests/PLAY13C_LocalEnvironmentTests.cpp)
+  target_link_libraries(galaxy_play13c_local_environment_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_play13c_local_environment
+    COMMAND galaxy_play13c_local_environment_tests)
+endif()
+
+# PLAY-13C.6A read-only frontier resource and life-support viability acceptance.
+if(BUILD_TESTING)
+  add_executable(galaxy_play13c_expedition_assessment_tests
+    tests/PLAY13C_ExpeditionAssessmentTests.cpp)
+  target_link_libraries(galaxy_play13c_expedition_assessment_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_play13c_expedition_assessment
+    COMMAND galaxy_play13c_expedition_assessment_tests)
+endif()
+
+# PLAY-13C.6B: sparse, physically unbuilt oasis prospects, discovery privacy
+# and no free resource/infrastructure injection.
+if(BUILD_TESTING)
+  add_executable(galaxy_play13c_rare_oasis_tests
+    tests/PLAY13C_RareOasisTests.cpp)
+  target_link_libraries(galaxy_play13c_rare_oasis_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_play13c_rare_oasis
+    COMMAND galaxy_play13c_rare_oasis_tests)
+endif()
+
+# PLAY-13C.6C durable source-backed water/nutrients, no free oasis matter.
+if(BUILD_TESTING)
+  add_executable(galaxy_play13c_physical_oasis_tests
+    tests/PLAY13C_PhysicalOasisResourcesTests.cpp)
+  target_link_libraries(galaxy_play13c_physical_oasis_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_play13c_physical_oasis
+    COMMAND galaxy_play13c_physical_oasis_tests)
+endif()
+
+# PLAY-13D.1 physical planetary agriculture custody kernel, first native gate.
+if(BUILD_TESTING)
+  add_executable(galaxy_play13d_planetary_agriculture_tests
+    tests/PLAY13D_PlanetaryAgricultureTests.cpp)
+  target_link_libraries(galaxy_play13d_planetary_agriculture_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_play13d_planetary_agriculture
+    COMMAND galaxy_play13d_planetary_agriculture_tests)
+endif()
+
+# PLAY-13D.2A multi-region planetary environment survey acceptance.
+if(BUILD_TESTING)
+  add_executable(galaxy_play13d_planetary_regions_tests tests/PLAY13D_PlanetaryRegionsTests.cpp)
+  target_link_libraries(galaxy_play13d_planetary_regions_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_play13d_planetary_regions COMMAND galaxy_play13d_planetary_regions_tests)
+endif()
+
+# PLAY-13D.2C dryland landforms, arroyos, rivers, canyons and caverns.
+if(BUILD_TESTING)
+  add_executable(galaxy_play13d_planetary_landscape_tests tests/PLAY13D_PlanetaryLandscapeTests.cpp)
+  target_link_libraries(galaxy_play13d_planetary_landscape_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_play13d_planetary_landscape COMMAND galaxy_play13d_planetary_landscape_tests)
+endif()
+
+# PLAY-13D PGF-01A: versioned procedural generator adapter contract.
+if(BUILD_TESTING)
+  add_executable(galaxy_play13d_planetary_framework_tests tests/PLAY13D_PlanetaryFrameworkTests.cpp)
+  target_link_libraries(galaxy_play13d_planetary_framework_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_play13d_planetary_framework COMMAND galaxy_play13d_planetary_framework_tests)
+endif()
+
+# PGF-01B: connected planetary terrain and watershed acceptance.
+if(BUILD_TESTING)
+  add_executable(galaxy_play13d_planetary_watershed_tests
+    tests/PLAY13D_PlanetaryWatershedTests.cpp)
+  target_link_libraries(galaxy_play13d_planetary_watershed_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_play13d_planetary_watershed
+    COMMAND galaxy_play13d_planetary_watershed_tests)
+endif()
+
+# PGF-01B.2 single-source planetary geography over authoritative watershed cells.
+if(BUILD_TESTING)
+  add_executable(galaxy_play13d_planetary_geography_tests
+    tests/PLAY13D_PlanetaryGeographyTests.cpp)
+  target_link_libraries(galaxy_play13d_planetary_geography_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_play13d_planetary_geography
+    COMMAND galaxy_play13d_planetary_geography_tests)
+endif()
+
+# STAGE6-C v127 immutable physical planetary material sources and
+# zero-material historical migration in the original SQLite world writer.
+if(BUILD_TESTING)
+  add_executable(galaxy_stage06_ecology_industry_tests
+    tests/Stage06EcologyIndustryTests.cpp)
+  target_link_libraries(galaxy_stage06_ecology_industry_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_stage06_ecology_industry
+    COMMAND galaxy_stage06_ecology_industry_tests
+      "${CMAKE_CURRENT_BINARY_DIR}/stage06e_original.sqlite")
+  add_executable(galaxy_stage06_authorized_source_tests
+    tests/Stage06AuthorizedSourceTests.cpp)
+  target_link_libraries(galaxy_stage06_authorized_source_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_stage06_authorized_source
+    COMMAND galaxy_stage06_authorized_source_tests
+      "${CMAKE_CURRENT_BINARY_DIR}/stage06d5_original.sqlite")
+  add_executable(galaxy_stage06_physical_environment_tests
+    tests/Stage06PhysicalEnvironmentTests.cpp)
+  target_link_libraries(galaxy_stage06_physical_environment_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_stage06_physical_environment
+    COMMAND galaxy_stage06_physical_environment_tests
+      "${CMAKE_CURRENT_BINARY_DIR}/stage06d_original.sqlite")
+  add_executable(galaxy_stage06_finite_planet_genesis_tests
+    tests/Stage06FinitePlanetaryGenesisTests.cpp)
+  target_link_libraries(galaxy_stage06_finite_planet_genesis_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_stage06_finite_planet_genesis
+    COMMAND galaxy_stage06_finite_planet_genesis_tests
+      "${CMAKE_CURRENT_BINARY_DIR}/stage06c_original.sqlite")
+endif()
+
+# STAGE6-ENV01 / PGF-01C canonical seasonal climate, world-source
+# identity and conservation (all observations remain read-only).
+if(BUILD_TESTING)
+  add_executable(galaxy_stage06_seasonal_environment_tests
+    tests/Stage06SeasonalEnvironmentTests.cpp)
+  target_link_libraries(galaxy_stage06_seasonal_environment_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_stage06_seasonal_environment
+    COMMAND galaxy_stage06_seasonal_environment_tests)
+endif()
+
+# S6-F: original-body survey tiles and read-only, bounded Godot terrain bridge.
+# The adapter cannot issue a landing, grant player custody or mint inventory.
+add_executable(galaxy_stage6_godot_export tools/stage6_godot_export.cpp)
+target_link_libraries(galaxy_stage6_godot_export PRIVATE galaxy_kernel)
+if(BUILD_TESTING)
+  add_executable(galaxy_stage6_original_planet_surface_tests
+    tests/STAGE6_OriginalPlanetSurfaceTests.cpp)
+  target_link_libraries(galaxy_stage6_original_planet_surface_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_stage6_original_planet_surface
+    COMMAND galaxy_stage6_original_planet_surface_tests)
+  add_executable(galaxy_stage6_authorized_landing_tests
+    tests/STAGE6_AuthorizedLandingTests.cpp)
+  target_link_libraries(galaxy_stage6_authorized_landing_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_stage6_authorized_landing
+    COMMAND galaxy_stage6_authorized_landing_tests)
+  # S6-F4: canonical v131 original player-person custody in the existing
+  # SQLite writer and the existing completed physical shuttle flight.
+  add_executable(galaxy_stage6_player_planetary_custody_tests
+    tests/STAGE6_PlayerPlanetaryCustodyTests.cpp)
+  target_link_libraries(galaxy_stage6_player_planetary_custody_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_stage6_player_planetary_custody
+    COMMAND galaxy_stage6_player_planetary_custody_tests)
+  # S6-F5: original source-derived fixed-point player/NPC collision authority
+  add_executable(galaxy_stage6_native_surface_movement_tests
+    tests/STAGE6_NativeSurfaceMovementTests.cpp)
+  target_link_libraries(galaxy_stage6_native_surface_movement_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_stage6_native_surface_movement
+    COMMAND galaxy_stage6_native_surface_movement_tests)
+  # S6-F5-B: header-only deterministic fixed-point source-triangle
+  # geometry; no original SQLite host needed for mathematical seam fixtures.
+  add_executable(galaxy_stage6f5b_continuous_surface_math_tests
+    tests/STAGE6F5B_ContinuousSurfaceMathTests.cpp)
+  target_link_libraries(galaxy_stage6f5b_continuous_surface_math_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_stage6f5b_continuous_surface_math
+    COMMAND galaxy_stage6f5b_continuous_surface_math_tests)
+  # S6-F5-C v135: source atmosphere/pressure and sealed equipment
+  # decisions. The full original-player/SQLite integration is exercised in
+  # galaxy_stage6_native_surface_movement, including failed writes and replay.
+  add_executable(galaxy_stage6f5c_atmosphere_source_tests
+    tests/STAGE6F5C_AtmosphereSourceTests.cpp)
+  target_link_libraries(galaxy_stage6f5c_atmosphere_source_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_stage6f5c_atmosphere_source
+    COMMAND galaxy_stage6f5c_atmosphere_source_tests)
+  # S6-F5-C v134: immutable source mass and original SQLite player
+  # survival/jump/oxygen receipt/restart integration.
+  add_executable(galaxy_stage6f5c_body_gravity_tests
+    tests/STAGE6F5C_BodyGravityTests.cpp)
+  target_link_libraries(galaxy_stage6f5c_body_gravity_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_stage6f5c_body_gravity
+    COMMAND galaxy_stage6f5c_body_gravity_tests)
+  # S6-F5-C: deterministic radial motion + source-backed survival
+  # contract ONLY. Not yet connected to the original world tick/health ledger.
+  add_executable(galaxy_stage6f5c_vertical_physics_tests
+    tests/STAGE6F5C_VerticalPhysicsTests.cpp)
+  target_link_libraries(galaxy_stage6f5c_vertical_physics_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_stage6f5c_vertical_physics
+    COMMAND galaxy_stage6f5c_vertical_physics_tests)
+  # S6-F5-E: optional actual Godot 4 headless scene-level readback.
+  # This tests renderer admission and replay refusal only, never claims
+  # installed native/Windows/GPU acceptance.
+  find_program(SG_STAGE6F5E_GODOT NAMES godot godot4 godot.exe)
+  if(SG_STAGE6F5E_GODOT)
+    add_test(NAME galaxy_stage6f5e_godot_tile_window
+      COMMAND ${SG_STAGE6F5E_GODOT} --headless
+        --path ${CMAKE_CURRENT_SOURCE_DIR}/desktop_godot
+        --script res://tests/stage6f5e_terrain_renderer_smoke.gd)
+    set_tests_properties(galaxy_stage6f5e_godot_tile_window
+      PROPERTIES TIMEOUT 45 LABELS "stage6;godot;renderer-source-only")
+    add_test(NAME galaxy_stage6f5f_godot_shuttle_source
+      COMMAND ${SG_STAGE6F5E_GODOT} --headless
+        --path ${CMAKE_CURRENT_SOURCE_DIR}/desktop_godot
+        --script res://tests/stage6f5f_transfer_panel_smoke.gd)
+    set_tests_properties(galaxy_stage6f5f_godot_shuttle_source
+      PROPERTIES TIMEOUT 45 LABELS "stage6;godot;shuttle-source-only")
+    add_test(NAME galaxy_stage6f6_godot_recovery_source
+      COMMAND ${SG_STAGE6F5E_GODOT} --headless
+        --path ${CMAKE_CURRENT_SOURCE_DIR}/desktop_godot
+        --script res://tests/stage6f6_recovery_probe_smoke.gd)
+    set_tests_properties(galaxy_stage6f6_godot_recovery_source
+      PROPERTIES TIMEOUT 45 LABELS "stage6;godot;recovery-source-only")
+    add_test(NAME galaxy_stage6f6_godot_unsigned_source_id
+      COMMAND ${SG_STAGE6F5E_GODOT} --headless
+        --path ${CMAKE_CURRENT_SOURCE_DIR}/desktop_godot
+        --script res://tests/stage6f6_uint64_source_identity_smoke.gd)
+    set_tests_properties(galaxy_stage6f6_godot_unsigned_source_id
+      PROPERTIES TIMEOUT 45 LABELS "stage6;godot;uint64-identity")
+    add_test(NAME galaxy_stage6f6_godot_selected_world_hint
+      COMMAND ${SG_STAGE6F5E_GODOT} --headless
+        --path ${CMAKE_CURRENT_SOURCE_DIR}/desktop_godot
+        --script res://tests/stage6f6_saved_world_choice_smoke.gd)
+    set_tests_properties(galaxy_stage6f6_godot_selected_world_hint
+      PROPERTIES TIMEOUT 45 LABELS "stage6;godot;recovery-selection")
+  endif()
+  find_program(SG_STAGE6F5_NODE NAMES node node.exe)
+  if(SG_STAGE6F5_NODE)
+    add_test(NAME galaxy_stage6f5_surface_packet_contract
+      COMMAND ${SG_STAGE6F5_NODE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/STAGE6F5_SurfacePacketContractTests.cjs)
+  endif()
+endif()
+
+# PGF-01B.2: authenticated real host planetary survey and saved restart.
+if(BUILD_TESTING)
+  add_executable(galaxy_play13d_live_planet_survey_tests
+    tests/PLAY13D_LivePlanetSurveyTests.cpp)
+  target_link_libraries(galaxy_play13d_live_planet_survey_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_play13d_live_planet_survey
+    COMMAND galaxy_play13d_live_planet_survey_tests)
+endif()
+
+# PLAY-13D.3 source-backed planetary site construction/farm/extraction persistence.
+if(BUILD_TESTING)
+  # PLAY-13D: control roles share one physical ship and inventory model.
+  add_executable(galaxy_play13d_ship_control_tests
+    tests/PLAY13D_ShipControlTests.cpp)
+  target_link_libraries(galaxy_play13d_ship_control_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_play13d_ship_control
+    COMMAND galaxy_play13d_ship_control_tests)
+  # One canonical goods manifest for named NPCs, resources and equipment.
+  add_executable(galaxy_play13d_universal_transport_tests
+    tests/PLAY13D_UniversalTransportTests.cpp)
+  target_link_libraries(galaxy_play13d_universal_transport_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_play13d_universal_transport
+    COMMAND galaxy_play13d_universal_transport_tests)
+  # A single transport-mode-independent NPC migration admission policy.
+  add_executable(galaxy_play13d_universal_migration_tests
+    tests/PLAY13D_UniversalNpcMigrationTests.cpp)
+  target_link_libraries(galaxy_play13d_universal_migration_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_play13d_universal_migration
+    COMMAND galaxy_play13d_universal_migration_tests)
+  # Shared identity/arrival evidence for ferry and planetary shuttle adapters.
+  add_executable(galaxy_play13d_shared_transport_tests
+    tests/PLAY13D_SharedTransportIdentityTests.cpp)
+  target_link_libraries(galaxy_play13d_shared_transport_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_play13d_shared_transport
+    COMMAND galaxy_play13d_shared_transport_tests)
+  # PLAY-13D.4C.9B: verify a proposed canonical migration transition.
+  add_executable(galaxy_play13d_settlement_transition_tests
+    tests/PLAY13D_PlanetarySettlementTransitionTests.cpp)
+  target_link_libraries(galaxy_play13d_settlement_transition_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_play13d_settlement_transition
+    COMMAND galaxy_play13d_settlement_transition_tests)
+  # PLAY-13D.4C.9A: pure fail-closed permanent residency admission policy.
+  add_executable(galaxy_play13d_settlement_admission_tests
+    tests/PLAY13D_PlanetarySettlementAdmissionTests.cpp)
+  target_link_libraries(galaxy_play13d_settlement_admission_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_play13d_settlement_admission
+    COMMAND galaxy_play13d_settlement_admission_tests)
+  add_executable(galaxy_play13d_regional_facilities_tests
+    tests/PLAY13D_RegionalFacilitiesTests.cpp)
+  target_link_libraries(galaxy_play13d_regional_facilities_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_play13d_regional_facilities
+    COMMAND galaxy_play13d_regional_facilities_tests)
+  # SHIP-01C: same full planetary/ship-freight test, except the
+  # carrier MUST be built from rock, crewed, fitted and provisioned in-world.
+  add_test(NAME galaxy_ship01c_manufactured_freight
+    COMMAND galaxy_play13d_regional_facilities_tests --manufactured-only)
+  set_tests_properties(galaxy_ship01c_manufactured_freight
+    PROPERTIES TIMEOUT 300)
+endif()
+
+# PLAY-13D.4C.1: isolated physical planetary shuttle manifest/NPC custody domain.
+if(BUILD_TESTING)
+  add_executable(galaxy_play13d_shuttle_custody_tests
+    tests/PLAY13D_ShuttleCustodyTests.cpp)
+  target_link_libraries(galaxy_play13d_shuttle_custody_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_play13d_shuttle_custody
+    COMMAND galaxy_play13d_shuttle_custody_tests)
+endif()
+
+# PLAY-13D.4C.5: real authoritative SQLite fixture for HTTP live-host E2E.
+if(BUILD_TESTING)
+  add_executable(galaxy_play13d_shuttle_host_fixture
+    tests/PLAY13D_ShuttleHostFixture.cpp)
+  target_link_libraries(galaxy_play13d_shuttle_host_fixture PRIVATE galaxy_kernel)
+endif()
+
+# SHIP-01A.0: pure read-only preflight against actual physical colony inventory
+# and named NPCs. This test does NOT construct a ship or spend resources.
+if(BUILD_TESTING)
+  add_executable(galaxy_ship01a_preflight_tests
+    tests/SHIP01A_PreflightTests.cpp)
+  target_link_libraries(galaxy_ship01a_preflight_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_ship01a_preflight
+    COMMAND galaxy_ship01a_preflight_tests)
+endif()
+
+# SHIP-01A.1: authoritative eight-tick physical orbital shipyard construction,
+# exact modules embodied in facility, full SQLite failpoint / restart test.
+if(BUILD_TESTING)
+  add_executable(galaxy_ship01a_construction_tests
+    tests/SHIP01A_ConstructionTests.cpp)
+  target_link_libraries(galaxy_ship01a_construction_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_ship01a_construction
+    COMMAND galaxy_ship01a_construction_tests)
+endif()
+
+# SHIP-01B.1 — real six-module, twelve-tick freighter hull construction,
+# committed entity creation, same-frame launch and SQLite restart/failpoints.
+if(BUILD_TESTING)
+  add_executable(galaxy_ship01b_first_freighter_tests
+    tests/SHIP01B_FirstFreighterTests.cpp)
+  target_link_libraries(galaxy_ship01b_first_freighter_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_ship01b_first_freighter
+    COMMAND galaxy_ship01b_first_freighter_tests)
+endif()
+
+# SHIP-01B.2 — real same-berth NPC crew, stocked life support and paid scanner
+# with v92 receipt, exact-once SQLite transfer and authorized first flight.
+if(BUILD_TESTING)
+  add_executable(galaxy_ship01b2_commission_freighter_tests
+    tests/SHIP01B2_CommissionFreighterTests.cpp)
+  target_link_libraries(galaxy_ship01b2_commission_freighter_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_ship01b2_commission_freighter
+    COMMAND galaxy_ship01b2_commission_freighter_tests)
+endif()
+
+# FLIGHT-02: exact same original two-axis Navigation helper and
+# native ship thrust/dock/undock controls, shared v96 NPC flight ledger.
+if(BUILD_TESTING)
+  add_executable(galaxy_flight02_local_docking_tests
+    tests/FLIGHT02_LocalDockingTests.cpp)
+  target_link_libraries(galaxy_flight02_local_docking_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_flight02_local_docking
+    COMMAND galaxy_flight02_local_docking_tests)
+  set_tests_properties(galaxy_flight02_local_docking
+    PROPERTIES TIMEOUT 300)
+endif()
+
+# FLIGHT-01: one mission-neutral NPC ship navigator using the
+# original host celestial-transit physical gate, committed receipts,
+# real named pilots and v95 SQLite crash/recovery, not a freight autopilot.
+if(BUILD_TESTING)
+  add_test(NAME galaxy_flight01_unified_npc_navigation
+    COMMAND galaxy_play13d_regional_facilities_tests --npc-autonomous-nav)
+  set_tests_properties(galaxy_flight01_unified_npc_navigation
+    PROPERTIES TIMEOUT 300)
+endif()
+
+# WORK-01C: execute owner-delegated original local shuttle and sealed
+# intercolony freight, with the full real pilot, flight, hold, arrival receipt,
+# SQLite fault/restart acceptance fixture (no second transport engine).
+if(BUILD_TESTING)
+  add_test(NAME galaxy_work01c_native_transport_executors
+    COMMAND galaxy_play13d_regional_facilities_tests --delegated-work)
+  set_tests_properties(galaxy_work01c_native_transport_executors
+    PROPERTIES TIMEOUT 300)
+endif()
+
+# WORK-01B.3: original colony safety risk and bounded deterministic
+# fairness on real customer work, plus live original funding preview.
+if(BUILD_TESTING)
+  add_executable(galaxy_work01b3_emergency_fairness_tests
+    tests/WORK01B3_EmergencyFairnessTests.cpp)
+  target_link_libraries(galaxy_work01b3_emergency_fairness_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_work01b3_emergency_fairness
+    COMMAND galaxy_work01b3_emergency_fairness_tests)
+  set_tests_properties(galaxy_work01b3_emergency_fairness PROPERTIES TIMEOUT 180)
+endif()
+
+# WORK-01B.2: canonical worker qualifications and original physical
+# one-slip yard capacity, native workforce duty and collision regression.
+if(BUILD_TESTING)
+  add_executable(galaxy_work01b2_native_capacity_tests
+    tests/WORK01B2_CapacityTests.cpp)
+  target_link_libraries(galaxy_work01b2_native_capacity_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_work01b2_native_capacity
+    COMMAND galaxy_work01b2_native_capacity_tests)
+  set_tests_properties(galaxy_work01b2_native_capacity PROPERTIES TIMEOUT 180)
+endif()
+
+# WORK-01B: typed real-authority capability registry, deterministic priority
+# and same-tick named-worker planning; existing v94 SQLite records unchanged.
+if(BUILD_TESTING)
+  add_executable(galaxy_work01b_work_planner_tests
+    tests/WORK01B_WorkPlannerTests.cpp)
+  target_link_libraries(galaxy_work01b_work_planner_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_work01b_work_planner
+    COMMAND galaxy_work01b_work_planner_tests)
+  set_tests_properties(galaxy_work01b_work_planner PROPERTIES TIMEOUT 180)
+endif()
+
+# WORK-01A native v94 universal work ledger + actual NPC fulfillment adapter.
+# Uses original galaxy_kernel, existing transport, shipyard, and NPC records.
+if(BUILD_TESTING)
+  add_executable(galaxy_work01a_universal_fulfillment_tests
+    tests/WORK01A_UniversalFulfillmentTests.cpp)
+  target_link_libraries(galaxy_work01a_universal_fulfillment_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_work01a_universal_fulfillment
+    COMMAND galaxy_work01a_universal_fulfillment_tests)
+  set_tests_properties(galaxy_work01a_universal_fulfillment PROPERTIES TIMEOUT 180)
+endif()
+
+# SHIP-01F: two separate owners placing, accepting, physically funding
+# six real fabricated modules, building and transferring one hull, followed
+# by purchaser named-NPC commissioning and SQLite crash recovery.
+if(BUILD_TESTING)
+  add_executable(galaxy_ship01f_customer_shipyard_tests
+    tests/SHIP01F_CustomerShipyardTests.cpp)
+  target_link_libraries(galaxy_ship01f_customer_shipyard_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_ship01f_customer_shipyard
+    COMMAND galaxy_ship01f_customer_shipyard_tests)
+  set_tests_properties(galaxy_ship01f_customer_shipyard PROPERTIES TIMEOUT 180)
+endif()
+
+# SHIP-01D: native fleet list/selection and zero-privilege camera focus tests.
+if(BUILD_TESTING)
+  add_executable(galaxy_ship01d_fleet_selection_tests
+    tests/SHIP01D_FleetSelectionTests.cpp)
+  target_link_libraries(galaxy_ship01d_fleet_selection_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_ship01d_fleet_selection
+    COMMAND galaxy_ship01d_fleet_selection_tests)
+  set_tests_properties(galaxy_ship01d_fleet_selection PROPERTIES TIMEOUT 180)
+endif()
+
+# FLIGHT-03 universal physical-object approach solver, no second movement engine.
+if(BUILD_TESTING)
+  add_executable(galaxy_flight03_object_approach_tests
+    tests/FLIGHT03_ObjectApproachTests.cpp)
+  target_link_libraries(galaxy_flight03_object_approach_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_flight03_object_approach
+    COMMAND galaxy_flight03_object_approach_tests)
+endif()
+
+# FLIGHT-04 read-only physical and receipt preflight: never an interaction grant.
+if(BUILD_TESTING)
+  add_executable(galaxy_flight04_interaction_preflight_tests
+    tests/FLIGHT04_ShipInteractionPreflightTests.cpp)
+  target_link_libraries(galaxy_flight04_interaction_preflight_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_flight04_interaction_preflight
+    COMMAND galaxy_flight04_interaction_preflight_tests)
+endif()
+
+# FLIGHT-04B: adapters call ORIGINAL persistent freight and dependent rescue executors.
+if(BUILD_TESTING)
+  add_executable(galaxy_flight04b_interaction_executors_tests
+    tests/FLIGHT04B_InteractionExecutorsTests.cpp)
+  target_link_libraries(galaxy_flight04b_interaction_executors_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_flight04b_interaction_executors
+    COMMAND galaxy_flight04b_interaction_executors_tests)
+endif()
+
+# FLIGHT-03: original NPC navigator, native ship pursuit and durable receipts.
+if(BUILD_TESTING)
+  add_executable(galaxy_flight03_native_rendezvous_tests
+    tests/FLIGHT03_NativeRendezvousTests.cpp)
+  target_link_libraries(galaxy_flight03_native_rendezvous_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_flight03_native_rendezvous
+    COMMAND galaxy_flight03_native_rendezvous_tests)
+endif()
+
+# FLIGHT-04B full native physical rendezvous to sealed freight and SQLite recovery.
+if(BUILD_TESTING)
+  add_test(NAME galaxy_flight04b_real_freight
+    COMMAND galaxy_play13d_regional_facilities_tests --flight03-rendezvous-freight)
+  set_tests_properties(galaxy_flight04b_real_freight PROPERTIES TIMEOUT 300)
+endif()
+
+# FLIGHT-05: physical NPC rendezvous + trusted ferry manifest rescue.
+if(BUILD_TESTING)
+  add_executable(galaxy_flight05_physical_rescue_tests
+    tests/FLIGHT05_PhysicalRescueTests.cpp)
+  target_link_libraries(galaxy_flight05_physical_rescue_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_flight05_physical_rescue
+    COMMAND galaxy_flight05_physical_rescue_tests)
+  set_tests_properties(galaxy_flight05_physical_rescue PROPERTIES TIMEOUT 300)
+endif()
+
+# FLIGHT-06: native verified rescue of actual guardians and dependent child.
+if(BUILD_TESTING)
+  add_executable(galaxy_flight06_dependent_rendezvous_tests
+    tests/FLIGHT06_DependentRendezvousRescueTests.cpp)
+  target_link_libraries(galaxy_flight06_dependent_rendezvous_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_flight06_dependent_rendezvous
+    COMMAND galaxy_flight06_dependent_rendezvous_tests)
+  set_tests_properties(galaxy_flight06_dependent_rendezvous PROPERTIES TIMEOUT 300)
+endif()
+
+# NPC-RESP-01: original NPC flight ledger as owner-response dispatcher.
+if(BUILD_TESTING)
+  add_executable(galaxy_npcresp01_dispatch_tests
+    tests/NPCRESP01_DispatchTests.cpp)
+  target_link_libraries(galaxy_npcresp01_dispatch_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_npcresp01_dispatch
+    COMMAND galaxy_npcresp01_dispatch_tests)
+  set_tests_properties(galaxy_npcresp01_dispatch PROPERTIES TIMEOUT 300)
+endif()
+
+# NPC-RESP-02: persistent player identity is not a ship or NPC.
+if(BUILD_TESTING)
+  add_executable(galaxy_npcresp02_player_identity_tests
+    tests/NPCRESP02_PlayerIdentityTests.cpp)
+  target_link_libraries(galaxy_npcresp02_player_identity_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_npcresp02_player_identity
+    COMMAND galaxy_npcresp02_player_identity_tests)
+  set_tests_properties(galaxy_npcresp02_player_identity PROPERTIES TIMEOUT 300)
+endif()
+
+# NPC-RESP-02B: original receipt + owner-consent player rescue native loop.
+if(BUILD_TESTING)
+  add_executable(galaxy_npcresp02b_player_rescue_tests
+    tests/NPCRESP02B_PlayerRescueTests.cpp)
+  target_link_libraries(galaxy_npcresp02b_player_rescue_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_npcresp02b_player_rescue
+    COMMAND galaxy_npcresp02b_player_rescue_tests)
+  set_tests_properties(galaxy_npcresp02b_player_rescue PROPERTIES TIMEOUT 300)
+endif()
+
+# NPC-RESP-03A: subjective hostile intent must never grant combat or arrest.
+if(BUILD_TESTING)
+  add_executable(galaxy_npcresp03_threat_policy_tests
+    tests/NPCRESP03_ColonyThreatPolicyTests.cpp)
+  target_link_libraries(galaxy_npcresp03_threat_policy_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_npcresp03_threat_policy
+    COMMAND galaxy_npcresp03_threat_policy_tests)
+endif()
+
+# DISPOSITION-01: original governance/GRSM -> witnessed patrol, no combat.
+if(BUILD_TESTING)
+  add_executable(galaxy_disposition01_unified_response_tests
+    tests/DISPOSITION01_UnifiedResponseTests.cpp)
+  target_link_libraries(galaxy_disposition01_unified_response_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_disposition01_unified_response
+    COMMAND galaxy_disposition01_unified_response_tests)
+  set_tests_properties(galaxy_disposition01_unified_response PROPERTIES TIMEOUT 300)
+endif()
+
+# DISPOSITION-02: one historical SQLite journal; native territory and recovery tests.
+if(BUILD_TESTING)
+  add_executable(galaxy_disposition02_territory_tests
+    tests/DISPOSITION02_TerritoryJournalTests.cpp)
+  target_link_libraries(galaxy_disposition02_territory_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_disposition02_territory
+    COMMAND galaxy_disposition02_territory_tests)
+  set_tests_properties(galaxy_disposition02_territory PROPERTIES TIMEOUT 300)
+endif()
+
+# DISPOSITION-03: visitor-owned territorial notice receipts, grace and enforcement.
+if(BUILD_TESTING)
+  add_executable(galaxy_disposition03_territorial_comms_tests
+    tests/DISPOSITION03_TerritorialCommsTests.cpp)
+  target_link_libraries(galaxy_disposition03_territorial_comms_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_disposition03_territorial_comms
+    COMMAND galaxy_disposition03_territorial_comms_tests)
+  set_tests_properties(galaxy_disposition03_territorial_comms PROPERTIES TIMEOUT 300)
+endif()
+
+# DISPOSITION-03B: player hailing policy and lawful evidence-bound aggravation.
+if(BUILD_TESTING)
+  add_executable(galaxy_disposition03b_hailing_policy_tests
+    tests/DISPOSITION03B_HailingPolicyTests.cpp)
+  target_link_libraries(galaxy_disposition03b_hailing_policy_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_disposition03b_hailing_policy
+    COMMAND galaxy_disposition03b_hailing_policy_tests)
+  set_tests_properties(galaxy_disposition03b_hailing_policy PROPERTIES TIMEOUT 300)
+endif()
+
+# DISPOSITION-03C: controlled installation travel-clearance policy.
+if(BUILD_TESTING)
+  add_executable(galaxy_disposition03c_travel_clearance_tests
+    tests/DISPOSITION03C_TravelClearanceTests.cpp)
+  target_link_libraries(galaxy_disposition03c_travel_clearance_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_disposition03c_travel_clearance
+    COMMAND galaxy_disposition03c_travel_clearance_tests)
+  set_tests_properties(galaxy_disposition03c_travel_clearance PROPERTIES TIMEOUT 300)
+endif()
+
+# SHIP-STATUS-01: deterministic temporary module-control confusion prototype.
+if(BUILD_TESTING)
+  add_executable(galaxy_ship_status01_confusion_tests
+    tests/SHIPSTATUS01_ConfusionTests.cpp)
+  target_link_libraries(galaxy_ship_status01_confusion_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_ship_status01_confusion
+    COMMAND galaxy_ship_status01_confusion_tests)
+  set_tests_properties(galaxy_ship_status01_confusion PROPERTIES TIMEOUT 300)
+endif()
+
+# SHIP-STATUS-02: native command gating and same-world SQLite/v100 recovery.
+if(BUILD_TESTING)
+  add_executable(galaxy_ship_status02_authoritative_tests
+    tests/SHIPSTATUS02_AuthoritativePersistenceTests.cpp)
+  target_link_libraries(galaxy_ship_status02_authoritative_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_ship_status02_authoritative
+    COMMAND galaxy_ship_status02_authoritative_tests)
+  set_tests_properties(galaxy_ship_status02_authoritative PROPERTIES TIMEOUT 300)
+endif()
+
+# SHIP-STATUS-03: real fabricated emitter/firewall, native attack and recovery.
+if(BUILD_TESTING)
+  add_executable(galaxy_ship_status03_physical_hacking_tests
+    tests/SHIPSTATUS03_PhysicalHackingTests.cpp)
+  target_link_libraries(galaxy_ship_status03_physical_hacking_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_ship_status03_physical_hacking
+    COMMAND galaxy_ship_status03_physical_hacking_tests)
+  set_tests_properties(galaxy_ship_status03_physical_hacking PROPERTIES TIMEOUT 300)
+endif()
+
+# SHIP-STATUS-04: original NPC cyber operator and territorial attack evidence.
+if(BUILD_TESTING)
+  add_executable(galaxy_ship_status04_npc_cyber_tests
+    tests/SHIPSTATUS04_NpcCyberTacticsTests.cpp)
+  target_link_libraries(galaxy_ship_status04_npc_cyber_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_ship_status04_npc_cyber
+    COMMAND galaxy_ship_status04_npc_cyber_tests)
+  set_tests_properties(galaxy_ship_status04_npc_cyber PROPERTIES TIMEOUT 300)
+endif()
+
+# SHIP-STATUS-05: one native recurring original-world NPC supervisor.
+if(BUILD_TESTING)
+  add_executable(galaxy_ship_status05_supervisor_tests
+    tests/SHIPSTATUS05_SupervisorTests.cpp)
+  target_link_libraries(galaxy_ship_status05_supervisor_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_ship_status05_supervisor
+    COMMAND galaxy_ship_status05_supervisor_tests)
+  set_tests_properties(galaxy_ship_status05_supervisor PROPERTIES TIMEOUT 300)
+  find_program(SG_STATUS05_NODE NAMES node node.exe)
+  if(SG_STATUS05_NODE)
+    add_test(NAME galaxy_ship_status05_cockpit
+      COMMAND ${SG_STATUS05_NODE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/SHIPSTATUS05_CyberCockpitTests.js)
+  endif()
+endif()
+
+# SHIP-STATUS-06: same authoritative patrol flight, physical rendezvous,
+# governed NPC cyber attack and committed player defense read model.
+if(BUILD_TESTING)
+  add_executable(galaxy_ship_status06_fleet_cyber_tests
+    tests/SHIPSTATUS06_FleetCyberTests.cpp)
+  target_link_libraries(galaxy_ship_status06_fleet_cyber_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_ship_status06_fleet_cyber
+    COMMAND galaxy_ship_status06_fleet_cyber_tests)
+  set_tests_properties(galaxy_ship_status06_fleet_cyber PROPERTIES TIMEOUT 300)
+endif()
+
+if(BUILD_TESTING)
+  find_package(Python3 COMPONENTS Interpreter QUIET)
+  if(Python3_Interpreter_FOUND)
+    add_test(NAME galaxy_ship_status06_live_cyber
+      COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/SHIPSTATUS06_LiveCyberHostTests.py
+        --host $<TARGET_FILE:galaxy_colony_live_host>
+        --relay ${CMAKE_CURRENT_SOURCE_DIR}/live/interactive_relay.py
+        --bridge $<TARGET_FILE:galaxy_shipping_status_bridge>)
+    set_tests_properties(galaxy_ship_status06_live_cyber PROPERTIES TIMEOUT 90)
+  endif()
+endif()
+
+# SHIP-STATUS-07: intake verified same-tick original cyber aggression as an
+# immutable independent case. It has no crime/attack/arrest powers.
+if(BUILD_TESTING)
+  add_executable(galaxy_ship_status07_incident_tests
+    tests/SHIPSTATUS07_CyberIncidentJournalTests.cpp)
+  target_link_libraries(galaxy_ship_status07_incident_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_ship_status07_incident
+    COMMAND galaxy_ship_status07_incident_tests)
+  set_tests_properties(galaxy_ship_status07_incident PROPERTIES TIMEOUT 300)
+endif()
+
+# SHIP-STATUS-07B: original material-backed stealth, acquired anonymous
+# contacts, powered sensor hierarchy, and canonical v103 restart.
+if(BUILD_TESTING)
+  add_executable(galaxy_ship_status07_sensor_tests
+    tests/SHIPSTATUS07_StealthSensorTests.cpp)
+  target_link_libraries(galaxy_ship_status07_sensor_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_ship_status07_sensors
+    COMMAND galaxy_ship_status07_sensor_tests)
+  set_tests_properties(galaxy_ship_status07_sensors PROPERTIES TIMEOUT 300)
+endif()
+
+# SHIP-STATUS-07C: scoped player graphical visibility, real native
+# hide/reacquire deltas and foreign owner/cargo non-disclosure.
+if(BUILD_TESTING)
+  add_executable(galaxy_ship_status07_view_privacy_tests
+    tests/SHIPSTATUS07_ViewPrivacyTests.cpp)
+  target_link_libraries(galaxy_ship_status07_view_privacy_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_ship_status07_view_privacy
+    COMMAND galaxy_ship_status07_view_privacy_tests)
+  set_tests_properties(galaxy_ship_status07_view_privacy PROPERTIES TIMEOUT 300)
+endif()
+
+# SHIP-STATUS-07D: native authenticated owner-scoped security desk, real
+# voluntary territorial hails, prior cyber evidence, and SQLite recovery.
+if(BUILD_TESTING)
+  add_executable(galaxy_ship_status07d_security_desk_tests
+    tests/SHIPSTATUS07D_SecurityDeskTests.cpp)
+  target_link_libraries(galaxy_ship_status07d_security_desk_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_ship_status07d_security_desk
+    COMMAND galaxy_ship_status07d_security_desk_tests)
+  set_tests_properties(galaxy_ship_status07d_security_desk PROPERTIES TIMEOUT 300)
+endif()
+
+# SHIP-STATUS-07E: immutable original ship-to-ship hail contacts, verified
+# identity replies and nuisance escalation without fabricated police powers.
+if(BUILD_TESTING)
+  add_executable(galaxy_ship_status07e_hail_abuse_tests
+    tests/SHIPSTATUS07E_HailAbuseTests.cpp)
+  target_link_libraries(galaxy_ship_status07e_hail_abuse_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_ship_status07e_hail_abuse
+    COMMAND galaxy_ship_status07e_hail_abuse_tests)
+  set_tests_properties(galaxy_ship_status07e_hail_abuse PROPERTIES TIMEOUT 300)
+endif()
+
+# STATUS-COMMS-01 / STATUS-NPC-01: original governance, real finite
+# on-duty NPC operator, authenticated direct hail identity/decline/silence
+# and durable restart. This is native original-game, not a mock world.
+if(BUILD_TESTING)
+  add_executable(galaxy_ship_status07f_npc_hail_tests
+    tests/SHIPSTATUS07F_NpcHailSupervisorTests.cpp)
+  target_link_libraries(galaxy_ship_status07f_npc_hail_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_ship_status07f_npc_hail
+    COMMAND galaxy_ship_status07f_npc_hail_tests)
+  set_tests_properties(galaxy_ship_status07f_npc_hail PROPERTIES TIMEOUT 300)
+endif()
+
+# COMBAT-PHYSICAL-01A: original C++/SQLite physical ship-to-ship finite
+# ammunition, real sensor/yaw/hull/wreck and protected crew custody v104.
+if(BUILD_TESTING)
+  add_executable(galaxy_combat01a_ship_weapon_tests
+    tests/COMBAT01A_RealShipWeaponTests.cpp)
+  target_link_libraries(galaxy_combat01a_ship_weapon_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_combat01a_ship_weapon
+    COMMAND galaxy_combat01a_ship_weapon_tests)
+  set_tests_properties(galaxy_combat01a_ship_weapon PROPERTIES TIMEOUT 300)
+endif()
+
+# STATUS-07G: two genuine human owner IDs in a deliberately seeded ORIGINAL
+# test world, with no automatic production second ship or global SGVIEW leak.
+if(BUILD_TESTING)
+  add_executable(galaxy_ship_status07g_two_human_tests
+    tests/SHIPSTATUS07G_TwoHumanSecurityTests.cpp)
+  target_link_libraries(galaxy_ship_status07g_two_human_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_ship_status07g_two_human
+    COMMAND galaxy_ship_status07g_two_human_tests)
+  set_tests_properties(galaxy_ship_status07g_two_human PROPERTIES TIMEOUT 300)
+endif()
+
+# SHIP-STATUS-07I: original same-transaction durable owner notification outbox
+# with owner-scoped replay, idempotent ACK, adversarial rollback and restart.
+if(BUILD_TESTING)
+  add_executable(galaxy_ship_status07i_outbox_tests
+    tests/SHIPSTATUS07I_DurableOutboxTests.cpp)
+  target_link_libraries(galaxy_ship_status07i_outbox_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_ship_status07i_outbox
+    COMMAND galaxy_ship_status07i_outbox_tests)
+  set_tests_properties(galaxy_ship_status07i_outbox PROPERTIES TIMEOUT 300)
+endif()
+
+# SHIP-STATUS-07J: original staffed government appointment and independently
+# witnessed verified nuisance intake. No verdict, warrant, police or weapons.
+if(BUILD_TESTING)
+  add_executable(galaxy_ship_status07j_law_agency_tests
+    tests/SHIPSTATUS07J_LawAgencyTests.cpp)
+  target_link_libraries(galaxy_ship_status07j_law_agency_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_ship_status07j_law_agency
+    COMMAND galaxy_ship_status07j_law_agency_tests)
+  set_tests_properties(galaxy_ship_status07j_law_agency PROPERTIES TIMEOUT 300)
+endif()
+
+# INDUSTRY-01: source-generated candidate catalog linked into the SAME native
+# game kernel; original-world workshop and SQLite semantics remain authoritative.
+if(BUILD_TESTING)
+    add_executable(galaxy_industry01_native_tests tests/INDUSTRY01_NativeTests.cpp)
+    target_link_libraries(galaxy_industry01_native_tests PRIVATE galaxy_kernel)
+    add_test(NAME galaxy_industry01_native_binding COMMAND galaxy_industry01_native_tests)
+endif()
+
+# WO2: professions are a read-only generated mapping; real staffing uses the
+# ORIGINAL PersistentWorld worker commands and SQLite work receipts.
+if(BUILD_TESTING)
+  add_executable(galaxy_wo2_industry_workforce_tests tests/WO2IndustryWorkforceTests.cpp)
+  target_link_libraries(galaxy_wo2_industry_workforce_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_wo2_industry_workforce COMMAND galaxy_wo2_industry_workforce_tests)
+endif()
+
+# WO3-A: proposal-only colony construction planning and original-world actual
+# facility, census, utility, immutable SQLite copies and material conservation.
+if(BUILD_TESTING)
+  add_executable(galaxy_wo3_colony_operations_tests tests/WO3ColonyOperationsTests.cpp)
+  target_link_libraries(galaxy_wo3_colony_operations_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_wo3_colony_operations COMMAND galaxy_wo3_colony_operations_tests)
+  set_tests_properties(galaxy_wo3_colony_operations PROPERTIES TIMEOUT 300)
+  add_executable(galaxy_wo3_planetary_housing_tests tests/WO3PlanetaryHousingTests.cpp)
+  target_link_libraries(galaxy_wo3_planetary_housing_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_wo3_planetary_housing COMMAND galaxy_wo3_planetary_housing_tests)
+  set_tests_properties(galaxy_wo3_planetary_housing PROPERTIES TIMEOUT 300)
+  # WO3-F uses the genuine Nov 5 v86-era native producer to save a real
+  # v85 SQLite journal. v86's legal-home upgrade retained ship residency;
+  # pre-v109 planetary residence could not legitimately be imported.
+  # Source commit, original test blob, native binary, SQLite and full journal
+  # are attested, independently replayed and never replaced by edited genesis.
+  add_executable(galaxy_wo3_historical_sqlite_import_tests
+    tests/WO3HistoricalSQLiteImportTests.cpp)
+  target_link_libraries(galaxy_wo3_historical_sqlite_import_tests PRIVATE galaxy_kernel)
+  find_package(Python3 COMPONENTS Interpreter QUIET)
+  if(Python3_Interpreter_FOUND)
+    add_test(NAME galaxy_wo3_historical_sqlite_import
+      COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/WO3HistoricalSQLiteVerifier.py
+        $<TARGET_FILE:galaxy_wo3_historical_sqlite_import_tests>)
+  else()
+    add_test(NAME galaxy_wo3_historical_sqlite_import COMMAND
+      ${CMAKE_COMMAND} -E false)
+  endif()
+  set_tests_properties(galaxy_wo3_historical_sqlite_import PROPERTIES TIMEOUT 300)
+  # S6-H4 genuine native SQLite WAL plus pinned original v85 producer.
+  add_executable(galaxy_stage06h4_historical_recovery_tests
+    tests/Stage06H4HistoricalRecoveryTests.cpp)
+  target_link_libraries(galaxy_stage06h4_historical_recovery_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_stage06h4_current_wal_recovery
+    COMMAND galaxy_stage06h4_historical_recovery_tests --current)
+  if(Python3_Interpreter_FOUND)
+    add_test(NAME galaxy_stage06h4_v85_source_wal_recovery
+      COMMAND ${Python3_EXECUTABLE}
+      ${CMAKE_CURRENT_SOURCE_DIR}/tests/WO3HistoricalSQLiteVerifier.py
+      $<TARGET_FILE:galaxy_stage06h4_historical_recovery_tests>)
+  else()
+    add_test(NAME galaxy_stage06h4_v85_source_wal_recovery
+      COMMAND ${CMAKE_COMMAND} -E false)
+  endif()
+  set_tests_properties(galaxy_stage06h4_current_wal_recovery
+    galaxy_stage06h4_v85_source_wal_recovery PROPERTIES TIMEOUT 300)
+  add_executable(galaxy_wo3_planetary_utility_tests tests/WO3PlanetaryUtilityTests.cpp)
+  target_link_libraries(galaxy_wo3_planetary_utility_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_wo3_planetary_utility COMMAND galaxy_wo3_planetary_utility_tests)
+  set_tests_properties(galaxy_wo3_planetary_utility PROPERTIES TIMEOUT 300)
+  # Genuine v129 source extraction, original landed shuttle hold, actual
+  # ascent/orbital unload and SQLite restart, not a synthetic freight seed.
+  add_test(NAME galaxy_stage06d7_positive_geological_freight
+    COMMAND galaxy_wo3_planetary_utility_tests --d7)
+  set_tests_properties(galaxy_stage06d7_positive_geological_freight
+    PROPERTIES TIMEOUT 360)
+  # Fast independent adversarial verifier of original command receipts:
+  # exact ID/tick/Applied required; stale, duplicate and mixed-denial refused.
+  add_test(NAME galaxy_stage06d7_receipt_contract
+    COMMAND galaxy_wo3_planetary_utility_tests --receipt-contract)
+  set_tests_properties(galaxy_stage06d7_receipt_contract
+    PROPERTIES TIMEOUT 15 LABELS "stage6;geology;freight;receipt")
+  add_test(NAME galaxy_stage06e6_positive_staffed_ecology
+    COMMAND galaxy_wo3_planetary_utility_tests --e6)
+  set_tests_properties(galaxy_stage06e6_positive_staffed_ecology
+    PROPERTIES TIMEOUT 360)
+endif()
+
+
+# WO4-A: owner-scoped scarcity forecast over original physical life support.
+# No economy duplicate and no simulated distribution writer.
+if(BUILD_TESTING)
+    add_executable(galaxy_wo4_resource_demand_tests tests/WO4ResourceDemandTests.cpp)
+    target_link_libraries(galaxy_wo4_resource_demand_tests PRIVATE galaxy_kernel)
+    add_test(NAME galaxy_wo4_resource_demand COMMAND galaxy_wo4_resource_demand_tests)
+endif()
+
+
+# WO4-C native industrial stockpile: existing material cargo -> constructed
+# storage, original command journal, conservation and copied SQLite recovery.
+if(BUILD_TESTING)
+    add_executable(galaxy_wo4_material_allocation_tests tests/WO4MaterialAllocationTests.cpp)
+    target_link_libraries(galaxy_wo4_material_allocation_tests PRIVATE galaxy_kernel)
+    add_test(NAME galaxy_wo4_material_allocation COMMAND galaxy_wo4_material_allocation_tests)
+endif()
+
+
+# WO5 A/B original physical shuttle/resupply and intercolony booking admission.
+# The real arrival/SQLite recovery acceptance is exercised by the existing
+# WO3 planetary utility integration target, without shadow vehicle state.
+if(BUILD_TESTING)
+    add_executable(galaxy_wo5_physical_logistics_tests tests/WO5PhysicalLogisticsTests.cpp)
+    target_link_libraries(galaxy_wo5_physical_logistics_tests PRIVATE galaxy_kernel)
+    add_test(NAME galaxy_wo5_physical_logistics COMMAND galaxy_wo5_physical_logistics_tests)
+endif()
+
+
+# SPACE-01/02/03: native, original-world 3D computational cell occupancy,
+# exact SQLite atomic migration, per-cell worker authority and WO5 freight
+# identity/recovery. No browser-only mock or second material ledger.
+if(BUILD_TESTING)
+  add_executable(galaxy_seamless_spatial_ownership_tests
+      tests/SeamlessSpatialOwnershipTests.cpp)
+  target_link_libraries(galaxy_seamless_spatial_ownership_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_seamless_spatial_ownership
+      COMMAND galaxy_seamless_spatial_ownership_tests)
+endif()
+
+# SPACE-04B: exact 3D floating-origin geometry (source foundation, not live flight).
+if(BUILD_TESTING)
+  add_executable(galaxy_floating_frame_tests tests/GalacticFloatingFrameTests.cpp)
+  target_link_libraries(galaxy_floating_frame_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_floating_frame COMMAND galaxy_floating_frame_tests)
+endif()
+
+# SPACE-04B/05: actual original v119 flight and fenced SQLite world steps.
+if(BUILD_TESTING)
+  add_executable(galaxy_native_3d_worker_tests tests/Native3DPhysicsWorkerTests.cpp)
+  target_link_libraries(galaxy_native_3d_worker_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_native_3d_worker COMMAND galaxy_native_3d_worker_tests)
+endif()
+
+find_package(Threads REQUIRED)
+target_link_libraries(galaxy_kernel PUBLIC Threads::Threads)
+
+# SPACE-04E: independent signed 128-bit native property oracle.
+# Windows shipping physics intentionally does NOT depend on __int128.
+if(BUILD_TESTING AND NOT MSVC AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+  add_executable(galaxy_high_order_math_property_tests
+    tests/NativeHighOrderMathPropertyTests.cpp)
+  target_include_directories(galaxy_high_order_math_property_tests
+    PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+  add_test(NAME galaxy_high_order_math_property
+    COMMAND galaxy_high_order_math_property_tests)
+endif()
+
+# SPACE-05C: native subprocess never receives an original-world writer.
+add_executable(galaxy_native_cell_worker src/native_cell_worker.cpp)
+if(BUILD_TESTING)
+  add_executable(galaxy_native_cell_hang_worker tests/NativeCellHangWorker.cpp)
+  target_link_libraries(galaxy_native_cell_hang_worker PRIVATE Threads::Threads)
+  add_executable(galaxy_native_cell_detached_pipe_worker
+    tests/NativeCellDetachedPipeWorker.cpp)
+  add_executable(galaxy_native_cell_fork_fence_worker
+    tests/NativeCellForkFenceWorker.cpp)
+endif()
+
+# SPACE-05C: independent 4x20 native process admission endurance and
+# deliberately hung-child process-tree timeout acceptance, no game DB.
+if(BUILD_TESTING)
+  add_executable(galaxy_native_cell_process_stress_tests
+    tests/NativeCellProcessStressTests.cpp)
+  target_link_libraries(galaxy_native_cell_process_stress_tests
+    PRIVATE galaxy_kernel Threads::Threads)
+  add_test(NAME galaxy_native_cell_process_stress
+    COMMAND galaxy_native_cell_process_stress_tests
+      $<TARGET_FILE:galaxy_native_cell_worker>
+      $<TARGET_FILE:galaxy_native_cell_hang_worker>
+      $<TARGET_FILE:galaxy_native_cell_detached_pipe_worker>
+      $<TARGET_FILE:galaxy_native_cell_fork_fence_worker>)
+  # Extended real-process endurance: 4 physical cell lanes x 1000 starts.
+  # Same original worker source and timeout/containment assertions.
+  add_test(NAME galaxy_native_cell_process_long_stress
+    COMMAND galaxy_native_cell_process_stress_tests
+      $<TARGET_FILE:galaxy_native_cell_worker>
+      $<TARGET_FILE:galaxy_native_cell_hang_worker>
+      $<TARGET_FILE:galaxy_native_cell_detached_pipe_worker>
+      $<TARGET_FILE:galaxy_native_cell_fork_fence_worker>
+      1000)
+  set_tests_properties(galaxy_native_cell_process_long_stress
+    PROPERTIES TIMEOUT 300 LABELS "stage6;space;native;process;custody;endurance")
+endif()
+
+# SPACE-04C/04D/05B: native high-order coordinates, 3D probes and bounded
+# active multi-cell original-world supervisor. Runs on Windows and Linux.
+# SPACE-05J: opt-in 1,024 original-world SQLite ticks, not a component mock.
+option(SPACE_ENABLE_1024_ENDURANCE
+  "Register prolonged 1,024-tick four-cell original-world native worker acceptance" OFF)
+if(BUILD_TESTING)
+  add_executable(galaxy_native_galactic_supervisor_tests
+    tests/NativeGalacticProbeSupervisorTests.cpp)
+  target_link_libraries(galaxy_native_galactic_supervisor_tests PRIVATE galaxy_kernel Threads::Threads)
+  add_test(NAME galaxy_native_galactic_supervisor
+           COMMAND galaxy_native_galactic_supervisor_tests
+             $<TARGET_FILE:galaxy_native_cell_worker>
+             $<TARGET_FILE:galaxy_native_cell_hang_worker>)
+  # S6-H1: four separately registered real star systems, their own original
+  # physically occupied cells, one shared PersistentWorld SQLite writer.
+  # This asserts durable cross-system scheduling and cannot imply four
+  # independent mutable galaxy writers, interstellar travel, or GPU play.
+  add_test(NAME galaxy_native_galactic_supervisor_multisystem_256
+           COMMAND galaxy_native_galactic_supervisor_tests
+             $<TARGET_FILE:galaxy_native_cell_worker>
+             $<TARGET_FILE:galaxy_native_cell_hang_worker>)
+  set_tests_properties(galaxy_native_galactic_supervisor_multisystem_256
+    PROPERTIES ENVIRONMENT "SPACE_MULTISYSTEM_TICKS=256"
+               TIMEOUT 600
+               LABELS "space;original-world;multi-system;sqlite;endurance")
+  if(SPACE_ENABLE_1024_ENDURANCE)
+    add_test(NAME galaxy_native_galactic_supervisor_1024
+             COMMAND galaxy_native_galactic_supervisor_tests
+               $<TARGET_FILE:galaxy_native_cell_worker>
+               $<TARGET_FILE:galaxy_native_cell_hang_worker>)
+    set_tests_properties(galaxy_native_galactic_supervisor_1024 PROPERTIES
+      ENVIRONMENT "SPACE_ENDURANCE_TICKS=1024"
+      TIMEOUT 900
+      LABELS "space;original-world;endurance;sqlite")
+  endif()
+endif()
+
+# S6-H2: original 250mm physical galactic sector crossing and authorized
+# cross-star gate arrival, one SQLite ship/index authority and atomic worker
+# lease CAS; hostile destination, crash rollback, restart and replay tests.
+if(BUILD_TESTING)
+  add_executable(galaxy_stage06h2_original_cell_handoff
+    tests/Stage06H2PhysicalShipHandoffTests.cpp)
+  target_link_libraries(galaxy_stage06h2_original_cell_handoff
+    PRIVATE galaxy_kernel Threads::Threads)
+  add_test(NAME galaxy_stage06h2_original_cell_handoff
+    COMMAND galaxy_stage06h2_original_cell_handoff
+      $<TARGET_FILE:galaxy_native_cell_worker>)
+  set_tests_properties(galaxy_stage06h2_original_cell_handoff PROPERTIES
+    TIMEOUT 180 LABELS "stage06;continuous-space;original-sqlite;worker-handoff;recovery")
+endif()
+
+# S6-H3: one authoritative SQLite game world, 64 real ships / 512 named
+# residents across 4 physically occupied cells and 2-at-a-time bounded OS
+# preflight waves. Host admission rejects concurrent ticks/configuration; the
+# original writer alone commits and handles crash/replay/SQLite recovery.
+if(BUILD_TESTING)
+  add_executable(galaxy_stage06h3_fleet_scale
+    tests/Stage06H3FleetScaleTests.cpp)
+  target_link_libraries(galaxy_stage06h3_fleet_scale
+    PRIVATE galaxy_kernel Threads::Threads)
+  add_test(NAME galaxy_stage06h3_fleet_256
+    COMMAND galaxy_stage06h3_fleet_scale
+      $<TARGET_FILE:galaxy_native_cell_worker>
+      $<TARGET_FILE:galaxy_native_cell_hang_worker>)
+  set_tests_properties(galaxy_stage06h3_fleet_256 PROPERTIES TIMEOUT 300
+    LABELS "stage06;original-world;sqlite;fleet;backpressure;recovery")
+  if(SPACE_ENABLE_1024_ENDURANCE)
+    add_test(NAME galaxy_stage06h3_fleet_1024
+      COMMAND galaxy_stage06h3_fleet_scale
+        $<TARGET_FILE:galaxy_native_cell_worker>
+        $<TARGET_FILE:galaxy_native_cell_hang_worker>)
+    set_tests_properties(galaxy_stage06h3_fleet_1024 PROPERTIES
+      ENVIRONMENT "SPACE_H3_FLEET_TICKS=1024" TIMEOUT 900
+      LABELS "stage06;original-world;sqlite;fleet;scale;recovery")
+  endif()
+endif()
+
+# SGDX-01: private host-incident evidence is independently testable without
+# constructing a second world or modifying the authoritative SQLite writer.
+if(BUILD_TESTING)
+  add_executable(galaxy_server_diagnostics_tests tests/ServerDiagnosticsTests.cpp)
+  target_include_directories(galaxy_server_diagnostics_tests PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include)
+  add_test(NAME galaxy_server_diagnostics COMMAND galaxy_server_diagnostics_tests)
+endif()
+
+# SGDX-01 actual native-host catch path, distinct from the isolated component.
+if(BUILD_TESTING AND Python3_Interpreter_FOUND)
+  add_test(NAME galaxy_server_diagnostics_native_hosts
+    COMMAND ${Python3_EXECUTABLE}
+      ${CMAKE_CURRENT_SOURCE_DIR}/tests/SGDX01HostExceptionTests.py
+      $<TARGET_FILE:galaxy_colony_live_host>
+      $<TARGET_FILE:galaxy_interactive_host>)
+  set_tests_properties(galaxy_server_diagnostics_native_hosts
+    PROPERTIES TIMEOUT 40)
+endif()
+
+# SGDX-02: independent native host/worker supervisor. It never links to or
+# mutates the authoritative game kernel; game stdout is forwarded unchanged.
+add_executable(galaxy_server_dx_supervisor src/server_dx_supervisor.cpp)
+target_include_directories(galaxy_server_dx_supervisor PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR}/include)
+if(WIN32)
+  target_link_libraries(galaxy_server_dx_supervisor PRIVATE Dbghelp Advapi32)
+  # Genuine physical-SCM-only gate executable. The native test never installs
+  # a Windows service or executes against the owner's physical computer.
+  add_executable(galaxy_stage6g_windows_scm_gate
+    src/stage06g_windows_scm_gate.cpp)
+  target_link_libraries(galaxy_stage6g_windows_scm_gate PRIVATE Advapi32)
+endif()
+if(BUILD_TESTING)
+  add_executable(galaxy_server_dx_fault_child tests/ServerDx02FaultChild.cpp)
+  target_include_directories(galaxy_server_dx_fault_child PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include)
+  target_link_libraries(galaxy_server_dx_fault_child PRIVATE Threads::Threads)
+  if(Python3_Interpreter_FOUND)
+    add_test(NAME galaxy_server_dx_supervisor
+      COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/SGDX02SupervisorTests.py
+        $<TARGET_FILE:galaxy_server_dx_supervisor>
+        $<TARGET_FILE:galaxy_server_dx_fault_child>)
+    set_tests_properties(galaxy_server_dx_supervisor PROPERTIES TIMEOUT 120)
+    add_test(NAME galaxy_stage06g_cgroup_admission_contract
+      COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/Stage06GDelegatedCgroupAcceptance.py
+        $<TARGET_FILE:galaxy_server_dx_supervisor>
+        $<TARGET_FILE:galaxy_server_dx_fault_child>)
+    set_tests_properties(galaxy_stage06g_cgroup_admission_contract
+      PROPERTIES TIMEOUT 25 LABELS "native;fail-closed;not-delegated-cgroup-proof")
+
+    add_test(NAME galaxy_server_dx_sqlite_recovery
+      COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/SGDX02SqliteRecoveryTests.py
+        $<TARGET_FILE:galaxy_server_dx_supervisor>)
+    set_tests_properties(galaxy_server_dx_sqlite_recovery PROPERTIES TIMEOUT 90)
+    add_test(NAME galaxy_server_dx_game_hosts
+      COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/SGDX02GameHostTests.py
+        $<TARGET_FILE:galaxy_server_dx_supervisor>
+        $<TARGET_FILE:galaxy_colony_live_host>
+        $<TARGET_FILE:galaxy_interactive_host>
+        $<TARGET_FILE:galaxy_native_cell_worker>)
+    set_tests_properties(galaxy_server_dx_game_hosts PROPERTIES TIMEOUT 240)
+  endif()
+endif()
+
+# SGDX-02 Windows NTFS incident ACLs are used in native game-host and
+# original worker-diagnostic paths, not only by the external dump utility.
+if(WIN32)
+  foreach(dx_target IN ITEMS
+      galaxy_kernel galaxy_colony_live_host galaxy_interactive_host
+      galaxy_server_diagnostics_tests galaxy_server_dx_fault_child)
+    if(TARGET ${dx_target})
+      target_link_libraries(${dx_target} PRIVATE Advapi32)
+    endif()
+  endforeach()
+endif()
+
+# SPACE-05M: exact-source snapshot upgrade and multi-star genesis boundary.
+if(BUILD_TESTING)
+  add_executable(galaxy_space05m_upgrade_boundaries_tests
+    tests/SPACE05M_SnapshotMigrationGenesisTests.cpp)
+  target_link_libraries(galaxy_space05m_upgrade_boundaries_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_space05m_upgrade_boundaries
+    COMMAND galaxy_space05m_upgrade_boundaries_tests)
+endif()
+
+# FP3D-02C: host-only bounded walking inside registered owned hull.
+# Durable receipts live in the native SQLite world, but full operation-log
+# reconciliation and Godot command authorization are future gates.
+add_library(galaxy_fp3d02c_interior STATIC src/NativeInteriorMovement.cpp)
+target_link_libraries(galaxy_fp3d02c_interior PUBLIC galaxy_kernel SQLite::SQLite3)
+target_include_directories(galaxy_fp3d02c_interior PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+if(BUILD_TESTING)
+  add_executable(galaxy_fp3d02c_interior_tests tests/FP3D02C_NativeInteriorMovementTests.cpp)
+  target_link_libraries(galaxy_fp3d02c_interior_tests PRIVATE galaxy_fp3d02c_interior)
+  add_test(NAME galaxy_fp3d02c_interior_authority
+    COMMAND galaxy_fp3d02c_interior_tests ${CMAKE_CURRENT_BINARY_DIR}/fp3d02c-test.sqlite)
+  set_tests_properties(galaxy_fp3d02c_interior_authority PROPERTIES TIMEOUT 90)
+endif()
+
+# FP3D-02F: true native-world atomic movement from local Godot child stdio.
+# No Python/browser/HTTP relay; client inputs are bounded and identity is not client-selected.
+add_executable(galaxy_desktop_player_host
+  src/desktop_player_host.cpp src/desktop_planet_transfer.cpp)
+target_link_libraries(galaxy_desktop_player_host PRIVATE galaxy_fp3d02c_interior)
+# S6-F5-E: genuine landed ORIGINAL native host, autonomous SQLite ticks,
+# forced process death, no offline replay, fresh epoch, and journal readback.
+# This does not replace installed Godot/SGDX/physical Windows acceptance.
+# S6-G: native exact-save v127-v135 historical migration, failpoint
+# rollback, canonical mass invariants and 1024 durable Stage 6 source ticks.
+if(BUILD_TESTING)
+  add_executable(galaxy_stage06d7_freight_tests
+    tests/Stage06D7FreightTests.cpp)
+  target_link_libraries(galaxy_stage06d7_freight_tests PRIVATE galaxy_kernel)
+  add_executable(galaxy_stage06g_consolidated_migration_tests
+    tests/Stage06GConsolidatedMigrationTests.cpp)
+  target_link_libraries(galaxy_stage06g_consolidated_migration_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_stage06g_consolidated_migration
+    COMMAND galaxy_stage06g_consolidated_migration_tests
+      ${CMAKE_CURRENT_BINARY_DIR}/stage06g-consolidated.sqlite)
+  set_tests_properties(galaxy_stage06g_consolidated_migration
+    PROPERTIES TIMEOUT 600 LABELS "stage6;integration;sqlite;migration;1024-ticks")
+endif()
+if(BUILD_TESTING AND Python3_Interpreter_FOUND)
+  add_executable(galaxy_stage6f5e_planet_host_fixture
+    tests/STAGE6F5E_PlanetHostFixture.cpp)
+  target_link_libraries(galaxy_stage6f5e_planet_host_fixture PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_stage06d7_geological_freight
+    COMMAND ${Python3_EXECUTABLE}
+      ${CMAKE_CURRENT_SOURCE_DIR}/tests/Stage06D7FreightMatrix.py
+      $<TARGET_FILE:galaxy_stage6f5e_planet_host_fixture>
+      $<TARGET_FILE:galaxy_stage06d7_freight_tests>)
+  set_tests_properties(galaxy_stage06d7_geological_freight
+    PROPERTIES TIMEOUT 480 LABELS "stage6;geology;freight;original-sqlite;schema")
+  add_test(NAME galaxy_stage06g_original_named_npc_movement
+    COMMAND ${Python3_EXECUTABLE}
+      ${CMAKE_CURRENT_SOURCE_DIR}/tests/Stage06GNamedNPCMovement.py
+      $<TARGET_FILE:galaxy_stage6f5e_planet_host_fixture>
+      $<TARGET_FILE:galaxy_desktop_player_host>)
+  set_tests_properties(galaxy_stage06g_original_named_npc_movement
+    PROPERTIES TIMEOUT 480 LABELS "stage6;named-npc;native-host;sqlite;recovery")
+  add_test(NAME galaxy_stage6f5e_planet_host_recovery
+    COMMAND ${Python3_EXECUTABLE}
+      ${CMAKE_CURRENT_SOURCE_DIR}/tests/STAGE6F5E_PlanetHostRecoveryTests.py
+      $<TARGET_FILE:galaxy_stage6f5e_planet_host_fixture>
+      $<TARGET_FILE:galaxy_desktop_player_host>)
+  set_tests_properties(galaxy_stage6f5e_planet_host_recovery
+    PROPERTIES TIMEOUT 300 LABELS "stage6;native;sqlite;host-crash-recovery")
+  # S6-F5-F: one ORIGINAL constructed site and shuttle, process crash and
+  # new epoch, physical descent/surface reboard/ascent/return, journal parity.
+  add_test(NAME galaxy_stage6f5f_original_shuttle_roundtrip
+    COMMAND ${Python3_EXECUTABLE}
+      ${CMAKE_CURRENT_SOURCE_DIR}/tests/STAGE6F5F_InstalledShuttleRecoveryTests.py
+      $<TARGET_FILE:galaxy_stage6f5e_planet_host_fixture>
+      $<TARGET_FILE:galaxy_desktop_player_host>)
+  set_tests_properties(galaxy_stage6f5f_original_shuttle_roundtrip
+    PROPERTIES TIMEOUT 420 LABELS "stage6;native;sqlite;shuttle;crash-recovery")
+  add_test(NAME galaxy_stage6f6_original_role_reconciliation
+    COMMAND ${Python3_EXECUTABLE}
+      ${CMAKE_CURRENT_SOURCE_DIR}/tests/STAGE6F6_RecoveryPreflightTests.py
+      $<TARGET_FILE:galaxy_stage6f5e_planet_host_fixture>
+      $<TARGET_FILE:galaxy_desktop_player_host>)
+  set_tests_properties(galaxy_stage6f6_original_role_reconciliation
+    PROPERTIES TIMEOUT 450 LABELS "stage6;native;sqlite;recovery;one-writer")
+  add_test(NAME galaxy_stage06g_original_world_audit_matrix
+    COMMAND ${Python3_EXECUTABLE}
+      ${CMAKE_CURRENT_SOURCE_DIR}/tests/Stage06GOriginalWorldAuditMatrix.py
+      $<TARGET_FILE:galaxy_stage6f5e_planet_host_fixture>
+      $<TARGET_FILE:galaxy_desktop_player_host>)
+  set_tests_properties(galaxy_stage06g_original_world_audit_matrix
+    PROPERTIES TIMEOUT 450 LABELS "stage6;integration;sqlite;origins;one-writer")
+endif()
+if(BUILD_TESTING AND Python3_Interpreter_FOUND)
+  add_test(NAME galaxy_stage6f5c_original_planet_host_refusal
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/STAGE6F5C_PlanetHostNoGenesisTests.py
+      $<TARGET_FILE:galaxy_desktop_player_host>)
+  set_tests_properties(galaxy_stage6f5c_original_planet_host_refusal PROPERTIES TIMEOUT 90)
+endif()
+if(BUILD_TESTING AND Python3_Interpreter_FOUND)
+  add_test(NAME galaxy_fp3d02f_local_authorized_pipe
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/FP3D02F_DesktopCommandPipelineTests.py
+      $<TARGET_FILE:galaxy_desktop_player_host>)
+  set_tests_properties(galaxy_fp3d02f_local_authorized_pipe PROPERTIES TIMEOUT 90)
+endif()
+
+# FP3D-03B — original Simulation cockpit piloting and recovery acceptance.
+# Uses the same native SQLite/kernel and actual binary as the desktop game.
+if(BUILD_TESTING)
+  add_executable(galaxy_fp3d03b_cockpit_flight_tests
+    tests/FP3D03B_CockpitFlightTests.cpp)
+  target_link_libraries(galaxy_fp3d03b_cockpit_flight_tests PRIVATE galaxy_fp3d02c_interior)
+  add_test(NAME galaxy_fp3d03b_cockpit_flight
+    COMMAND galaxy_fp3d03b_cockpit_flight_tests
+      ${CMAKE_CURRENT_BINARY_DIR}/fp3d03b-flight.sqlite)
+  set_tests_properties(galaxy_fp3d03b_cockpit_flight PROPERTIES TIMEOUT 90)
+endif()
+
+if(BUILD_TESTING AND Python3_Interpreter_FOUND)
+  add_test(NAME galaxy_fp3d03b_native_flight_pipe
+    COMMAND ${Python3_EXECUTABLE}
+      ${CMAKE_CURRENT_SOURCE_DIR}/tests/FP3D03B_CockpitPipeTests.py
+      $<TARGET_FILE:galaxy_desktop_player_host>)
+  set_tests_properties(galaxy_fp3d03b_native_flight_pipe PROPERTIES TIMEOUT 90)
+endif()
+
+# PLAY-STATION-01 — a real one-tonne finite resource round-trip.
+# This tests the existing native ship/hangar/shipboard refinery, not fictional
+# station-resident player custody or a station-owned refinery.
+if(BUILD_TESTING)
+  add_executable(galaxy_play_station_mining_refining_e2e
+    tests/PLAY_STATION_MINING_REFINING_E2E.cpp)
+  target_link_libraries(galaxy_play_station_mining_refining_e2e PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_play_station_mining_refining_e2e
+    COMMAND galaxy_play_station_mining_refining_e2e
+      ${CMAKE_CURRENT_BINARY_DIR}/play-station-mining-refining.sqlite)
+  set_tests_properties(galaxy_play_station_mining_refining_e2e PROPERTIES TIMEOUT 90)
+endif()
+
+# PLAY-STATION-02: original player-person native station/berth custody.
+if(BUILD_TESTING)
+  add_executable(galaxy_play_station_boarding_tests tests/PLAY_STATION_02_BoardingTests.cpp)
+  target_link_libraries(galaxy_play_station_boarding_tests PRIVATE galaxy_fp3d02c_interior SQLite::SQLite3)
+  add_test(NAME galaxy_play_station_boarding
+      COMMAND galaxy_play_station_boarding_tests ${CMAKE_CURRENT_BINARY_DIR}/play_station02.sqlite)
+  set_tests_properties(galaxy_play_station_boarding PROPERTIES TIMEOUT 90)
+endif()
+
+# PLAY-STATION-03A: isolated, exact-kg station batch engine tied to the
+# original kernel mineral_profile(). Full PersistentWorld action/journal
+# wiring remains a separate acceptance gate; this is NOT a full station run.
+if(BUILD_TESTING)
+  add_executable(galaxy_play_station03a_refinery_ledger_tests
+    tests/PLAY_STATION_03A_RefineryLedgerTests.cpp)
+  target_link_libraries(galaxy_play_station03a_refinery_ledger_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_play_station03a_refinery_ledger
+    COMMAND galaxy_play_station03a_refinery_ledger_tests)
+  set_tests_properties(galaxy_play_station03a_refinery_ledger PROPERTIES TIMEOUT 30)
+endif()
+
+# PLAY-STATION-02 standalone native station/boarding test fixture.
+# Dock services are compiled into the original native station host.
+# This focused source test is staged for the eventual consolidated native gate.
+if(BUILD_TESTING)
+  add_executable(galaxy_dock_logistics_tests tests/DockLogisticsTests.cpp)
+  target_link_libraries(galaxy_dock_logistics_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_dock_logistics_baseline COMMAND galaxy_dock_logistics_tests)
+  add_executable(galaxy_dock03_physical_workforce_tests
+    tests/Dock03PhysicalWorkforceTests.cpp)
+  target_link_libraries(galaxy_dock03_physical_workforce_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_dock03_physical_workforce
+    COMMAND galaxy_dock03_physical_workforce_tests
+    "${CMAKE_CURRENT_BINARY_DIR}/dock03_world.sqlite")
+  add_executable(galaxy_dock04_traffic_tests tests/Dock04PassengerFreightTests.cpp)
+  target_link_libraries(galaxy_dock04_traffic_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_dock04_original_boarding_and_cohorts
+    COMMAND galaxy_dock04_traffic_tests
+    "${CMAKE_CURRENT_BINARY_DIR}/dock04_world.sqlite")
+  add_executable(galaxy_dock05_intercolony_tests
+    tests/Dock05IntercolonyPassengerTests.cpp)
+  target_link_libraries(galaxy_dock05_intercolony_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_dock05_native_intercolony_arrival
+    COMMAND galaxy_dock05_intercolony_tests
+    "${CMAKE_CURRENT_BINARY_DIR}/dock05_world.sqlite")
+  add_executable(galaxy_dock06_corridor_tests
+    tests/Dock06NativeCorridorTests.cpp)
+  target_link_libraries(galaxy_dock06_corridor_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_dock06_original_npc_corridor
+    COMMAND galaxy_dock06_corridor_tests
+    "${CMAKE_CURRENT_BINARY_DIR}/dock06_world.sqlite")
+  # DOCK-07 source-only: original colony industrial stock, permissions,
+  # native workshop job approval gates and durable SQLite reopening.
+  add_executable(galaxy_dock07_industry_tests
+    tests/Dock07ColonyIndustryTests.cpp)
+  target_link_libraries(galaxy_dock07_industry_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_dock07_local_industry
+    COMMAND galaxy_dock07_industry_tests
+    "${CMAKE_CURRENT_BINARY_DIR}/dock07_world.sqlite")
+  # DOCK-08 staged native original industrial facility + named-NPC proof.
+  add_executable(galaxy_dock08_management_tests
+    tests/Dock08ColonyManagementTests.cpp)
+  target_link_libraries(galaxy_dock08_management_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_dock08_colony_facility_workforce
+    COMMAND galaxy_dock08_management_tests
+    "${CMAKE_CURRENT_BINARY_DIR}/dock08_world.sqlite")
+  # DOCK-09 native original hull -> ore -> outpost -> workforce -> goods.
+  add_executable(galaxy_dock09_vertical_slice_tests
+    tests/Dock09IndustrialVerticalSliceTests.cpp)
+  target_link_libraries(galaxy_dock09_vertical_slice_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_dock09_original_colony_industry_vertical
+    COMMAND galaxy_dock09_vertical_slice_tests
+    "${CMAKE_CURRENT_BINARY_DIR}/dock09_world.sqlite")
+endif()
+add_executable(galaxy_desktop_station_host src/desktop_station_host.cpp)
+target_link_libraries(galaxy_desktop_station_host PRIVATE galaxy_kernel)
+if(BUILD_TESTING AND Python3_Interpreter_FOUND)
+  add_test(NAME galaxy_dock03_original_native_pipe
+    COMMAND ${Python3_EXECUTABLE}
+      ${CMAKE_CURRENT_SOURCE_DIR}/tests/Dock03NativeStationPipe.py
+      $<TARGET_FILE:galaxy_desktop_station_host>)
+  set_tests_properties(galaxy_dock03_original_native_pipe PROPERTIES TIMEOUT 75)
+endif()
+if(BUILD_TESTING AND Python3_Interpreter_FOUND)
+  add_test(NAME galaxy_play_station02_native_pipe
+    COMMAND ${Python3_EXECUTABLE}
+      ${CMAKE_CURRENT_SOURCE_DIR}/tests/PLAY_STATION_02_DesktopPipeTests.py
+      $<TARGET_FILE:galaxy_desktop_station_host>
+      $<TARGET_FILE:galaxy_desktop_player_host>)
+  set_tests_properties(galaxy_play_station02_native_pipe PROPERTIES TIMEOUT 90)
+endif()
+
+# PLAY-STATION-03B — persistent original-world ore provenance, actual built
+# station refinery, source-stock recovery and SQLite STEP receipt integrity.
+if(BUILD_TESTING)
+  add_executable(galaxy_play_station03b_persistent_refinery_tests
+    tests/PLAY_STATION_03B_PersistentRefineryTests.cpp)
+  target_link_libraries(galaxy_play_station03b_persistent_refinery_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_play_station03b_persistent_refinery
+    COMMAND galaxy_play_station03b_persistent_refinery_tests
+      ${CMAKE_CURRENT_BINARY_DIR}/play_station03b.sqlite)
+  set_tests_properties(galaxy_play_station03b_persistent_refinery PROPERTIES TIMEOUT 120)
+endif()
+
+# PLAY-STATION-03C: real station child-host refinery terminal, actual SQLite
+# source lots, native command execution, independent restart + mineral readback.
+if(BUILD_TESTING AND Python3_Interpreter_FOUND)
+  add_test(NAME galaxy_play_station03c_refinery_native_pipe
+    COMMAND ${Python3_EXECUTABLE}
+      ${CMAKE_CURRENT_SOURCE_DIR}/tests/PLAY_STATION_03C_RefineryHostPipeTests.py
+      $<TARGET_FILE:galaxy_play_station03b_persistent_refinery_tests>
+      $<TARGET_FILE:galaxy_desktop_station_host>)
+  set_tests_properties(galaxy_play_station03c_refinery_native_pipe
+    PROPERTIES TIMEOUT 180)
+endif()
+
+# PLAY-STATION-04C: a real previously mined geological tonne still aboard
+# a docked owned ship; host verifies terminal range, original one-tonne
+# UNLOAD, lot identity, subsequent 1000kg refinery and SQLite restart.
+if(BUILD_TESTING AND Python3_Interpreter_FOUND)
+  add_test(NAME galaxy_play_station04c_native_unload_pipe
+    COMMAND ${Python3_EXECUTABLE}
+      ${CMAKE_CURRENT_SOURCE_DIR}/tests/PLAY_STATION_04C_UnloadPipeTests.py
+      $<TARGET_FILE:galaxy_play_station03b_persistent_refinery_tests>
+      $<TARGET_FILE:galaxy_desktop_station_host>)
+  set_tests_properties(galaxy_play_station04c_native_unload_pipe
+    PROPERTIES TIMEOUT 180 LABELS "native;sqlite;physical-unload")
+endif()
+
+# PLAY-STATION-04A: original 3D rock-contact and finite unmined-ore snapshot
+# without any Godot-side asteroid authority or default mining equipment.
+if(BUILD_TESTING)
+  add_executable(galaxy_play_station04a_original_asteroid_contact_tests
+    tests/PLAY_STATION_04A_ContactTests.cpp)
+  target_link_libraries(galaxy_play_station04a_original_asteroid_contact_tests
+    PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_play_station04a_original_asteroid_contact
+    COMMAND galaxy_play_station04a_original_asteroid_contact_tests)
+  set_tests_properties(galaxy_play_station04a_original_asteroid_contact
+    PROPERTIES TIMEOUT 40)
+endif()
+
+# PLAY-STATION-04A real child-stdio asteroid contact, same original SQLite world.
+if(BUILD_TESTING)
+  add_executable(galaxy_play_station04a_native_rock_seed
+    tests/PLAY_STATION_04A_NativeRockSeed.cpp)
+  target_link_libraries(galaxy_play_station04a_native_rock_seed PRIVATE galaxy_kernel)
+  if(Python3_Interpreter_FOUND)
+    add_test(NAME galaxy_play_station04a_original_rock_native_pipe
+      COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/PLAY_STATION_04A_NativeRockPipeTests.py
+        $<TARGET_FILE:galaxy_play_station04a_native_rock_seed>
+        $<TARGET_FILE:galaxy_desktop_player_host>)
+    set_tests_properties(galaxy_play_station04a_original_rock_native_pipe
+      PROPERTIES TIMEOUT 90)
+  endif()
+endif()
+
+# FP3D-ENV-01: real v125 3D asteroid obstacle sweep and SQLite restart.
+if(BUILD_TESTING)
+  add_executable(galaxy_fp3d_env01_swept_collision_tests tests/FP3D_ENV01_SweptCollisionTests.cpp)
+  target_link_libraries(galaxy_fp3d_env01_swept_collision_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_fp3d_env01_swept_collision COMMAND galaxy_fp3d_env01_swept_collision_tests
+    ${CMAKE_CURRENT_BINARY_DIR}/fp3d_env01_collision.sqlite)
+  set_tests_properties(galaxy_fp3d_env01_swept_collision PROPERTIES TIMEOUT 120)
+  if(Python3_Interpreter_FOUND)
+    add_test(NAME galaxy_fp3d_env01_native_collision_pipe
+      COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/FP3D_ENV01_NativeCollisionPipeTests.py
+        $<TARGET_FILE:galaxy_play_station04a_native_rock_seed>
+        $<TARGET_FILE:galaxy_desktop_player_host>)
+    set_tests_properties(galaxy_fp3d_env01_native_collision_pipe PROPERTIES TIMEOUT 150)
+  endif()
+endif()
+
+# SGDX-03: exact original Godot -> SGDX -> native C++ bidirectional pipe;
+# induced crash, externally killed child/supervisor, Linux SQLite recovery and
+# opt-in Windows second-chance private MDMP, independently from UI/snapshots.
+if(BUILD_TESTING AND Python3_Interpreter_FOUND)
+  # Four simultaneous *independent* real SQLite planetary hosts, 256+
+  # committed ticks per original world, actual guardian death and recovery.
+  # This is not a true intercell network or physical installed GPU test.
+  execute_process(COMMAND git rev-parse HEAD
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    OUTPUT_VARIABLE STAGE06G_EXACT_SOURCE_SHA
+    OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+  string(LENGTH "${STAGE06G_EXACT_SOURCE_SHA}" STAGE06G_SHA_LENGTH)
+  if(STAGE06G_SHA_LENGTH EQUAL 40 AND
+     STAGE06G_EXACT_SOURCE_SHA MATCHES "^[0-9a-f]+$")
+    add_test(NAME galaxy_stage06g_multiworld_crash_recovery
+    COMMAND ${Python3_EXECUTABLE}
+      ${CMAKE_CURRENT_SOURCE_DIR}/tests/Stage06GMultiWorldRecovery.py
+      --single ${CMAKE_CURRENT_SOURCE_DIR}/tests/Stage06GInstalledSupervisor.py
+      --supervisor $<TARGET_FILE:galaxy_server_dx_supervisor>
+      --host $<TARGET_FILE:galaxy_desktop_player_host>
+      --fixture $<TARGET_FILE:galaxy_stage6f5e_planet_host_fixture>
+      --sha ${STAGE06G_EXACT_SOURCE_SHA}
+      --output ${CMAKE_BINARY_DIR}/stage06g-multiworld-recovery.json)
+    set_tests_properties(galaxy_stage06g_multiworld_crash_recovery
+      PROPERTIES TIMEOUT 300 LABELS "native;sqlite;four-original-worlds;recovery")
+  endif()
+  add_test(NAME galaxy_sgdx03_godot_native_bridge
+    COMMAND ${Python3_EXECUTABLE}
+      ${CMAKE_CURRENT_SOURCE_DIR}/tests/SGDX03GodotInteractiveTests.py
+      $<TARGET_FILE:galaxy_server_dx_supervisor>
+      $<TARGET_FILE:galaxy_server_dx_fault_child>
+      $<TARGET_FILE:galaxy_desktop_player_host>
+      $<TARGET_FILE:galaxy_play_station04a_native_rock_seed>)
+  set_tests_properties(galaxy_sgdx03_godot_native_bridge PROPERTIES
+    TIMEOUT 200 LABELS "sgdx;native-godot;sqlite;crash;minidump")
+  add_test(NAME galaxy_sgdx03_godot_source_admission
+    COMMAND ${Python3_EXECUTABLE}
+      ${CMAKE_CURRENT_SOURCE_DIR}/desktop_godot/tests/test_sgdx03_bridge_contract.py)
+  set_tests_properties(galaxy_sgdx03_godot_source_admission PROPERTIES
+    TIMEOUT 20 LABELS "sgdx;source-only")
+endif()
+
+# FP3D-WIN-01 source-wiring preflight: not native or GPU acceptance itself.
+# The single END-OF-GROUP Windows/Linux workflow must subsequently execute
+# MSVC, real Godot 4.7.2 on-screen viewport, package and physical-play gates.
+if(BUILD_TESTING AND Python3_Interpreter_FOUND)
+  add_test(NAME galaxy_fp3d_win01_source_contract
+    COMMAND ${Python3_EXECUTABLE}
+      ${CMAKE_CURRENT_SOURCE_DIR}/desktop_godot/tests/test_fp3d_windowed_acceptance_contract.py)
+  set_tests_properties(galaxy_fp3d_win01_source_contract
+    PROPERTIES TIMEOUT 20 LABELS "source-only;windows-playtest")
+endif()
+
+# GROUP3-A — genuine v126 equipped mining, unchanged original source/ore ledger.
+if(BUILD_TESTING)
+  add_executable(galaxy_group3_fitted_mining_tests tests/PLAY_STATION_04B_MiningTests.cpp)
+  target_link_libraries(galaxy_group3_fitted_mining_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_group3_original_fitted_mining
+    COMMAND galaxy_group3_fitted_mining_tests
+      ${CMAKE_CURRENT_BINARY_DIR}/group3_v126_fitting.sqlite)
+  set_tests_properties(galaxy_group3_original_fitted_mining PROPERTIES TIMEOUT 120)
+endif()
+
+# INT-02 reconciled missing source functions and original native acceptance
+# registrations from the older physical-family, route and mining forks.
+# These are ordinary CTests; CI only at the END OF THE INTEGRATION GROUP.
+if(BUILD_TESTING)
+  add_executable(galaxy_int02_two_household_tests
+    tests/INT02_TwoHouseholdOriginalRecoveryTests.cpp)
+  target_link_libraries(galaxy_int02_two_household_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_int02_original_two_households
+    COMMAND galaxy_int02_two_household_tests)
+  set_tests_properties(galaxy_int02_original_two_households
+    PROPERTIES TIMEOUT 120 LABELS "int02;native;family;sqlite")
+
+  add_executable(galaxy_int02_authenticated_routes_tests
+    tests/COLONY_EXIT01E_RouteCoordinatorTests.cpp)
+  target_include_directories(galaxy_int02_authenticated_routes_tests PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include)
+  add_test(NAME galaxy_int02_authenticated_routes
+    COMMAND galaxy_int02_authenticated_routes_tests)
+  set_tests_properties(galaxy_int02_authenticated_routes
+    PROPERTIES TIMEOUT 20 LABELS "int02;source;route")
+
+  add_executable(galaxy_int02_original_mining_seed
+    tests/PLAY_STATION_04B_NativeMiningSeed.cpp)
+  target_link_libraries(galaxy_int02_original_mining_seed PRIVATE galaxy_kernel)
+endif()
+if(BUILD_TESTING AND Python3_Interpreter_FOUND)
+  add_test(NAME galaxy_int02_original_mining_pipe
+    COMMAND ${Python3_EXECUTABLE}
+      ${CMAKE_CURRENT_SOURCE_DIR}/tests/PLAY_STATION_04B_NativeMiningPipeTests.py
+      $<TARGET_FILE:galaxy_int02_original_mining_seed>
+      $<TARGET_FILE:galaxy_desktop_player_host>)
+  set_tests_properties(galaxy_int02_original_mining_pipe
+    PROPERTIES TIMEOUT 150 LABELS "int02;native;mining;sqlite;pipe")
+endif()
+
+# GROUP3-B read-only capped 8.5km original-space optical asteroid survey.
+if(BUILD_TESTING)
+  add_executable(galaxy_group3_asteroid_survey_tests tests/Group3AsteroidSurveyTests.cpp)
+  target_link_libraries(galaxy_group3_asteroid_survey_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_group3_original_asteroid_survey
+    COMMAND galaxy_group3_asteroid_survey_tests)
+  set_tests_properties(galaxy_group3_original_asteroid_survey PROPERTIES TIMEOUT 50)
+endif()
+
+# GROUP3-C actual child-stdio pilot/fitting/MINE and original SQLite recovery.
+if(BUILD_TESTING AND Python3_Interpreter_FOUND)
+  add_executable(galaxy_group3_native_mining_seed tests/Group3NativeMiningSeed.cpp)
+  target_link_libraries(galaxy_group3_native_mining_seed PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_group3_native_mining_pipe
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/Group3NativeMiningPipeTests.py
+      $<TARGET_FILE:galaxy_group3_native_mining_seed>
+      $<TARGET_FILE:galaxy_desktop_player_host>)
+  set_tests_properties(galaxy_group3_native_mining_pipe PROPERTIES TIMEOUT 180)
+endif()
+
+# GROUP3-D/E: actual v126 drill -> finite 1t rock -> original ship/hangar
+# -> real staffed/powered refinery -> mineral custody and provenance. The
+# INDUSTRY-01 catalogue prevents claiming unapproved drill manufacturing.
+if(BUILD_TESTING)
+  add_executable(galaxy_group3_station_custody_tests tests/Group3StationCustodyE2E.cpp)
+  target_link_libraries(galaxy_group3_station_custody_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_group3_original_station_custody
+    COMMAND galaxy_group3_station_custody_tests
+      ${CMAKE_CURRENT_BINARY_DIR}/group3_station_custody.sqlite)
+  set_tests_properties(galaxy_group3_original_station_custody PROPERTIES TIMEOUT 200)
+endif()
+
+# GROUP3-RESOURCE — read-only original station mineral identities and
+# conservation against the existing INDUSTRY-01 legacy-unit register.
+# Does NOT turn station concentrate into manufacturing feed.
+if(BUILD_TESTING)
+  add_executable(galaxy_group3_station_identity_tests
+    tests/Group3StationMaterialIdentityTests.cpp)
+  target_link_libraries(galaxy_group3_station_identity_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_group3_station_material_identity
+    COMMAND galaxy_group3_station_identity_tests)
+  set_tests_properties(galaxy_group3_station_material_identity PROPERTIES TIMEOUT 90)
+endif()
+
+# GROUP3 resource-first original cockpit: no fabricated drill or other
+# automatic module, genuine source-lot 1t MINE and physical SQLite restart.
+if(BUILD_TESTING AND Python3_Interpreter_FOUND)
+  add_executable(galaxy_group3_original_resource_seed
+    tests/Group3ResourceMiningSeed.cpp)
+  target_link_libraries(galaxy_group3_original_resource_seed PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_group3_original_ore_pilot_pipe
+    COMMAND ${Python3_EXECUTABLE}
+      ${CMAKE_CURRENT_SOURCE_DIR}/tests/Group3ResourceMiningPipeTests.py
+      $<TARGET_FILE:galaxy_group3_original_resource_seed>
+      $<TARGET_FILE:galaxy_desktop_player_host>)
+  set_tests_properties(galaxy_group3_original_ore_pilot_pipe PROPERTIES TIMEOUT 180)
+endif()
+
+# Stage 7 POP-01: the first original population/household source-backed gate.
+# No cloned NPC registry: one canonical Simulation and independent SQLite copy.
+if(BUILD_TESTING)
+  add_executable(galaxy_stage07_population_household_tests
+    tests/Stage07PopulationHouseholdTests.cpp)
+  target_link_libraries(galaxy_stage07_population_household_tests
+    PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_stage07_population_households
+    COMMAND galaxy_stage07_population_household_tests)
+  set_tests_properties(galaxy_stage07_population_households PROPERTIES
+    TIMEOUT 120
+    LABELS "stage07;original-world;population;households;sqlite;recovery")
+endif()
+
+# Stage 7 POP-02: same original native family/physical custody executables,
+# now asserting the Stage 7 current-world birth and migration projections.
+if(BUILD_TESTING)
+  add_test(NAME galaxy_stage07_household_lifecycle_birth
+    COMMAND galaxy_colony_auto04d4d2_physical_tests)
+  add_test(NAME galaxy_stage07_household_lifecycle_migration
+    COMMAND v59_paired_household_settlement)
+  set_tests_properties(galaxy_stage07_household_lifecycle_birth
+    galaxy_stage07_household_lifecycle_migration PROPERTIES TIMEOUT 180
+    LABELS "stage07;original-world;household-lifecycle;sqlite;recovery")
+endif()
+
+# Stage 7 POP-03 source-only staging: the original WO2 industrial workforce
+# remains the sole real worker/skill/supply authority; no new production path.
+if(BUILD_TESTING)
+  add_test(NAME galaxy_stage07_delegated_labor
+    COMMAND galaxy_wo2_industry_workforce_tests)
+  set_tests_properties(galaxy_stage07_delegated_labor PROPERTIES TIMEOUT 180
+    LABELS "stage07;original-world;delegated-labor;sqlite;real-production")
+endif()
+
+# Stage 7 POP-04: original citizen appraisal and independently verified
+# actual workshop material/skill economy, with existing governance authority.
+if(BUILD_TESTING)
+  add_executable(galaxy_stage07_society_economy_tests
+    tests/Stage07SocietyEconomyTests.cpp)
+  target_link_libraries(galaxy_stage07_society_economy_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_stage07_society_economy
+    COMMAND galaxy_stage07_society_economy_tests)
+  set_tests_properties(galaxy_stage07_society_economy PROPERTIES TIMEOUT 180
+    LABELS "stage07;autonomous-society;actual-economy;original-law;sqlite;recovery")
+endif()
+
+# Stage 7 POP-06: original citizen social diary, independently authorized
+# immutable legal-policy epoch, one-generation delay and SQLite recovery.
+if(BUILD_TESTING)
+  add_test(NAME galaxy_stage07_civic_policy
+    COMMAND galaxy_stage07_society_economy_tests)
+  set_tests_properties(galaxy_stage07_civic_policy PROPERTIES TIMEOUT 180
+    LABELS "stage07;real-npc;original-owner-consent;constitutional-epoch;sqlite;replay-denial")
+endif()
+
+# Stage 7 POP-05: original cross-domain duty collision, world-authoritative
+# staff reservation, one-use medical care and genuine dock restart tests.
+# Original tests remain separately required, never replaced by aliases.
+if(BUILD_TESTING)
+  add_test(NAME galaxy_stage07_duty_workshop
+    COMMAND galaxy_wo2_industry_workforce_tests)
+  add_test(NAME galaxy_stage07_duty_medical
+    COMMAND v59_medical_recovery)
+  add_test(NAME galaxy_stage07_duty_dock
+    COMMAND galaxy_dock03_physical_workforce_tests
+    "${CMAKE_CURRENT_BINARY_DIR}/stage07_dock03_world.sqlite")
+  set_tests_properties(
+    galaxy_stage07_duty_workshop
+    galaxy_stage07_duty_medical
+    galaxy_stage07_duty_dock
+    PROPERTIES TIMEOUT 180
+    LABELS "stage07;original-sqlite;exclusive-labor;recovery")
+endif()
+
+# POP-08: one named citizen -> source-backed native vital transfer, original
+# physical freight refusal and a separately approved original legal epoch.
+# Original WO4/WO5 tests remain independent; no shadow commerce inventory.
+if(BUILD_TESTING)
+  add_executable(galaxy_stage07_resident_economy_tests
+    tests/Stage07ResidentEconomyTests.cpp)
+  target_link_libraries(galaxy_stage07_resident_economy_tests
+    PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_stage07_resident_economy
+    COMMAND galaxy_stage07_resident_economy_tests)
+  add_test(NAME galaxy_stage07_resident_legal_consequence
+    COMMAND galaxy_stage07_resident_economy_tests)
+  set_tests_properties(galaxy_stage07_resident_economy
+    galaxy_stage07_resident_legal_consequence PROPERTIES TIMEOUT 180
+    LABELS "stage07;real-resident;original-economic-transfer;governance;sqlite-recovery")
 endif()

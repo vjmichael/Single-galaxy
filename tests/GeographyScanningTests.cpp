@@ -44,16 +44,52 @@ static void scanning_and_probes() {
     CHECK(sensors.directional(3,{0,0},220,30,20000).empty());
     CHECK(sensors.directional(3,{0,0},45,30,5000).empty());
     CHECK(sensors.probe_scan(7,3,1,4000,90).empty());
+    auto contacts= sensors.coarse_signatures(7,3,{0,0},20000,40);
+    CHECK(contacts.size()==1 && contacts[0].site==104);
+    CHECK(contacts[0].coarse_center.x==10000 && contacts[0].coarse_center.y==0);
+    CHECK(contacts[0].uncertainty_radius_mm==5000);
+    CHECK(sensors.coarse_signatures(7,3,{0,0},20000,20).size()==1);
+    CHECK(sensors.coarse_signatures(7,3,{0,0},20000,10).empty());
     sensors.register_probe(99,7);sensors.register_probe(100,7);
     CHECK(!sensors.deploy(99,8,3,{9000,2000}));
     CHECK(sensors.deploy(99,7,3,{9000,2000}));
+    CHECK(!sensors.plan_refinement(8,3,104,{0,0},20000,2000,40).has_value());
+    CHECK(!sensors.plan_refinement(7,3,105,{0,0},20000,2000,40).has_value());
+    CHECK(!sensors.plan_refinement(7,3,104,{0,0},5000,2000,40).has_value());
+    auto plan=sensors.plan_refinement(7,3,104,{0,0},20000,2000,40);
+    CHECK(plan.has_value() && plan->site==104 && plan->waypoints.size()==1);
+    CHECK(plan->waypoints[0].first==99);
     CHECK(!sensors.deploy(99,7,3,{9000,2000}));
     auto first=sensors.probe_scan(7,3,4,1000,40);
     CHECK(first.size()==1 && first[0].site==104 && first[0].confidence>=50);
     CHECK(first[0].estimated_position.x==10000 && first[0].estimated_position.y==2500);
     CHECK(sensors.probe_scan(8,3,4,1000,90).empty());
     CHECK(sensors.deploy(100,7,3,{9000,2000}));
+    auto dual=sensors.plan_refinement(7,3,104,{0,0},20000,2000,40);
+    CHECK(dual.has_value() && dual->waypoints.size()==2);
+    CHECK(dual->waypoints[0].second.x!=dual->waypoints[1].second.x);
+    // The host advances finite probes over actual steps. A plan alone
+    // yields no sample or instantaneous change in the sensor projection.
+    const auto prior=sensors.probe_scan(7,3,5,5000,40);
+    CHECK(prior.size()==1 && prior[0].confidence==first[0].confidence);
+    CHECK(!sensors.advance_refinement(8,3,104,{0,0},20000,2000,40,250));
+    bool arrived=false;
+    for(int step=0;step<100 && !arrived;++step)
+        arrived=sensors.advance_refinement(7,3,104,{0,0},20000,2000,40,250);
+    CHECK(arrived);
+    const auto after=sensors.probe_scan(7,3,6,5000,40);
+    CHECK(after.size()==1 && after[0].confidence>prior[0].confidence);
     CHECK(sensors.probe_scan(7,3,5,1000,40)[0].confidence==first[0].confidence);
+    auto env=sensors.scan_mode(7,3,5,1000,40,ScanMode::Environmental);
+    CHECK(env.size()==1 && env[0].site==104);
+    CHECK(sensors.scan_mode(7,3,5,1000,40,ScanMode::Celestial).empty());
+    const auto planetary=sensors.scan_mode(7,3,5,5000,40,ScanMode::Celestial);
+    CHECK(planetary.size()==1 && planetary[0].site==102);
+    CHECK(planetary[0].kind==SiteKind::Planet);
+    CHECK(planetary[0].confidence>=70);
+    CHECK(sensors.scan_mode(8,3,5,5000,40,ScanMode::Celestial).empty());
+    CHECK(sensors.scan_mode(7,3,5,1000,40,ScanMode::Anomaly).empty());
+    CHECK(sensors.scan_mode(8,3,5,1000,40,ScanMode::Environmental).empty());
     CHECK(sensors.recover(100,7,3));
     CHECK(sensors.deploy(100,7,3,{9500,2000}));
     auto second=sensors.probe_scan(7,3,5,1000,40);
@@ -66,7 +102,97 @@ static void scanning_and_probes() {
     CHECK(sensors.deploy(99,7,3,{-9000,0}));
     CHECK(sensors.probe_scan(7,3,8,1000,70).empty());
     CHECK(sensors.probe_scan(7,3,9,1000,85).size()==1);
+    auto anomaly=sensors.scan_mode(7,3,9,1000,85,ScanMode::Anomaly);
+    CHECK(anomaly.size()==1 && anomaly[0].site==105);
+    CHECK(sensors.scan_mode(7,3,9,1000,85,ScanMode::Environmental).empty());
     std::cout<<"PASS directional geometry, ownership, strength, probe recovery and hidden wormhole\n";
+}
+static void astronomy_profiles() {
+    auto map=make_map();
+    const auto first=map.astronomy(3,123456);
+    const auto again=map.astronomy(3,123456);
+    CHECK(first.architecture==again.architecture);
+    CHECK(first.morphology==again.morphology);
+    CHECK(first.star_count==again.star_count);
+    CHECK(first.features==again.features);
+    CHECK(first.orbital_bands.size()==again.orbital_bands.size());
+    CHECK(first.orbital_bands.size()>=3);
+    for(std::size_t i=0;i<first.orbital_bands.size();++i) {
+        const auto& a=first.orbital_bands[i];
+        const auto& b=again.orbital_bands[i];
+        CHECK(a.ordinal==i+1 && a.ordinal==b.ordinal);
+        CHECK(a.radius_milli_au==b.radius_milli_au);
+        CHECK(a.eccentricity_permille==b.eccentricity_permille);
+        CHECK(a.eccentricity_permille<180);
+        if(i>0)CHECK(a.radius_milli_au>first.orbital_bands[i-1].radius_milli_au);
+    }
+    CHECK(first.generator_version==1);
+    std::set<StellarArchitecture> architectures;
+    for(std::uint32_t system=1;system<1000;++system) {
+        const auto p=generate_astronomical_profile(123456,system);
+        architectures.insert(p.architecture);
+        CHECK(p.star_count>=1 && p.star_count<=3);
+        CHECK(p.architecture!=StellarArchitecture::Single || p.star_count==1);
+        CHECK(p.morphology!=StarMorphology::CloseBinaryTidal || p.star_count>1);
+    }
+    CHECK(architectures.size()==4);
+    std::cout<<"PASS deterministic stellar structure and unusual space features\\n";
+}
+static void report_outbox_restart() {
+    const auto file=std::filesystem::temp_directory_path()/"galaxy-play13b-queued-report.sqlite";
+    std::filesystem::remove(file);
+    const ScanObservation report{7,3,105,SiteKind::Wormhole,
+        {-9000,0},31,80,false};
+    try {
+        {
+            SurveyArchive archive(file.string());
+            CHECK(archive.queue_probe_report(report,45000));
+            CHECK(!archive.known_site(7,3,105).has_value());
+            CHECK(archive.deliver_probe_reports(7,55000,
+                SurveyArchive::kDeepProbeLinkMm+1)==0);
+        }
+        {
+            SurveyArchive recovered(file.string());
+            CHECK(!recovered.known_site(7,3,105).has_value());
+            CHECK(recovered.deliver_probe_reports(8,55000,0)==0);
+            CHECK(recovered.deliver_probe_reports(7,54999,0)==0);
+            CHECK(recovered.deliver_probe_reports(7,55000,
+                SurveyArchive::kDeepProbeLinkMm)==1);
+            CHECK(recovered.known_site(7,3,105).has_value());
+            CHECK(!recovered.known_site(8,3,105).has_value());
+        }
+        {
+            SurveyArchive recovered(file.string());
+            CHECK(recovered.deliver_probe_reports(7,60000,0)==0);
+            CHECK(recovered.history(7,3).size()==1);
+        }
+    }catch(...){std::filesystem::remove(file);throw;}
+    std::filesystem::remove(file);
+    std::cout<<"PASS durable ten-second delayed uplink across restart and reconnect\n";
+}
+static void system_catalogue_persistence() {
+    const auto file=std::filesystem::temp_directory_path()/"galaxy-play13b-catalogue.sqlite";
+    std::filesystem::remove(file);
+    const auto profile=generate_astronomical_profile(12345,3);
+    try {
+        {
+            SurveyArchive archive(file.string());
+            CHECK(!archive.known_system_catalogue(7,3).has_value());
+            CHECK(archive.record_system_catalogue(7,3,5,profile));
+            CHECK(!archive.known_system_catalogue(8,3).has_value());
+            CHECK(archive.record_system_catalogue(7,3,10,profile));
+            CHECK(archive.known_system_catalogue(7,3)->first_tick==5);
+            CHECK(archive.known_system_catalogue(7,3)->last_tick==10);
+            CHECK(archive.known_system_catalogue(7,3)->star_count==profile.star_count);
+        }
+        {
+            SurveyArchive reopened(file.string());
+            CHECK(reopened.known_system_catalogue(7,3)->first_tick==5);
+            CHECK(reopened.known_system_catalogue(7,3)->last_tick==10);
+            CHECK(!reopened.known_system_catalogue(8,3).has_value());
+        }
+    }catch(...){std::filesystem::remove(file);throw;}
+    std::filesystem::remove(file);
 }
 static void archive_persistence() {
     const auto file=std::filesystem::temp_directory_path()/"galaxy-b60-survey-tests.sqlite";
@@ -79,6 +205,11 @@ static void archive_persistence() {
             CHECK(archive.history(7,3).size()==1);
             CHECK(archive.history(7,3)[0].observed_tick==11);
             CHECK(archive.personal(7,3).size()==1 && archive.published(3).empty());
+            CHECK(archive.known_site(7,3,104).has_value());
+            CHECK(!archive.known_site(8,3,104).has_value());
+            CHECK(!archive.known_site(7,3,105).has_value());
+            CHECK(archive.known_sites(7,3,56).empty());
+            CHECK(archive.known_sites(7,3,55).size()==1);
             p.observed_tick=10;p.confidence=95;p.published=true;
             CHECK(!archive.record(p)); // stale data cannot overwrite newer truth
             p.observed_tick=12;p.confidence=70;p.published=true;
@@ -111,15 +242,49 @@ static void archive_persistence() {
         {
             SurveyArchive restored(file.string());
             CHECK(restored.personal(7,3).size()==1);
+            CHECK(restored.known_site(7,3,104).has_value());
+            CHECK(restored.known_site(7,3,104)->observed_tick==14);
+            CHECK(restored.known_site(7,3,104)->published);
+            CHECK(restored.known_sites(7,3,71).empty()); // latest private snapshot confidence is 70
+            CHECK(!restored.known_site(10,3,104).has_value());
             CHECK(restored.personal(7,3)[0].observed_tick==14);
-            CHECK(restored.history(7,3).size()==3);
-            CHECK(restored.history(7,3)[1].observed_tick==12);
-            CHECK(restored.history(7,3)[2].observed_tick==11);
+            CHECK(restored.history(7,3).size()==4);
+            CHECK(restored.history(7,3)[1].observed_tick==14);
+            CHECK(restored.history(7,3)[2].observed_tick==12);
+            // Reports are durable across disconnection, and replay is idempotent.
+            const ScanObservation delayed{7,3,105,SiteKind::Wormhole,{-9000,0},15,88,false};
+            CHECK(restored.queue_probe_report(delayed,1000));
+            CHECK(!restored.queue_probe_report(delayed,1000));
+            CHECK(!restored.known_site(7,3,105).has_value());
+            CHECK(restored.deliver_probe_reports(7,10999,0)==0);
+            CHECK(restored.deliver_probe_reports(7,11000,SurveyArchive::kDeepProbeLinkMm+1)==0);
+            CHECK(restored.deliver_probe_reports(8,11000,0)==0);
+            CHECK(restored.deliver_probe_reports(7,11000,SurveyArchive::kDeepProbeLinkMm)==1);
+            CHECK(restored.deliver_probe_reports(7,11000,0)==0);
+            CHECK(restored.known_site(7,3,105)->confidence==88);
+            CHECK(!restored.known_site(8,3,105).has_value());
             CHECK(restored.published(3).size()==1);
+            auto current=make_map();
+            // An archived position is knowledge, not construction permission.
+            CHECK(restored.actionable_sites(7,3,current,DiscoveryUse::Navigation,50,20,10).empty());
+            CHECK(restored.record({7,3,102,SiteKind::Planet,{8000,0},30,90,false}));
+            auto route=restored.actionable_sites(7,3,current,DiscoveryUse::Navigation,80,30,2);
+            CHECK(route.size()==1 && route[0].site==102);
+            CHECK(restored.actionable_sites(8,3,current,DiscoveryUse::Navigation,80,30,2).empty());
+            CHECK(restored.actionable_sites(7,3,current,DiscoveryUse::Navigation,80,50,2).empty());
+            CHECK(restored.actionable_sites(7,3,current,DiscoveryUse::SettlementSurvey,80,30,2).size()==1);
+            CHECK(restored.actionable_sites(7,3,current,DiscoveryUse::SettlementSurvey,95,30,2).empty());
+            GalaxyMap depleted;depleted.add_system({3,"Frontier",0,Sovereignty::Player});
+            CHECK(restored.actionable_sites(7,3,depleted,
+                DiscoveryUse::SettlementSurvey,80,30,2).empty());
+            GalaxyMap changed;changed.add_system({3,"Frontier",0,Sovereignty::Player});
+            changed.add_site(3,{102,SiteKind::Station,{8000,0},"Replaced site",true,false,0});
+            CHECK(restored.actionable_sites(7,3,changed,
+                DiscoveryUse::SettlementSurvey,80,30,2).empty());
             CHECK(restored.published(3)[0].independent_surveyors==2);
         }
     }catch(...){std::filesystem::remove(file);throw;}
     std::filesystem::remove(file);
     std::cout<<"PASS durable per-player survey history, private/public isolation, deduplicated contributions\n";
 }
-int main(){try{geography_routes();scanning_and_probes();archive_persistence();std::cout<<"B5.4/B6.0 ALL PASS\n";return 0;}catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}
+int main(){try{geography_routes();scanning_and_probes();astronomy_profiles();report_outbox_restart();system_catalogue_persistence();archive_persistence();std::cout<<"B5.4/B6.0 ALL PASS\n";return 0;}catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}

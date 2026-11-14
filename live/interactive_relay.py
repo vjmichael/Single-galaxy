@@ -5,6 +5,7 @@ Browser POSTs choose a small allowlisted action, never player identity, ship ID,
 command ID, target ID, tick, or SQL. Not an untrusted multiplayer authority.
 """
 import argparse
+from collections import deque
 import base64
 import hmac
 import hashlib
@@ -30,6 +31,17 @@ STATIC={
     '/viewer/recordings.js':'viewer/recordings.js',
     '/viewer/viewer.js':'viewer/viewer.js',
     '/viewer/colony.js':'viewer/colony.js',
+    '/viewer/cyber-controls.js':'viewer/cyber-controls.js',
+    '/viewer/security-desk.js':'viewer/security-desk.js',
+    '/viewer/security-only.html':'viewer/security-only.html',
+    '/viewer/security-only.js':'viewer/security-only.js',
+    '/viewer/opening-guide.js':'viewer/opening-guide.js',
+    '/viewer/flight-controls.js':'viewer/flight-controls.js',
+    '/viewer/flight-camera.js':'viewer/flight-camera.js',
+    '/viewer/exploration-journal.js':'viewer/exploration-journal.js',
+    '/viewer/travel-assist.js':'viewer/travel-assist.js',
+    '/viewer/cargo-return.js':'viewer/cargo-return.js',
+    '/viewer/expedition-feedback.js':'viewer/expedition-feedback.js',
     '/viewer/colony-shipping.js':'viewer/colony-shipping.js',
 }
 MIME={'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8'}
@@ -73,7 +85,8 @@ def authenticate_account(rows,username,password):
     return row if hmac.compare_digest(candidate,expected) else None
 
 class SharedRuntime:
-    def __init__(self,exe,db,tick_ms,max_ticks,qa_mode=False,authenticated=False):
+    def __init__(self,exe,db,tick_ms,max_ticks,qa_mode=False,authenticated=False,
+                 human_owners=None):
         self.cv=threading.Condition()
         self.frames=[]
         self.survey_events=[]
@@ -84,7 +97,20 @@ class SharedRuntime:
         self.cmd_lock=threading.Lock()
         self.token=secrets.token_urlsafe(32)
         self.authenticated=authenticated
+        self.human_owners=frozenset(human_owners or (7,))
+        if authenticated and (7 not in self.human_owners or
+                len(self.human_owners)>64 or
+                any(type(p)!=int or not 1<=p<=9007199254740991
+                    for p in self.human_owners)):
+            raise ValueError('Invalid trusted human-owner roster')
+        self.private_colony_events=deque(maxlen=4096)
+        self.private_event_sequence=0
         env=os.environ.copy()
+        if authenticated:
+            # Account roster travels only to the trusted native host process,
+            # never to the browser. Real ship ownership is rechecked natively.
+            env['SG_AUTHENTICATED_HUMAN_OWNERS']=','.join(
+                str(p) for p in sorted(self.human_owners))
         # The relay is local-only and QA commands are disabled unless the
         # explicit developer CLI switch is present. Not a multiplayer authority.
         env['SINGLE_GALAXY_QA_MODE']='1' if qa_mode else '0'
@@ -98,8 +124,32 @@ class SharedRuntime:
     def _read_stderr(self):
         for raw in self.proc.stderr:
             line=raw.decode('ascii',errors='replace').rstrip('\n')
+            if line.startswith('PRIVATE|'):
+                # Host-only owner-addressed frame. Never forward this wrapper
+                # on the ordinary global colony broadcast or SGVIEW stream.
+                m=re.fullmatch(r'PRIVATE\|([1-9][0-9]{0,15})\|(COLONY\|1\|[0-9]+\|SECURITY_[A-Z_]+(?:\|[A-Za-z0-9_-]+)*)',line)
+                if m and len(line)<=1400:
+                    target=int(m.group(1))
+                    if target in self.human_owners and target!=7:
+                        with self.cv:
+                            encoded=base64.b64encode(
+                                m.group(2).encode('ascii')).decode('ascii')
+                            self.private_event_sequence+=1
+                            self.private_colony_events.append(
+                                (self.private_event_sequence,target,encoded))
+                            self.cv.notify_all()
+                continue
             if line.startswith('COLONY|1|'):
-                if len(line)<=180 and re.fullmatch(r'[a-zA-Z0-9_|-]+',line):
+                # S6-F5: only original player/ground receipt event families
+                # can exceed the established 180-byte colony limit. Signed
+                # numeric frames remain strictly bounded; arbitrary text
+                # and larger unrelated events never enter the SSE queue.
+                expanded=bool(re.fullmatch(
+                    r'COLONY\|1\|[0-9]{1,20}\|'
+                    r'(?:PLANET_PLAYER_STATUS|PLANET_PLAYER_COMMITTED|'
+                    r'PLANET_SURFACE_POSE|PLANET_SURFACE_COMMITTED)'
+                    r'\|[A-Za-z0-9_|-]+',line))
+                if len(line)<=(260 if expanded else 180) and re.fullmatch(r'[a-zA-Z0-9_|-]+',line):
                     with self.cv:
                         if len(self.colony_events)<4096:
                             self.colony_events.append(base64.b64encode(line.encode('ascii')).decode('ascii'))
@@ -145,7 +195,13 @@ class SharedRuntime:
 
     def send(self,command,principal=None):
         if self.authenticated:
-            if principal!=7:raise PermissionError('This colony ship belongs to player 7')
+            if principal not in self.human_owners:
+                raise PermissionError('Unknown authenticated account')
+            if principal!=7 and not (command=='SECURITY_REFRESH' or
+                    command.startswith('SECURITY_CALL|') or
+                    command.startswith('SECURITY_CALL_REPLY|') or
+                    command.startswith('SECURITY_NOTIFICATION_ACK|')):
+                raise PermissionError('Secondary account has security-only access')
             command='AUTH|'+str(principal)+'|'+command
         with self.cmd_lock:
             if self.finished or self.proc.poll() is not None:
@@ -200,7 +256,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
     def _session_payload(self,principal):
         return {'ok':True,'username':principal['username'],'playerId':principal['playerId'],
-                'csrf':principal['csrf'],'writes':False,'colonyWrites':principal['playerId']==7,'colony_mode':principal['playerId']==7,
+                'csrf':principal['csrf'],'writes':False,'colonyWrites':principal['playerId']==7,
+                'securityWrites':principal['playerId'] in self.server.runtime.human_owners,
+                'securityOnly':principal['playerId']!=7,
+                'colony_mode':principal['playerId']==7,
                 'tick_ms':self.server.tick_ms,'max_ticks':self.server.max_ticks}
 
     def _same_origin(self):
@@ -261,6 +320,87 @@ class Handler(http.server.BaseHTTPRequestHandler):
         return answer
 
 
+    def _security_only_events(self,principal):
+        # Secondary human account: never subscribe to SGVIEW, surveying,
+        # native host stdout, or player 7's ordinary COLONY events. Each
+        # private message carries a host-verified owner envelope, removed
+        # before dispatching to this exact authenticated session.
+        rt=self.server.runtime
+        who=principal['playerId']
+        if who==7 or who not in rt.human_owners:
+            self._json(403,{'error':'Wrong private stream principal'});return
+        # A new authenticated SSE connection must not replay unrelated
+        # previous-session status from a volatile process-wide ring. Snapshot
+        # the high-water mark *before* asking the single native world writer
+        # for this owner's fresh SQLite-backed security read model.
+        with rt.cv:
+            cursor=rt.private_event_sequence
+        try:
+            rt.send('SECURITY_REFRESH',principal=who)
+        except (RuntimeError,PermissionError,BrokenPipeError):
+            self._json(409,{'error':'Original security host unavailable'});return
+        self.send_response(200)
+        self.send_header('Content-Type','text/event-stream; charset=utf-8')
+        self.send_header('Cache-Control','no-store')
+        self.send_header('X-Content-Type-Options','nosniff')
+        self.send_header('Connection','close')
+        self.end_headers()
+        # This connection sees only events after its captured high-water
+        # mark, including the just-requested native refresh. Historical
+        # in-memory frames belong to older subscriptions, not this login.
+        try:
+            while True:
+                current=self._principal()
+                if not current or current['session_id']!=principal['session_id']:
+                    self.wfile.write(b'event: failed\ndata: Session expired\n\n')
+                    self.wfile.flush();return
+                with rt.cv:
+                    rt.cv.wait_for(
+                        lambda:cursor<rt.private_event_sequence or rt.finished,
+                        timeout=3)
+                    # A connected subscriber can also fall behind the 4096
+                    # slot process ring. Detect that loss; do not silently
+                    # present a partial security desk as complete.
+                    latest=rt.private_event_sequence
+                    oldest=latest-len(rt.private_colony_events)+1
+                    missed=cursor<oldest-1
+                    entries=[] if missed else [
+                        (owner_id,data) for seq,owner_id,data
+                        in rt.private_colony_events if seq>cursor]
+                    cursor=latest
+                    done=rt.finished
+                    error=rt.error
+                if missed:
+                    self.wfile.write(
+                        b'event: resync\ndata: Native security refresh required\n\n')
+                    self.wfile.flush()
+                    try:
+                        # Native source of truth; never rebuild contacts,
+                        # identities or complaints from untrusted SSE frames.
+                        rt.send('SECURITY_REFRESH',principal=who)
+                    except (RuntimeError,PermissionError,BrokenPipeError):
+                        self.wfile.write(
+                            b'event: failed\ndata: Security host unavailable\n\n')
+                        self.wfile.flush();return
+                    continue
+                sent=False
+                for recipient,data in entries:
+                    if recipient!=who:continue
+                    self.wfile.write(('event: colony\ndata: '+data+'\n\n').encode('ascii'))
+                    sent=True
+                if sent:self.wfile.flush()
+                if done and cursor>=rt.private_event_sequence:
+                    if error:
+                        self.wfile.write(('event: failed\ndata: '+str(error).replace(
+                            '\n',' ')[:150]+'\n\n').encode('ascii'))
+                    else:self.wfile.write(b'event: complete\ndata: finished\n\n')
+                    self.wfile.flush();return
+                if not sent:
+                    self.wfile.write(b': keepalive\n\n');self.wfile.flush()
+        except (BrokenPipeError,ConnectionResetError,TimeoutError,OSError):
+            pass
+        finally:self.close_connection=True
+
     def do_GET(self):
         if not self._host_ok():
             self._json(403,{'error':'Local host required'});return
@@ -278,17 +418,28 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 self._json(503,{'ok':False,'error':'Shipment authority unavailable'})
             return
         if url.path=='/session':
-            if self.server.accounts and (not principal or principal['playerId']!=7):
-                self._json(403,{'error':'Colony owner session required'});return
+            if self.server.accounts and (not principal or
+                principal['playerId'] not in self.server.runtime.human_owners):
+                self._json(403,{'error':'Authenticated owner session required'});return
+            if self.server.accounts and principal['playerId']!=7:
+                self._json(200,{'token':principal['csrf'],'qa_mode':False,
+                    'colony_mode':False,'security_only':True,
+                    'tick_ms':self.server.tick_ms,
+                    'max_ticks':self.server.max_ticks,
+                    'commands':['colonySecurityRefresh','colonySecurityCall',
+                                'colonySecurityCallReply','colonySecurityNotifyAck']});return
             self._json(200,{'token':principal['csrf'] if self.server.accounts else self.server.runtime.token,'qa_mode':self.server.qa_mode,'colony_mode':self.server.colony_mode,'tick_ms':self.server.tick_ms,
-                'max_ticks':self.server.max_ticks,'commands':(['thrust','colonyScan','colonyMine','colonyRefine','colonyFabricate','colonyBuild','colonyMineTarget','colonyProcess','colonyFabricateMaterial','colonyPlant','colonyHarvest','colonyRecycleWater','colonyRecycleCompost','colonyOxygen','colonyLifeWater','colonyFarmBuild','colonyFarmStaff','colonyFarmStock','colonyHabBuild','colonyHabResidents','colonyHabStock','colonyUtilityBuild','colonyUtilityRepair','colonyUtilitySpares','colonyUtilityStaff','colonyUtilityAuto','colonyCommunityBuild','colonyCommunityStaff','colonyCommunityStock','colonyClinicBuild','colonyClinicStaff','colonyClinicStock','colonyReclaimerBuild','colonyWaterworksBuild','colonyWaterworksFeed','colonyPolicySet','colonyPolicyStaff','colonySafetyAssess','colonySafetyPreflight'] if self.server.colony_mode else ['thrust','mine','stop','undock','dock','unload','load','sell','travelA','travelB','travelGate','travelHop','jump','jumpHop','directional','probeDeploy','probeScan','probeRecover','surveyArchive','surveyHistory','surveyPublish','planRoute'])});return
+                'max_ticks':self.server.max_ticks,'commands':(['thrust','yaw','colonyFireTraining','colonyFireShip','colonySalvageWreck','colonyDockBase','colonyUndockBase','colonyUnloadBase','colonyLoadBase','colonyScan','colonyConfigureScanner','colonyCyberFit','colonyCyberPower','colonyCyberIsolate','colonyCyberAttack','colonySecurityRefresh','colonySecurityClaim','colonySecurityWarn','colonySecurityHail','colonySecurityReply','colonySecurityPatrol','colonySecurityCall','colonySecurityCallReply','colonySecurityNotifyAck','colonySecurityAgencyEstablish','colonySecurityAgencyRefer','colonySecurityAgencyInvestigate','colonyProbeDeploy','colonyProbeScan','colonyProbeRecover','colonySignatureScan','colonyCelestialScan','colonyPlanetSurvey','colonyPlanetCrew','colonyPlanetStatus','colonyPlanetPolicy','colonyPlanetShuttle','colonyLocalWorkPost','colonyLocalWorkStatus','colonyLocalWorkCancel','colonyFreightLoad','colonyFreightDispatch','colonyFreightDeliver','colonyFreightStatus','colonyLocalWorkPostToColony','colonyShipyardBuild','colonyShipyardAssign','colonyShipyardStatus','colonyFreighterBuild','colonyFreighterCommission','colonyFreighterStatus','colonyFreighterPilotStatus','colonyFreighterThrust','colonyFreighterYaw','colonyFreighterTravel','colonyFleetStatus','colonyFleetSelect','colonyFleetWorkPost','colonyYardContractPost','colonyYardContractAccept','colonyYardContractFund','colonyYardContractDeliver','colonyYardContractStatus','colonyWorkDelegateShip','colonyWorkCancel','colonyWorkStatus','colonyPlanetBuild','colonyPlanetEquip','colonyPlanetSupply','colonyPlanetGrow','colonyPlanetExtract','colonyPlanetGeoExtract','colonyPlanetRetrieve','colonyPlanetSupport','colonyEnvironmentScan','colonyProbeFocus','colonyProbeCancel','colonyDroneLaunch','colonyMine','colonyRefine','colonyFabricate','colonyBuild','colonyMineTarget','colonyProcess','colonyFabricateMaterial','colonyPlant','colonyHarvest','colonyRecycleWater','colonyRecycleCompost','colonyOxygen','colonyLifeWater','colonyFarmBuild','colonyFarmStaff','colonyFarmStock','colonyHabBuild','colonyHabResidents','colonyHabStock','colonyUtilityBuild','colonyUtilityRepair','colonyUtilitySpares','colonyUtilityStaff','colonyUtilityAuto','colonyCommunityBuild','colonyCommunityStaff','colonyCommunityStock','colonyClinicBuild','colonyClinicStaff','colonyClinicStock','colonyReclaimerBuild','colonyWaterworksBuild','colonyWaterworksFeed','colonyPolicySet','colonyPolicyStaff','colonySafetyAssess','colonySafetyPreflight'] if self.server.colony_mode else ['thrust','mine','stop','undock','dock','unload','load','sell','travelA','travelB','travelGate','travelHop','jump','jumpHop','directional','probeDeploy','probeScan','probeRecover','surveyArchive','surveyHistory','surveyPublish','planRoute'])});return
         if url.path in STATIC:
             file=ROOT/STATIC[url.path]
             self._send(200,file.read_bytes(),MIME[file.suffix]);return
         if url.path!='/events':
             self._json(404,{'error':'Not found'});return
-        if self.server.accounts and (not principal or principal['playerId']!=7):
-            self._json(403,{'error':'Colony owner session required'});return
+        if self.server.accounts and (not principal or
+                principal['playerId'] not in self.server.runtime.human_owners):
+            self._json(403,{'error':'Authenticated owner session required'});return
+        if self.server.accounts and principal['playerId']!=7:
+            self._security_only_events(principal);return
         self.send_response(200)
         self.send_header('Content-Type','text/event-stream; charset=utf-8')
         self.send_header('Cache-Control','no-store')
@@ -339,8 +490,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if self.path!='/command':
             self._json(404,{'error':'Not found'});return
         principal=self._principal()
-        if self.server.accounts and (not principal or principal['playerId']!=7):
-            self._json(403,{'error':'Colony owner session required'});return
+        if self.server.accounts and (not principal or
+                principal['playerId'] not in self.server.runtime.human_owners):
+            self._json(403,{'error':'Authenticated owner session required'});return
         origin='http://127.0.0.1:'+str(self.server.server_port)
         if self.headers.get('Origin')!=origin or self.headers.get('Content-Type')!='application/json':
             self._json(403,{'error':'Same-origin JSON requests only'});return
@@ -352,10 +504,14 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if not isinstance(doc,dict) or not isinstance(doc.get('token'),str) or not hmac.compare_digest(doc['token'],principal['csrf'] if self.server.accounts else self.server.runtime.token):
                 self._json(403,{'error':'Invalid session token'});return
             action=doc.get('action')
+            if self.server.accounts and principal['playerId']!=7 and action not in (
+                    'colonySecurityRefresh','colonySecurityCall',
+                    'colonySecurityCallReply','colonySecurityNotifyAck'):
+                self._json(403,{'error':'Security-only owner cannot control the world'});return
             if self.server.colony_mode:
-                if action not in ('thrust','colonyScan','colonyMine','colonyRefine','colonyFabricate','colonyBuild','colonyMineTarget','colonyProcess','colonyFabricateMaterial','colonyPlant','colonyHarvest','colonyRecycleWater','colonyRecycleCompost','colonyOxygen','colonyLifeWater','colonyFarmBuild','colonyFarmStaff','colonyFarmStock','colonyHabBuild','colonyHabResidents','colonyHabStock','colonyUtilityBuild','colonyUtilityRepair','colonyUtilitySpares','colonyUtilityStaff','colonyUtilityAuto','colonyCommunityBuild','colonyCommunityStaff','colonyCommunityStock','colonyClinicBuild','colonyClinicStaff','colonyClinicStock','colonyReclaimerBuild','colonyWaterworksBuild','colonyWaterworksFeed','colonyPolicySet','colonyPolicyStaff','colonySafetyAssess','colonySafetyPreflight'):
+                if action not in ('thrust','yaw','colonyFireTraining','colonyFireShip','colonyDockBase','colonyUndockBase','colonyUnloadBase','colonyLoadBase','colonyScan','colonyMine','colonyRefine','colonyFabricate','colonyBuild','colonyMineTarget','colonyProcess','colonyFabricateMaterial','colonyPlant','colonyHarvest','colonyRecycleWater','colonyRecycleCompost','colonyOxygen','colonyLifeWater','colonyFarmBuild','colonyFarmStaff','colonyFarmStock','colonyHabBuild','colonyHabResidents','colonyHabStock','colonyUtilityBuild','colonyUtilityRepair','colonyUtilitySpares','colonyUtilityStaff','colonyUtilityAuto','colonyCommunityBuild','colonyCommunityStaff','colonyCommunityStock','colonyClinicBuild','colonyClinicStaff','colonyClinicStock','colonyReclaimerBuild','colonyWaterworksBuild','colonyWaterworksFeed','colonyPolicySet','colonyPolicyStaff','colonySafetyAssess','colonySafetyPreflight','colonyPlanetSurvey','colonyPlanetCrew','colonyPlanetStatus','colonyPlanetPolicy','colonyPlanetShuttle','colonyLocalWorkPost','colonyLocalWorkStatus','colonyLocalWorkCancel','colonyFreightLoad','colonyFreightDispatch','colonyFreightDeliver','colonyFreightStatus','colonyLocalWorkPostToColony','colonyShipyardBuild','colonyShipyardAssign','colonyShipyardStatus','colonyFreighterBuild','colonyFreighterCommission','colonyFreighterStatus','colonyFreighterPilotStatus','colonyFreighterThrust','colonyFreighterYaw','colonyFreighterTravel','colonyFleetStatus','colonyFleetSelect','colonyFleetWorkPost','colonyYardContractPost','colonyYardContractAccept','colonyYardContractFund','colonyYardContractDeliver','colonyYardContractStatus','colonyWorkDelegateShip','colonyWorkCancel','colonyWorkStatus','colonyPlanetBuild','colonyPlanetEquip','colonyPlanetSupply','colonyPlanetGrow','colonyPlanetExtract','colonyPlanetGeoExtract','colonyPlanetRetrieve','colonyPlanetSupport','colonyCelestialScan','colonyEnvironmentScan','colonyProbeDeploy','colonyProbeScan','colonyProbeRecover','colonySignatureScan','colonyProbeFocus','colonyProbeCancel','colonyDroneLaunch','colonyFrameTravel','colonyCyberFit','colonyCyberPower','colonyCyberIsolate','colonyCyberAttack','colonySecurityRefresh','colonySecurityClaim','colonySecurityWarn','colonySecurityHail','colonySecurityReply','colonySecurityPatrol','colonySecurityCall','colonySecurityCallReply','colonySecurityNotifyAck','colonySecurityAgencyEstablish','colonySecurityAgencyRefer','colonySecurityAgencyInvestigate'):
                     self._json(403,{'error':'Unavailable in colony-first mode'});return
-            elif action in ('colonyScan','colonyMine','colonyRefine','colonyFabricate','colonyBuild','colonyMineTarget','colonyProcess','colonyFabricateMaterial','colonyPlant','colonyHarvest','colonyRecycleWater','colonyRecycleCompost','colonyOxygen','colonyLifeWater','colonyFarmBuild','colonyFarmStaff','colonyFarmStock','colonyHabBuild','colonyHabResidents','colonyHabStock','colonyUtilityBuild','colonyUtilityRepair','colonyUtilitySpares','colonyUtilityStaff','colonyUtilityAuto','colonyCommunityBuild','colonyCommunityStaff','colonyCommunityStock','colonyClinicBuild','colonyClinicStaff','colonyClinicStock','colonyReclaimerBuild','colonyWaterworksBuild','colonyWaterworksFeed','colonyPolicySet','colonyPolicyStaff','colonySafetyAssess','colonySafetyPreflight'):
+            elif action in ('colonyFireTraining','colonyFireShip','colonyScan','colonyMine','colonyRefine','colonyFabricate','colonyBuild','colonyMineTarget','colonyProcess','colonyFabricateMaterial','colonyPlant','colonyHarvest','colonyRecycleWater','colonyRecycleCompost','colonyOxygen','colonyLifeWater','colonyFarmBuild','colonyFarmStaff','colonyFarmStock','colonyHabBuild','colonyHabResidents','colonyHabStock','colonyUtilityBuild','colonyUtilityRepair','colonyUtilitySpares','colonyUtilityStaff','colonyUtilityAuto','colonyCommunityBuild','colonyCommunityStaff','colonyCommunityStock','colonyClinicBuild','colonyClinicStaff','colonyClinicStock','colonyReclaimerBuild','colonyWaterworksBuild','colonyWaterworksFeed','colonyPolicySet','colonyPolicyStaff','colonySafetyAssess','colonySafetyPreflight','colonyCyberFit','colonyCyberPower','colonyCyberIsolate','colonyCyberAttack','colonySecurityRefresh','colonySecurityClaim','colonySecurityWarn','colonySecurityHail','colonySecurityReply','colonySecurityPatrol','colonySecurityCall','colonySecurityCallReply','colonySecurityNotifyAck','colonySecurityAgencyEstablish','colonySecurityAgencyRefer','colonySecurityAgencyInvestigate'):
                 self._json(403,{'error':'Colony mode disabled'});return
             if action in ('qaRoute','qaStop','qaGate') and not self.server.qa_mode:
                 # An unauthorized attempt is explicitly rejected and logged,
@@ -366,6 +522,542 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 site=doc['site']
                 if type(site)!=int or not 1<=site<=100000000:raise ValueError('Invalid safety site')
                 command=f'SAFETY|{site}|'+('ASSESS' if action=='colonySafetyAssess' else 'PRODUCTION_PREFLIGHT')
+            elif action=='colonyDroneLaunch' and set(doc)=={'token','action','target'}:
+                target=doc['target']
+                if type(target)!=int or not 1<=target<=100000000:
+                    raise ValueError('Invalid geological target')
+                command=f'DRONE_LAUNCH|{target}'
+            elif action=='colonyPlanetCrew' and set(doc)=={'token','action'}:
+                command='PLANET_CREW'
+            elif action=='colonyWorkDelegateShip' and set(doc)=={
+                'token','action','order','contract','firstNpc','secondNpc',
+                'provisionsKg','dependency'}:
+                order,contract=doc['order'],doc['contract']
+                one,two=doc['firstNpc'],doc['secondNpc']
+                kg,dep=doc['provisionsKg'],doc['dependency']
+                if (type(order)!=int or not 1<=order<(1<<50) or
+                    type(contract)!=int or not 1<=contract<(1<<50) or
+                    type(one)!=int or not 0<=one<(1<<50) or
+                    type(two)!=int or not 0<=two<(1<<50) or
+                    type(kg)!=int or not 0<=kg<=1000 or
+                    type(dep)!=int or not 0<=dep<order or
+                    bool(one)!=bool(two) or (one and one==two) or
+                    (one and kg<10) or (not one and kg)):
+                    raise ValueError('Invalid owner-authorized NPC work delegation')
+                command=f'WORK_DELEGATE_SHIP|{order}|{contract}|{one}|{two}|{kg}|{dep}'
+            elif action=='colonyWorkCancel' and set(doc)=={'token','action','order'}:
+                order=doc['order']
+                if type(order)!=int or not 1<=order<(1<<50):
+                    raise ValueError('Invalid delegation cancellation ID')
+                command=f'WORK_CANCEL|{order}'
+            elif action=='colonyWorkStatus' and set(doc)=={'token','action'}:
+                command='WORK_STATUS'
+            elif action=='colonyYardContractPost' and set(doc)=={
+                'token','action','order','yard','build'}:
+                order,yard,build=doc['order'],doc['yard'],doc['build']
+                if (type(order)!=int or not 1<=order<(1<<50) or
+                    type(yard)!=int or not 1<=yard<(1<<50) or
+                    type(build)!=int or not 1<=build<(1<<50) or
+                    len({order,yard,build})!=3):
+                    raise ValueError('Invalid native shipyard customer request')
+                command=f'YARD_CONTRACT_POST|{order}|{yard}|{build}'
+            elif action in ('colonyYardContractAccept','colonyYardContractFund',
+                            'colonyYardContractDeliver') and set(doc)=={'token','action','order'}:
+                order=doc['order']
+                if type(order)!=int or not 1<=order<(1<<50):
+                    raise ValueError('Invalid real shipyard contract ID')
+                command={'colonyYardContractAccept':'YARD_CONTRACT_ACCEPT',
+                         'colonyYardContractFund':'YARD_CONTRACT_FUND',
+                         'colonyYardContractDeliver':'YARD_CONTRACT_DELIVER'}[action]+f'|{order}'
+            elif action=='colonyYardContractStatus' and set(doc)=={'token','action'}:
+                command='YARD_CONTRACT_STATUS'
+            elif action=='colonyFleetWorkPost' and set(doc)=={
+                'token','action','order','carrier','destination',
+                'body','latitude','longitude','resource','kg'}:
+                order,carrier,destination=doc['order'],doc['carrier'],doc['destination']
+                body,lat,lon=doc['body'],doc['latitude'],doc['longitude']
+                resource,kg=doc['resource'],doc['kg']
+                if (type(order)!=int or not 1<=order<(1<<50) or
+                    type(carrier)!=int or not 1<=carrier<=9007199254740991 or
+                    type(destination)!=int or not 1<=destination<=9007199254740991 or
+                    carrier==destination or
+                    type(body)!=int or not 1<=body<=9007199254740991 or
+                    type(lat)!=int or not 0<=lat<36 or
+                    type(lon)!=int or not 0<=lon<72 or
+                    type(resource)!=str or resource not in ('WATER','FOOD','NUTRIENTS') or
+                    type(kg)!=int or not 1<=kg<=1000):
+                    raise ValueError('Invalid finite fleet shipping instruction')
+                command=(f'FLEET_WORK_POST|{order}|{carrier}|{destination}|'
+                         f'{body}|{lat}|{lon}|{resource}|{kg}')
+            elif action=='colonyFleetStatus' and set(doc)=={'token','action'}:
+                command='FLEET_STATUS'
+            elif action=='colonyFleetSelect' and set(doc)=={
+                'token','action','ship'}:
+                ship=doc['ship']
+                if type(ship)!=int or not 1<=ship<=9007199254740991:
+                    raise ValueError('Invalid owned fleet ship identity')
+                command=f'FLEET_SELECT|{ship}'
+            elif action=='colonyFreighterPilotStatus' and set(doc)=={
+                'token','action','order'}:
+                order=doc['order']
+                if type(order)!=int or not 1<=order<(1<<50):
+                    raise ValueError('Invalid commissioned hull selection')
+                command=f'FREIGHTER_PILOT_STATUS|{order}'
+            elif action=='colonyFreighterThrust' and set(doc)=={
+                'token','action','order','x','y'}:
+                order,x,y=doc['order'],doc['x'],doc['y']
+                if (type(order)!=int or not 1<=order<(1<<50) or
+                    type(x)!=int or not -1<=x<=1 or
+                    type(y)!=int or not -1<=y<=1):
+                    raise ValueError('Invalid commissioned hull thrust')
+                command=f'FREIGHTER_THRUST|{order}|{x}|{y}'
+            elif action=='colonyFreighterYaw' and set(doc)=={
+                'token','action','order','delta'}:
+                order,delta=doc['order'],doc['delta']
+                if (type(order)!=int or not 1<=order<(1<<50) or
+                    type(delta)!=int or delta not in (-15,15)):
+                    raise ValueError('Invalid commissioned hull yaw')
+                command=f'FREIGHTER_YAW|{order}|{delta}'
+            elif action=='colonyFreighterTravel' and set(doc)=={
+                'token','action','order','body'}:
+                order,body=doc['order'],doc['body']
+                if (type(order)!=int or not 1<=order<(1<<50) or
+                    type(body)!=int or not 1<=body<=9007199254740991):
+                    raise ValueError('Invalid manufactured freighter travel')
+                command=f'FREIGHTER_TRAVEL|{order}|{body}'
+            elif action=='colonyFreighterStatus' and set(doc)=={'token','action'}:
+                command='FREIGHTER_STATUS'
+            elif action=='colonyFreighterBuild' and set(doc)=={
+                'token','action','yard','order'}:
+                yard,order=doc['yard'],doc['order']
+                if (type(yard)!=int or not 1<=yard<(1<<50) or
+                    type(order)!=int or not 1<=order<(1<<50) or
+                    yard==order):
+                    raise ValueError('Invalid physical freighter build order')
+                command=f'FREIGHTER_BUILD|{yard}|{order}'
+            elif action=='colonyFreighterCommission' and set(doc)=={
+                'token','action','order','firstNpc','secondNpc','provisionsKg'}:
+                order,one,two=doc['order'],doc['firstNpc'],doc['secondNpc']
+                kg=doc['provisionsKg']
+                if (type(order)!=int or not 1<=order<(1<<50) or
+                    type(one)!=int or not 1<=one<=9007199254740991 or
+                    type(two)!=int or not 1<=two<=9007199254740991 or
+                    one==two or type(kg)!=int or not 10<=kg<=1000):
+                    raise ValueError('Invalid actual freighter commissioning transfer')
+                command=f'FREIGHTER_COMMISSION|{order}|{one}|{two}|{kg}'
+            elif action=='colonyShipyardAssign' and set(doc)=={
+                'token','action','order','firstNpc','secondNpc'}:
+                order,one,two=doc['order'],doc['firstNpc'],doc['secondNpc']
+                if (type(order)!=int or not 1<=order<(1<<50) or
+                    type(one)!=int or not 1<=one<=9007199254740991 or
+                    type(two)!=int or not 1<=two<=9007199254740991 or
+                    one==two):
+                    raise ValueError('Invalid replacement shipyard workforce')
+                command=f'SHIPYARD_ASSIGN|{order}|{one}|{two}'
+            elif action=='colonyShipyardStatus' and set(doc)=={'token','action'}:
+                command='SHIPYARD_STATUS'
+            elif action=='colonyShipyardBuild' and set(doc)=={
+                'token','action','order','firstNpc','secondNpc'}:
+                order,one,two=doc['order'],doc['firstNpc'],doc['secondNpc']
+                if (type(order)!=int or not 1<=order<(1<<50) or
+                    type(one)!=int or not 1<=one<=9007199254740991 or
+                    type(two)!=int or not 1<=two<=9007199254740991 or
+                    one==two):
+                    raise ValueError('Invalid shipyard build order or NPC assignment')
+                command=f'SHIPYARD_BUILD|{order}|{one}|{two}'
+            elif action=='colonyLocalWorkPostToColony' and set(doc)=={
+                'token','action','body','latitude','longitude','resource','kg',
+                'order','carrier','destination'}:
+                body,lat,lon=doc['body'],doc['latitude'],doc['longitude']
+                resource,kg,order=doc['resource'],doc['kg'],doc['order']
+                carrier,destination=doc['carrier'],doc['destination']
+                if (type(body)!=int or not 1<=body<=9007199254740991 or
+                    type(lat)!=int or not 0<=lat<36 or
+                    type(lon)!=int or not 0<=lon<72 or
+                    type(resource)!=str or resource not in ('WATER','FOOD','NUTRIENTS') or
+                    type(kg)!=int or not 1<=kg<=1000 or
+                    type(order)!=int or not 1<=order<(1<<50) or
+                    type(carrier)!=int or not 1<=carrier<=9007199254740991 or
+                    type(destination)!=int or not 1<=destination<=9007199254740991 or
+                    carrier==destination):
+                    raise ValueError('Invalid connected intercolony work order')
+                command=(f'LOCAL_WORK_POST_INTERCOLONY|{body}|{lat}|{lon}|{resource}|'
+                         f'{kg}|{order}|{carrier}|{destination}')
+            elif action=='colonyFreightStatus' and set(doc)=={'token','action'}:
+                command='INTERFREIGHT_STATUS'
+            elif action=='colonyFreightLoad' and set(doc)=={
+                'token','action','order','carrier','destination'}:
+                order,carrier,destination=doc['order'],doc['carrier'],doc['destination']
+                if (type(order)!=int or not 1<=order<(1<<50) or
+                    type(carrier)!=int or not 1<=carrier<=9007199254740991 or
+                    type(destination)!=int or not 1<=destination<=9007199254740991 or
+                    carrier==destination):
+                    raise ValueError('Invalid physical freight carrier and destination')
+                command=f'INTERFREIGHT_LOAD|{order}|{carrier}|{destination}'
+            elif action in ('colonyFreightDispatch','colonyFreightDeliver') and set(doc)=={
+                'token','action','order'}:
+                order=doc['order']
+                if type(order)!=int or not 1<=order<(1<<50):
+                    raise ValueError('Invalid freight work order')
+                command=('INTERFREIGHT_DISPATCH' if action=='colonyFreightDispatch'
+                         else 'INTERFREIGHT_DELIVER')+f'|{order}'
+            elif action=='colonyLocalWorkStatus' and set(doc)=={'token','action'}:
+                command='LOCAL_WORK_STATUS'
+            elif action=='colonyLocalWorkCancel' and set(doc)=={'token','action','order'}:
+                order=doc['order']
+                if type(order)!=int or not 1<=order<(1<<50):
+                    raise ValueError('Invalid local work contract ID')
+                command=f'LOCAL_WORK_CANCEL|{order}'
+            elif action=='colonyLocalWorkPost' and set(doc)=={
+                'token','action','body','latitude','longitude','resource','kg','order'}:
+                body,lat,lon=doc['body'],doc['latitude'],doc['longitude']
+                resource,kg,order=doc['resource'],doc['kg'],doc['order']
+                if (type(body)!=int or not 1<=body<=9007199254740991 or
+                    type(lat)!=int or not 0<=lat<36 or
+                    type(lon)!=int or not 0<=lon<72 or
+                    type(resource)!=str or resource not in ('WATER','FOOD','NUTRIENTS') or
+                    type(kg)!=int or not 1<=kg<=1000 or
+                    type(order)!=int or not 1<=order<(1<<50)):
+                    raise ValueError('Invalid local delivery contract')
+                command=f'LOCAL_WORK_POST|{body}|{lat}|{lon}|{resource}|{kg}|{order}'
+            elif action=='colonyPlanetPlayerRegister' and set(doc)=={'token','action'}:
+                command='PLANET_PLAYER_REGISTER'
+            elif action in ('colonyPlanetPlayer','colonyPlanetSurface'):
+                base={'token','action','body','latitude','longitude','operation'}
+                if not base.issubset(doc):
+                    raise ValueError('Incomplete original planetary person command')
+                body,lat,lon=doc['body'],doc['latitude'],doc['longitude']
+                op=doc['operation']
+                if (type(body)!=int or not 1<=body<=9007199254740991 or
+                    type(lat)!=int or not 0<=lat<36 or
+                    type(lon)!=int or not 0<=lon<72 or type(op)!=str):
+                    raise ValueError('Invalid original planetary person site')
+                prefix=f'{body}|{lat}|{lon}'
+                expected=set(base)
+                if action=='colonyPlanetPlayer':
+                    if op not in ('STATUS','BOARD','DISEMBARK','REBOARD','EXIT'):
+                        raise ValueError('Unsupported player shuttle action')
+                    if op!='STATUS':
+                        expected.add('receipt')
+                        proof=doc.get('receipt')
+                        if type(proof)!=int or not 1<=proof<(1<<50):
+                            raise ValueError('Invalid original player receipt')
+                        prefix+=f'|{op}|{proof}'
+                    else:
+                        prefix+='|STATUS'
+                    command=f'PLANET_PLAYER|{prefix}'
+                else:
+                    if op not in ('STATUS','MOVE'):
+                        raise ValueError('Unsupported player/NPC surface order')
+                    expected.add('actor')
+                    actor=doc.get('actor')
+                    if actor not in ('PLAYER','NPC') or type(actor)!=str:
+                        raise ValueError('Invalid surface actor')
+                    prefix+=f'|{actor}'
+                    if actor=='NPC':
+                        expected.add('npc')
+                        npc=doc.get('npc')
+                        if type(npc)!=int or not 1<=npc<=9007199254740991:
+                            raise ValueError('Invalid original NPC ID')
+                        prefix+=f'|{npc}'
+                    if op=='MOVE':
+                        expected.update(('dx','dz','receipt'))
+                        dx,dz,proof=doc.get('dx'),doc.get('dz'),doc.get('receipt')
+                        speed=300 if actor=='PLAYER' else 250
+                        if (type(dx)!=int or type(dz)!=int or
+                            dx*dx+dz*dz==0 or
+                            dx < -speed or dx > speed or
+                            dz < -speed or dz > speed or
+                            dx*dx+dz*dz>speed*speed or
+                            type(proof)!=int or not 1<=proof<(1<<50)):
+                            raise ValueError('Invalid bounded native ground step')
+                        prefix+=f'|{dx}|{dz}|{proof}'
+                    command=('PLANET_SURFACE_MOVE' if op=='MOVE' else
+                             'PLANET_SURFACE_STATUS')+'|'+prefix
+                if set(doc)!=expected:
+                    raise ValueError('Unexpected planetary person fields')
+            elif action=='colonyPlanetShuttle':
+                base={'token','action','body','latitude','longitude','operation'}
+                if not base.issubset(doc): raise ValueError('Incomplete shuttle order')
+                body,latitude,longitude=doc['body'],doc['latitude'],doc['longitude']
+                operation=doc['operation']
+                if (type(body)!=int or not 1<=body<=9223372036854775807 or
+                    type(latitude)!=int or not 0<=latitude<36 or
+                    type(longitude)!=int or not 0<=longitude<72 or
+                    type(operation)!=str or operation not in
+                    ('STATUS','BUILD','PILOT','BOARD','RELEASE','DISEMBARK','REBOARD','DUTY_ON','DUTY_OFF','LOAD','UNLOAD','DESCEND','ASCEND')):
+                    raise ValueError('Invalid shuttle region or operation')
+                expected=set(base)
+                suffix=''
+                if operation in ('PILOT','BOARD','RELEASE','DISEMBARK','REBOARD','DUTY_ON','DUTY_OFF'):
+                    expected.add('npc')
+                    npc=doc.get('npc')
+                    if type(npc)!=int or not 1<=npc<=9223372036854775807:
+                        raise ValueError('Invalid shuttle pilot')
+                    suffix=f'|{npc}'
+                elif operation in ('LOAD','UNLOAD'):
+                    expected.update(('resource','kg'))
+                    resource,kg=doc.get('resource'),doc.get('kg')
+                    if (type(resource)!=str or resource not in ('FOOD','WATER','NUTRIENTS') or
+                        type(kg)!=int or not 1<=kg<=1000):
+                        raise ValueError('Invalid shuttle cargo')
+                    suffix=f'|{resource}|{kg}'
+                elif operation in ('DESCEND','ASCEND'):
+                    expected.add('request')
+                    request=doc.get('request')
+                    if type(request)!=int or not 1<=request<=9007199254740991:
+                        raise ValueError('Invalid shuttle flight ID')
+                    suffix=f'|{request}'
+                if set(doc)!=expected: raise ValueError('Unexpected shuttle fields')
+                command=f'PLANET_SHUTTLE|{body}|{latitude}|{longitude}|{operation}{suffix}'
+            elif action=='colonyPlanetPolicy' and set(doc)=={'token','action','body','latitude','longitude','policy'}:
+                body,latitude,longitude,policy=doc['body'],doc['latitude'],doc['longitude'],doc['policy']
+                if (type(body)!=int or not 1<=body<=9223372036854775807 or
+                    type(latitude)!=int or not 0<=latitude<36 or
+                    type(longitude)!=int or not 0<=longitude<72 or
+                    type(policy)!=int or not 0<=policy<=4):
+                    raise ValueError('Invalid planetary workforce policy')
+                command=f'PLANET_POLICY|{body}|{latitude}|{longitude}|{policy}'
+            elif action=='colonyPlanetStatus' and set(doc)=={'token','action','body','latitude','longitude'}:
+                body,latitude,longitude=doc['body'],doc['latitude'],doc['longitude']
+                if (type(body)!=int or not 1<=body<=9223372036854775807 or
+                    type(latitude)!=int or not 0<=latitude<36 or
+                    type(longitude)!=int or not 0<=longitude<72):
+                    raise ValueError('Invalid planetary status coordinates')
+                command=f'PLANET_SITE_STATUS|{body}|{latitude}|{longitude}'
+            elif action in ('colonyPlanetBuild','colonyPlanetEquip','colonyPlanetSupply',
+                            'colonyPlanetGrow','colonyPlanetExtract','colonyPlanetGeoExtract','colonyPlanetRetrieve',
+                            'colonyPlanetSupport'):
+                base={'token','action','body','latitude','longitude'}
+                expected=(base if action=='colonyPlanetBuild' else
+                          base|({'equipment'} if action=='colonyPlanetEquip' else
+                                {'batches'} if action=='colonyPlanetGrow' else
+                                {'resource','kg'}))
+                if action=='colonyPlanetBuild' and set(doc)==base|{'firstNpc','secondNpc'}:
+                    expected=base|{'firstNpc','secondNpc'}
+                if set(doc)!=expected:raise ValueError('Unexpected planetary operation fields')
+                body,latitude,longitude=doc['body'],doc['latitude'],doc['longitude']
+                if (type(body)!=int or not 1<=body<=9223372036854775807 or
+                    type(latitude)!=int or not 0<=latitude<36 or
+                    type(longitude)!=int or not 0<=longitude<72):
+                    raise ValueError('Invalid planetary operation coordinates')
+                prefix=f'{body}|{latitude}|{longitude}'
+                if action=='colonyPlanetBuild':
+                    if 'firstNpc' in doc:
+                        first,second=doc['firstNpc'],doc['secondNpc']
+                        if (type(first)!=int or type(second)!=int or
+                            not 1<=first<=9223372036854775807 or
+                            not 1<=second<=9223372036854775807 or
+                            first==second):
+                            raise ValueError('Invalid selected NPC roster')
+                        command=f'PLANET_BUILD|{prefix}|{first}|{second}'
+                    else:
+                        command=f'PLANET_BUILD|{prefix}'
+                elif action=='colonyPlanetEquip':
+                    equipment=doc['equipment']
+                    if type(equipment)!=str or equipment not in ('FARM','EXTRACT'):
+                        raise ValueError('Invalid planetary equipment')
+                    command=f'PLANET_EQUIP|{prefix}|{equipment}'
+                elif action=='colonyPlanetGrow':
+                    batches=doc['batches']
+                    if type(batches)!=int or not 1<=batches<=100:
+                        raise ValueError('Invalid planetary harvest batches')
+                    command=f'PLANET_GROW|{prefix}|{batches}'
+                else:
+                    resource,kg=doc['resource'],doc['kg']
+                    allowed=(('FOOD','WATER') if action=='colonyPlanetRetrieve'
+                             else ('FOOD','OXYGEN') if action=='colonyPlanetSupport'
+                             else ('WATER','NUTRIENTS'))
+                    if (type(resource)!=str or resource not in allowed or
+                       type(kg)!=int or not 1<=kg<=10000 or
+                       (action=='colonyPlanetExtract' and (kg<1000 or kg%1000))):
+                        raise ValueError('Invalid planetary resource request')
+                    operation={
+                        'colonyPlanetSupply':'PLANET_SUPPLY',
+                        'colonyPlanetExtract':'PLANET_EXTRACT',
+                        'colonyPlanetRetrieve':'PLANET_RETRIEVE',
+                        'colonyPlanetSupport':'PLANET_SUPPORT'}[action]
+                    command=f'{operation}|{prefix}|{resource}|{kg}'
+            elif action in ('colonyPlanetGeoFreightLoad','colonyPlanetGeoFreightUnload'):
+                expected={'token','action','body','latitude','longitude',
+                          'resource','kg','requestId'}
+                if set(doc)!=expected:
+                    raise ValueError('Unexpected original shuttle geology fields')
+                body,lat,lon=doc['body'],doc['latitude'],doc['longitude']
+                resource,kg,request=doc['resource'],doc['kg'],doc['requestId']
+                if (type(body)!=int or not 1<=body<=9223372036854775807 or
+                    type(lat)!=int or not 0<=lat<36 or
+                    type(lon)!=int or not 0<=lon<72 or
+                    type(resource)!=str or
+                    resource not in ('SOIL','MINERAL','VOLATILE') or
+                    type(kg)!=int or not 1<=kg<=1000 or
+                    type(request)!=int or not 1<=request<(1<<50)):
+                    raise ValueError('Unapproved geological shuttle freight')
+                verb=('PLANET_GEO_FREIGHT_LOAD' if action=='colonyPlanetGeoFreightLoad'
+                      else 'PLANET_GEO_FREIGHT_UNLOAD')
+                command=f'{verb}|{body}|{lat}|{lon}|{resource}|{kg}|{request}'
+            elif action=='colonyPlanetGeoExtract':
+                expected={'token','action','body','latitude','longitude',
+                          'resource','phase','kg','worker','requestId'}
+                if set(doc)!=expected:raise ValueError('Unexpected geological extraction fields')
+                body,lat,lon=doc['body'],doc['latitude'],doc['longitude']
+                resource,phase=doc['resource'],doc['phase']
+                kg,worker,request=doc['kg'],doc['worker'],doc['requestId']
+                if (type(body)!=int or not 1<=body<=9223372036854775807 or
+                    type(lat)!=int or not 0<=lat<36 or
+                    type(lon)!=int or not 0<=lon<72 or
+                    type(resource)!=str or
+                    resource not in ('WATER','SOIL','MINERAL','VOLATILE') or
+                    type(phase)!=int or phase not in (0,2) or
+                    (resource!='WATER' and phase!=0) or
+                    type(kg)!=int or not 1000<=kg<=10000 or kg%1000 or
+                    type(worker)!=int or not 1<=worker<=9223372036854775807 or
+                    type(request)!=int or not 1<=request<(1<<50)):
+                    raise ValueError('Invalid authorized geological source request')
+                command=f'PLANET_GEO_EXTRACT|{body}|{lat}|{lon}|{resource}|{phase}|{kg}|{worker}|{request}'
+            elif action=='colonyPlanetSurvey' and set(doc)=={'token','action','body','latitude','longitude'}:
+                body,latitude,longitude=doc['body'],doc['latitude'],doc['longitude']
+                if (type(body)!=int or not 1<=body<=9223372036854775807 or
+                    type(latitude)!=int or not 0<=latitude<36 or
+                    type(longitude)!=int or not 0<=longitude<72):
+                    raise ValueError('Invalid planetary geographic coordinates')
+                command=f'PLANET_SURVEY|{body}|{latitude}|{longitude}'
+            elif action=='colonyFrameTravel' and set(doc)=={'token','action','body'}:
+                body=doc['body']
+                if type(body)!=int or not 1<=body<=9223372036854775807:
+                    raise ValueError('Invalid celestial body ID')
+                command=f'FRAME_TRAVEL|{body}'
+            elif action in ('colonyCelestialScan','colonyEnvironmentScan') and set(doc)=={'token','action'}:
+                command='SYSTEM_CELESTIAL' if action=='colonyCelestialScan' else 'SYSTEM_ENVIRONMENT'
+            elif action=='colonySignatureScan' and set(doc)=={'token','action','rangeMm'}:
+                radius=doc['rangeMm']
+                if type(radius)!=int or not 5000000<=radius<=500000000:
+                    raise ValueError('Invalid signature search radius')
+                command=f'SIGNATURES|{radius}'
+            elif action=='colonyProbeFocus' and set(doc)=={'token','action','probe','signature'}:
+                probe,signature=doc['probe'],doc['signature']
+                if (type(probe)!=int or type(signature)!=int or
+                    not 1<=probe<=1000000000000000 or not 1<=signature<=100000000):
+                    raise ValueError('Invalid probe focus request')
+                command=f'PROBE_FOCUS|{probe}|{signature}'
+            elif action=='colonyProbeCancel' and set(doc)=={'token','action','probe'}:
+                probe=doc['probe']
+                if type(probe)!=int or not 1<=probe<=1000000000000000:
+                    raise ValueError('Invalid probe cancellation request')
+                command=f'PROBE_CANCEL|{probe}'
+            elif action=='colonyProbeDeploy' and set(doc)=={'token','action'}:
+                command='PROBE_DEPLOY'
+            elif action in ('colonyProbeScan','colonyProbeRecover') and set(doc)=={'token','action','probe'}:
+                probe=doc['probe']
+                if type(probe)!=int or not 1<=probe<=1000000000000000:
+                    raise ValueError('Invalid physical survey probe ID')
+                command=('PROBE_SCAN' if action=='colonyProbeScan' else 'PROBE_RECOVER')+'|'+str(probe)
+            elif action=='colonySecurityRefresh' and set(doc)=={'token','action'}:
+                command='SECURITY_REFRESH'
+            elif action=='colonySecurityClaim' and set(doc)=={'token','action','radius'}:
+                radius=doc['radius']
+                if type(radius)!=int or not 1<=radius<=5000:
+                    raise ValueError('Invalid territorial claim radius')
+                command=f'SECURITY_CLAIM|{radius}'
+            elif action=='colonySecurityWarn' and set(doc)=={'token','action','ship'}:
+                target=doc['ship']
+                if type(target)!=int or not 1<=target<=1000000000000000:
+                    raise ValueError('Invalid observed vessel')
+                command=f'SECURITY_WARN|{target}'
+            elif action=='colonySecurityHail' and set(doc)=={'token','action','colony'}:
+                target=doc['colony']
+                if type(target)!=int or not 1<=target<=1000000000000000:
+                    raise ValueError('Invalid real foreign jurisdiction')
+                command=f'SECURITY_HAIL|{target}'
+            elif action=='colonySecurityReply' and set(doc)=={
+                    'token','action','colony','notice','choice'}:
+                colony,notice,choice=doc['colony'],doc['notice'],doc['choice']
+                if type(colony)!=int or not 1<=colony<=1000000000000000 or (
+                   type(notice)!=str or not 1<=len(notice)<=19 or
+                   not notice.isascii() or not notice.isdecimal() or
+                   notice[0]=='0' or int(notice)>=(1<<63)) or (
+                   type(choice)!=str or choice not in ('acknowledge','refuse')):
+                    raise ValueError('Invalid original notice reply')
+                command=f'SECURITY_REPLY|{colony}|{notice}|'+(
+                    'ACK' if choice=='acknowledge' else 'REFUSE')
+            elif action=='colonySecurityPatrol' and set(doc)=={
+                    'token','action','case','ship'}:
+                case_id,ship=doc['case'],doc['ship']
+                # Original SQLite case IDs may exceed JS's 53-bit number
+                # precision; receive canonical DECIMAL STRINGS, not floats.
+                if type(case_id)!=str or not 1<=len(case_id)<=19 or (
+                   not case_id.isascii() or not case_id.isdecimal() or
+                   case_id[0]=='0' or int(case_id)>=(1<<62)) or (
+                   type(ship)!=int or not 1<=ship<=1000000000000000):
+                    raise ValueError('Invalid original case or observed vessel')
+                command=f'SECURITY_PATROL|{case_id}|{ship}'
+            elif action=='colonySecurityNotifyAck' and set(doc)=={
+                    'token','action','sequence'}:
+                seq=doc['sequence']
+                if type(seq)!=str or not 1<=len(seq)<=19 or (
+                    not seq.isascii() or not seq.isdecimal() or
+                    seq[0]=='0' or int(seq)>=(1<<63)):
+                    raise ValueError('Invalid owner-scoped notification receipt')
+                command='SECURITY_NOTIFICATION_ACK|'+seq
+            elif action=='colonySecurityAgencyEstablish' and set(doc)=={
+                    'token','action'}:
+                command='SECURITY_AGENCY_ESTABLISH'
+            elif action=='colonySecurityAgencyRefer' and set(doc)=={
+                    'token','action','complaint'}:
+                complaint=doc['complaint']
+                if type(complaint)!=str or not 1<=len(complaint)<=19 or (
+                    not complaint.isascii() or not complaint.isdecimal() or
+                    complaint[0]=='0' or int(complaint)>=(1<<63)):
+                    raise ValueError('Invalid original verified complaint reference')
+                command='SECURITY_AGENCY_REFER|'+complaint
+            elif action=='colonySecurityAgencyInvestigate' and set(doc)=={
+                    'token','action','referral','ship'}:
+                referral,ship=doc['referral'],doc['ship']
+                if type(referral)!=str or not 1<=len(referral)<=19 or (
+                    not referral.isascii() or not referral.isdecimal() or
+                    referral[0]=='0' or int(referral)>=(1<<40)) or (
+                    type(ship)!=int or not 1<=ship<=1000000000000000):
+                    raise ValueError('Invalid original referral or observed ship')
+                command='SECURITY_AGENCY_INVESTIGATE|'+referral+'|'+str(ship)
+            elif action=='colonySecurityCall' and set(doc)=={
+                    'token','action','ship'}:
+                ship=doc['ship']
+                if type(ship)!=int or not 1<=ship<=1000000000000000:
+                    raise ValueError('Invalid observed ship to hail')
+                command=f'SECURITY_CALL|{ship}'
+            elif action=='colonySecurityCallReply' and set(doc)=={
+                    'token','action','request','choice'}:
+                call,choice=doc['request'],doc['choice']
+                if type(call)!=str or not 1<=len(call)<=19 or (
+                   not call.isascii() or not call.isdecimal() or
+                   call[0]=='0' or int(call)>=(1<<63)) or (
+                   type(choice)!=str or choice not in ('identify','decline')):
+                    raise ValueError('Invalid authenticated hail response')
+                command='SECURITY_CALL_REPLY|'+call+'|'+(
+                    'IDENTIFY' if choice=='identify' else 'DECLINE')
+            elif action=='colonyCyberFit' and set(doc)=={'token','action','device','install'}:
+                device,install=doc['device'],doc['install']
+                if type(device)!=str or device not in (
+                    'emitter','firewall','stealth','counterSensor') or type(install)!=bool:
+                    raise ValueError('Invalid physical cyber/stealth fitting')
+                module={'emitter':3,'firewall':4,'stealth':5,
+                        'counterSensor':6}[device]
+                command=f'CYBER_FIT|{module if install else -module}'
+            elif action in ('colonyCyberPower','colonyCyberIsolate') and set(doc)=={'token','action','slot','enabled'}:
+                slot,enabled=doc['slot'],doc['enabled']
+                if type(slot)!=int or slot not in (0,1) or type(enabled)!=bool:
+                    raise ValueError('Invalid module control')
+                command=f'{"CYBER_POWER" if action=="colonyCyberPower" else "CYBER_ISOLATE"}|{slot}|{int(enabled)}'
+            elif action=='colonyCyberAttack' and set(doc)=={'token','action','target'}:
+                target=doc['target']
+                if type(target)!=int or not 1<=target<=1000000000000000:
+                    raise ValueError('Invalid physical cyber target')
+                command=f'CYBER_ATTACK|{target}'
+            elif action=='colonyConfigureScanner' and set(doc)=={'token','action','mode'}:
+                mode=doc['mode']
+                if type(mode)!=int or mode not in (1,-1):
+                    raise ValueError('Invalid exploration scanner fitting operation')
+                command=f'FIT_SCANNER|{mode}'
             elif action in ('colonyScan','colonyBuild') and set(doc)=={'token','action'}:
                 command='SCAN' if action=='colonyScan' else 'BUILD'
             elif action in ('colonyMine','colonyRefine','colonyFabricate') and set(doc)=={'token','action','amount'}:
@@ -496,6 +1188,29 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 if type(a)!=int or type(b)!=int or not 1<=a<=7 or not 1<=b<=7 or a==b or type(online)!=bool:
                     raise ValueError('Invalid QA gate link')
                 command=f'QA_GATE|{a}|{b}|{1 if online else 0}'
+            elif action in ('colonyDockBase','colonyUndockBase','colonyUnloadBase','colonyLoadBase') and set(doc)=={'token','action'}:
+                command={'colonyDockBase':'DOCK_BASE','colonyUndockBase':'UNDOCK_BASE',
+                         'colonyUnloadBase':'UNLOAD_BASE','colonyLoadBase':'LOAD_BASE'}[action]
+            elif action=='colonySalvageWreck' and set(doc)=={'token','action','target','amount'}:
+                target,amount=doc['target'],doc['amount']
+                if type(target)!=int or not 1<=target<=100000000 or type(amount)!=int or not 1<=amount<=10:
+                    raise ValueError('Invalid salvage request')
+                command=f'SALVAGE_WRECK|{target}|{amount}'
+            elif action=='colonyFireShip' and set(doc)=={
+                    'token','action','target'}:
+                target=doc['target']
+                if type(target)!=int or not 1<=target<=1000000000000000:
+                    raise ValueError('Invalid physically acquired enemy ship')
+                command=f'FIRE_SHIP|{target}'
+            elif action=='colonyFireTraining' and set(doc)=={'token','action','target'}:
+                target=doc['target']
+                if type(target)!=int or not 1<=target<=100000000:
+                    raise ValueError('Invalid training weapon target')
+                command=f'FIRE_TRAINING|{target}'
+            elif action=='yaw' and set(doc)=={'token','action','delta'}:
+                delta=doc['delta']
+                if type(delta)!=int or delta not in (-15,15):raise ValueError('Invalid yaw step')
+                command=f'YAW|{delta}'
             elif action=='thrust' and set(doc)=={'token','action','x','y'}:
                 x,y=doc['x'],doc['y']
                 if type(x)!=int or type(y)!=int or x not in (-1,0,1) or y not in (-1,0,1):raise ValueError('Invalid thrust axes')
@@ -533,7 +1248,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self._json(202,{'status':'queued_not_committed'})
         except (ValueError,UnicodeDecodeError,json.JSONDecodeError) as exc:
             self._json(400,{'error':str(exc)[:120]})
-        except (BrokenPipeError,RuntimeError) as exc:
+        except (BrokenPipeError,RuntimeError,PermissionError) as exc:
             self._json(409,{'error':str(exc)[:120]})
 
 class Server(http.server.ThreadingHTTPServer):
@@ -566,7 +1281,9 @@ def run(args=None):
     with tempfile.TemporaryDirectory(prefix='galaxy-interactive-') as tmp:
         save=opt.save.resolve() if opt.save else pathlib.Path(tmp)/'world.sqlite'
         save.parent.mkdir(parents=True,exist_ok=True)
-        rt=SharedRuntime(opt.host_exe.resolve(),save,opt.tick_ms,opt.max_ticks,opt.qa_test,authenticated=bool(accounts))
+        rt=SharedRuntime(opt.host_exe.resolve(),save,opt.tick_ms,opt.max_ticks,opt.qa_test,
+            authenticated=bool(accounts),
+            human_owners={a['playerId'] for a in accounts.values()} if accounts else {7})
         rt.db=save
         try:
             with Server(('127.0.0.1',opt.port),Handler) as server:

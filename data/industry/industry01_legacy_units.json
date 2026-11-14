@@ -1,0 +1,288 @@
+{
+  "schema_version": 1,
+  "status": "original_world_id_audit_read_only",
+  "identity_authority": "inventory::Catalogue::standard + original Simulation fields",
+  "unit_warning": "Original cargo liters are gameplay volume, not measured material density. Candidate Industry mass/volume must never overwrite these save fields.",
+  "rows": [
+    {
+      "legacy_code": "ore",
+      "kind": "ore_tonne",
+      "store": "cargo",
+      "storage_litres_per_unit": 1000,
+      "mass_g_per_unit": 1000000,
+      "original_source_field": "Entity::cargo.ore",
+      "source_reference": "src/Inventory.cpp; include/galaxy/Simulation.hpp",
+      "migration": "read_only_identity_no_automatic_world_conversion"
+    },
+    {
+      "legacy_code": "refined",
+      "kind": "refined_tonne",
+      "store": "cargo",
+      "storage_litres_per_unit": 1000,
+      "mass_g_per_unit": 1000000,
+      "original_source_field": "ColonyShip::refined",
+      "source_reference": "src/Inventory.cpp; include/galaxy/Simulation.hpp",
+      "migration": "read_only_identity_no_automatic_world_conversion"
+    },
+    {
+      "legacy_code": "construction_module",
+      "kind": "module_count",
+      "store": "cargo",
+      "storage_litres_per_unit": 2000,
+      "mass_g_per_unit": 2000000,
+      "original_source_field": "ColonyShip::modules",
+      "source_reference": "src/Inventory.cpp; include/galaxy/Simulation.hpp",
+      "migration": "read_only_identity_no_automatic_world_conversion"
+    },
+    {
+      "legacy_code": "tailings",
+      "kind": "kilogram",
+      "store": "cargo",
+      "storage_litres_per_unit": 1,
+      "mass_g_per_unit": 1000,
+      "original_source_field": "ColonyShip::tailings_kg",
+      "source_reference": "src/Inventory.cpp; include/galaxy/Simulation.hpp",
+      "migration": "read_only_identity_no_automatic_world_conversion"
+    },
+    {
+      "legacy_code": "mineral/serpentine",
+      "kind": "kilogram",
+      "store": "colony_minerals",
+      "storage_litres_per_unit": 1,
+      "mass_g_per_unit": 1000,
+      "original_source_field": "ColonyShip::minerals_kg",
+      "source_reference": "src/Inventory.cpp; include/galaxy/Simulation.hpp",
+      "migration": "read_only_identity_no_automatic_world_conversion"
+    },
+    {
+      "legacy_code": "mineral/saponite",
+      "kind": "kilogram",
+      "store": "colony_minerals",
+      "storage_litres_per_unit": 1,
+      "mass_g_per_unit": 1000,
+      "original_source_field": "ColonyShip::minerals_kg",
+      "source_reference": "src/Inventory.cpp; include/galaxy/Simulation.hpp",
+      "migration": "read_only_identity_no_automatic_world_conversion"
+    },
+    {
+      "legacy_code": "mineral/magnetite",
+      "kind": "kilogram",
+      "store": "colony_minerals",
+      "storage_litres_per_unit": 1,
+      "mass_g_per_unit": 1000,
+      "original_source_field": "ColonyShip::minerals_kg",
+      "source_reference": "src/Inventory.cpp; include/galaxy/Simulation.hpp",
+      "migration": "read_only_identity_no_automatic_world_conversion"
+    },
+    {
+      "legacy_code": "mineral/pyrrhotite",
+      "kind": "kilogram",
+      "store": "colony_minerals",
+      "storage_litres_per_unit": 1,
+      "mass_g_per_unit": 1000,
+      "original_source_field": "ColonyShip::minerals_kg",
+      "source_reference": "src/Inventory.cpp; include/galaxy/Simulation.hpp",
+      "migration": "read_only_identity_no_automatic_world_conversion"
+    },
+    {
+      "legacy_code": "mineral/carbonates",
+      "kind": "kilogram",
+      "store": "colony_minerals",
+      "storage_litres_per_unit": 1,
+      "mass_g_per_unit": 1000,
+      "original_source_field": "ColonyShip::minerals_kg",
+      "source_reference": "src/Inventory.cpp; include/galaxy/Simulation.hpp",
+      "migration": "read_only_identity_no_automatic_world_conversion"
+    },
+    {
+      "legacy_code": "mineral/olivine",
+      "kind": "kilogram",
+      "store": "colony_minerals",
+      "storage_litres_per_unit": 1,
+      "mass_g_per_unit": 1000,
+      "original_source_field": "ColonyShip::minerals_kg",
+      "source_reference": "src/Inventory.cpp; include/galaxy/Simulation.hpp",
+      "migration": "read_only_identity_no_automatic_world_conversion"
+    },
+    {
+      "legacy_code": "mineral/pyroxene",
+      "kind": "kilogram",
+      "store": "colony_minerals",
+      "storage_litres_per_unit": 1,
+      "mass_g_per_unit": 1000,
+      "original_source_field": "ColonyShip::minerals_kg",
+      "source_reference": "src/Inventory.cpp; include/galaxy/Simulation.hpp",
+      "migration": "read_only_identity_no_automatic_world_conversion"
+    },
+    {
+      "legacy_code": "mineral/nickel_iron",
+      "kind": "kilogram",
+      "store": "colony_minerals",
+      "storage_litres_per_unit": 1,
+      "mass_g_per_unit": 1000,
+      "original_source_field": "ColonyShip::minerals_kg",
+      "source_reference": "src/Inventory.cpp; include/galaxy/Simulation.hpp",
+      "migration": "read_only_identity_no_automatic_world_conversion"
+    },
+    {
+      "legacy_code": "mineral/other",
+      "kind": "kilogram",
+      "store": "colony_minerals",
+      "storage_litres_per_unit": 1,
+      "mass_g_per_unit": 1000,
+      "original_source_field": "ColonyShip::minerals_kg",
+      "source_reference": "src/Inventory.cpp; include/galaxy/Simulation.hpp",
+      "migration": "read_only_identity_no_automatic_world_conversion"
+    },
+    {
+      "legacy_code": "mineral/plagioclase",
+      "kind": "kilogram",
+      "store": "colony_minerals",
+      "storage_litres_per_unit": 1,
+      "mass_g_per_unit": 1000,
+      "original_source_field": "ColonyShip::minerals_kg",
+      "source_reference": "src/Inventory.cpp; include/galaxy/Simulation.hpp",
+      "migration": "read_only_identity_no_automatic_world_conversion"
+    },
+    {
+      "legacy_code": "mineral/troilite",
+      "kind": "kilogram",
+      "store": "colony_minerals",
+      "storage_litres_per_unit": 1,
+      "mass_g_per_unit": 1000,
+      "original_source_field": "ColonyShip::minerals_kg",
+      "source_reference": "src/Inventory.cpp; include/galaxy/Simulation.hpp",
+      "migration": "read_only_identity_no_automatic_world_conversion"
+    },
+    {
+      "legacy_code": "good/structural_alloy",
+      "kind": "kilogram",
+      "store": "colony_goods_or_workshop",
+      "storage_litres_per_unit": 1,
+      "mass_g_per_unit": 1000,
+      "original_source_field": "ColonyShip::goods_kg / OutpostWorkshop / OutpostStorage",
+      "source_reference": "src/Inventory.cpp; include/galaxy/Simulation.hpp",
+      "migration": "read_only_identity_no_automatic_world_conversion"
+    },
+    {
+      "legacy_code": "good/aluminum",
+      "kind": "kilogram",
+      "store": "colony_goods_or_workshop",
+      "storage_litres_per_unit": 1,
+      "mass_g_per_unit": 1000,
+      "original_source_field": "ColonyShip::goods_kg / OutpostWorkshop / OutpostStorage",
+      "source_reference": "src/Inventory.cpp; include/galaxy/Simulation.hpp",
+      "migration": "read_only_identity_no_automatic_world_conversion"
+    },
+    {
+      "legacy_code": "good/aluminum_panels",
+      "kind": "kilogram",
+      "store": "colony_goods_or_workshop",
+      "storage_litres_per_unit": 1,
+      "mass_g_per_unit": 1000,
+      "original_source_field": "ColonyShip::goods_kg / OutpostWorkshop / OutpostStorage",
+      "source_reference": "src/Inventory.cpp; include/galaxy/Simulation.hpp",
+      "migration": "read_only_identity_no_automatic_world_conversion"
+    },
+    {
+      "legacy_code": "good/aluminum_frames",
+      "kind": "kilogram",
+      "store": "colony_goods_or_workshop",
+      "storage_litres_per_unit": 1,
+      "mass_g_per_unit": 1000,
+      "original_source_field": "ColonyShip::goods_kg / OutpostWorkshop / OutpostStorage",
+      "source_reference": "src/Inventory.cpp; include/galaxy/Simulation.hpp",
+      "migration": "read_only_identity_no_automatic_world_conversion"
+    },
+    {
+      "legacy_code": "good/aluminum_scrap",
+      "kind": "kilogram",
+      "store": "colony_goods_or_workshop",
+      "storage_litres_per_unit": 1,
+      "mass_g_per_unit": 1000,
+      "original_source_field": "ColonyShip::goods_kg / OutpostWorkshop / OutpostStorage",
+      "source_reference": "src/Inventory.cpp; include/galaxy/Simulation.hpp",
+      "migration": "read_only_identity_no_automatic_world_conversion"
+    },
+    {
+      "legacy_code": "good/ceramic",
+      "kind": "kilogram",
+      "store": "colony_goods_or_workshop",
+      "storage_litres_per_unit": 1,
+      "mass_g_per_unit": 1000,
+      "original_source_field": "ColonyShip::goods_kg / OutpostWorkshop / OutpostStorage",
+      "source_reference": "src/Inventory.cpp; include/galaxy/Simulation.hpp",
+      "migration": "read_only_identity_no_automatic_world_conversion"
+    },
+    {
+      "legacy_code": "good/glass",
+      "kind": "kilogram",
+      "store": "colony_goods_or_workshop",
+      "storage_litres_per_unit": 1,
+      "mass_g_per_unit": 1000,
+      "original_source_field": "ColonyShip::goods_kg / OutpostWorkshop / OutpostStorage",
+      "source_reference": "src/Inventory.cpp; include/galaxy/Simulation.hpp",
+      "migration": "read_only_identity_no_automatic_world_conversion"
+    },
+    {
+      "legacy_code": "good/water",
+      "kind": "kilogram",
+      "store": "colony_goods_or_workshop",
+      "storage_litres_per_unit": 1,
+      "mass_g_per_unit": 1000,
+      "original_source_field": "ColonyShip::goods_kg / OutpostWorkshop / OutpostStorage",
+      "source_reference": "src/Inventory.cpp; include/galaxy/Simulation.hpp",
+      "migration": "read_only_identity_no_automatic_world_conversion"
+    },
+    {
+      "legacy_code": "good/sulfur",
+      "kind": "kilogram",
+      "store": "colony_goods_or_workshop",
+      "storage_litres_per_unit": 1,
+      "mass_g_per_unit": 1000,
+      "original_source_field": "ColonyShip::goods_kg / OutpostWorkshop / OutpostStorage",
+      "source_reference": "src/Inventory.cpp; include/galaxy/Simulation.hpp",
+      "migration": "read_only_identity_no_automatic_world_conversion"
+    },
+    {
+      "legacy_code": "good/carbon_feed",
+      "kind": "kilogram",
+      "store": "colony_goods_or_workshop",
+      "storage_litres_per_unit": 1,
+      "mass_g_per_unit": 1000,
+      "original_source_field": "ColonyShip::goods_kg / OutpostWorkshop / OutpostStorage",
+      "source_reference": "src/Inventory.cpp; include/galaxy/Simulation.hpp",
+      "migration": "read_only_identity_no_automatic_world_conversion"
+    },
+    {
+      "legacy_code": "good/freight_water",
+      "kind": "sealed_freight_kilogram",
+      "store": "sealed_manifest",
+      "storage_litres_per_unit": 1,
+      "mass_g_per_unit": 1000,
+      "original_source_field": "IntercolonyFreightLeg/transport::Manifest",
+      "source_reference": "src/Inventory.cpp; include/galaxy/Simulation.hpp",
+      "migration": "read_only_identity_no_automatic_world_conversion"
+    },
+    {
+      "legacy_code": "good/freight_food",
+      "kind": "sealed_freight_kilogram",
+      "store": "sealed_manifest",
+      "storage_litres_per_unit": 1,
+      "mass_g_per_unit": 1000,
+      "original_source_field": "IntercolonyFreightLeg/transport::Manifest",
+      "source_reference": "src/Inventory.cpp; include/galaxy/Simulation.hpp",
+      "migration": "read_only_identity_no_automatic_world_conversion"
+    },
+    {
+      "legacy_code": "good/freight_nutrients",
+      "kind": "sealed_freight_kilogram",
+      "store": "sealed_manifest",
+      "storage_litres_per_unit": 1,
+      "mass_g_per_unit": 1000,
+      "original_source_field": "IntercolonyFreightLeg/transport::Manifest",
+      "source_reference": "src/Inventory.cpp; include/galaxy/Simulation.hpp",
+      "migration": "read_only_identity_no_automatic_world_conversion"
+    }
+  ]
+}

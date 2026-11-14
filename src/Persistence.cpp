@@ -1,16 +1,27 @@
 #include "galaxy/Persistence.hpp"
+#include "galaxy/GalacticSystemRegistry.hpp"
+#include "galaxy/SeamlessSpatialOwnership.hpp"
+#include "galaxy/UniversalNpcMigration.hpp"
+#include "galaxy/CelestialFrameTransition.hpp"
 #include "galaxy/ColonySafety.hpp"
+#include "galaxy/ColonyDefense.hpp"
+#include "galaxy/ColonyConflict.hpp"
+#include "galaxy/ColonySafetyJournal.hpp"
+#include "galaxy/ColonySafetyNotice.hpp"
 #include "galaxy/ShipmentManifest.hpp"
 #include "galaxy/SplitRescueIntent.hpp"
 #include "galaxy/RegionalModeAuthority.hpp"
 #include "galaxy/NpcAppearanceGenome.hpp"
 #include "galaxy/MedicalSocietyBridge.hpp"
+#include "galaxy/Stage07DutyExclusivity.hpp"
 #include "galaxy/RegionalCheckpointStore.hpp"
 #include <algorithm>
+#include <array>
 #include <sqlite3.h>
 
 #include <filesystem>
 #include <cerrno>
+#include <cstring>
 #ifdef _WIN32
 #include <io.h>
 #include <fcntl.h>
@@ -160,8 +171,10 @@ Command decode_command(const std::string& record) {
         if (extra != "T31" || !(in >> c.transport_id))
             throw std::runtime_error("recovery: invalid transport envelope");
         std::size_t count=0;
-        if (!(in >> count) || !c.transport_id || count==0 || count>10000)
-            throw std::runtime_error("recovery: invalid transport manifest size");
+        const bool colony_departure=action==static_cast<int>(Action::HostColonyDeparture);
+        if (!(in >> count) || count==0 || count>(colony_departure?16U:10000U) ||
+            (colony_departure ? c.transport_id!=0 : c.transport_id==0))
+            throw std::runtime_error("recovery: invalid transport/departure manifest size");
         std::set<std::uint64_t> unique;
         for (std::size_t i=0;i<count;++i) {
             std::uint64_t npc=0;
@@ -169,13 +182,15 @@ Command decode_command(const std::string& record) {
                 throw std::runtime_error("recovery: invalid transport passenger");
             c.passenger_ids.push_back(npc);
         }
+        if(colony_departure && !std::is_sorted(c.passenger_ids.begin(),c.passenger_ids.end()))
+            throw std::runtime_error("recovery: departure IDs not canonical");
         if(action==static_cast<int>(Action::HostSplitEvacuatePassengers)){
             if(!(in>>extra)||extra!="S48"||!(in>>c.secondary_receiver>>c.secondary_transport)||
                !c.secondary_receiver||!c.secondary_transport)
                 throw std::runtime_error("recovery: malformed split rescue envelope");
         }
     }
-    if (in >> extra || action < 0 || action > static_cast<int>(Action::HostTransferConsignedStock) || c.id == 0 || c.issuer == 0)
+    if (in >> extra || action < 0 || action > static_cast<int>(Action::ConfigureMiningTool) || c.id == 0 || c.issuer == 0)
         throw std::runtime_error("recovery: invalid command journal values");
     c.action = static_cast<Action>(action);
     if (command_record(c) != record) throw std::runtime_error("recovery: noncanonical command journal");
@@ -593,7 +608,128 @@ std::uint64_t latest_generation(sqlite3* db) {
 
 class PersistentWorld::Store {
 public:
+    bool station_receipt_used(std::uint64_t receipt) const {
+        Statement t(db_,"SELECT 1 FROM sqlite_master WHERE type='table' "
+            "AND name='sg_station_player_action'");
+        if(!t.row())return false;
+        Statement q(db_,"SELECT 1 FROM sg_station_player_action WHERE receipt=?");
+        q.i64(1,static_cast<std::int64_t>(receipt));
+        return q.row();
+    }
     bool manifest_transfer_allowed(const Command& c) const {return shipping::manifest_transfer_authorized(db_,c) && shipping::third_party_transfer_authorized(db_,c);}
+    // A canonical PhysicalDependent stores one guardian, while ART02 retains
+    // both birth parents. Until planetary family berths are atomic, an adult
+    // with an ART02 child cannot use the independent-adult shuttle interface.
+    // Consult the existing authoritative family registry, not a copied NPC
+    // roster or an assertion by the incoming client.
+    bool has_art02_child_parent(std::uint64_t adult_id) const {
+        if(!adult_id)return false;
+        Statement table(db_,"SELECT 1 FROM sqlite_master WHERE type='table' "
+            "AND name='npc_family_births'");
+        if(!table.row())return false; // no ART02 families registered in legacy DB
+        Statement children(db_,"SELECT 1 FROM npc_family_births "
+            "WHERE parent_a=? OR parent_b=? LIMIT 1");
+        children.text(1,std::to_string(adult_id));
+        children.text(2,std::to_string(adult_id));
+        return children.row(); // conservative for unproven custody/death
+    }
+    // Original ART02 and original physical-child bridge are both required.
+    // Even the co-parent's children must form ONE complete, colocated set.
+    // The same predicate is evaluated during booking and again at takeoff.
+    bool valid_planetary_family_births(const Simulation& world,EntityId ship,
+        std::uint64_t guardian,std::uint64_t co_parent,
+        const std::vector<std::uint64_t>& children,
+        EntityId expected_legal_residence=0) const {
+        if(!ship || !guardian || guardian==co_parent || children.empty() ||
+           children.size()>2 || !std::is_sorted(children.begin(),children.end()) ||
+           std::adjacent_find(children.begin(),children.end())!=children.end())
+            return false;
+        Statement table(db_,"SELECT name FROM sqlite_master WHERE type='table' "
+                         "AND name IN ('npc_family_births','sg_med_society_birth',"
+                         "'sg_colony_physical_child_authority','npc_family_moves')");
+        std::set<std::string> tables;
+        while(table.row())tables.insert(sqlite_str(table.get(),0));
+        if(tables.size()!=4)return false;
+        Statement births(db_,"SELECT child_id,parent_a,parent_b,settlement,scope "
+            "FROM npc_family_births WHERE parent_a=? OR parent_b=? "
+            "OR parent_a=? OR parent_b=? ORDER BY child_id");
+        births.text(1,std::to_string(guardian));
+        births.text(2,std::to_string(guardian));
+        births.text(3,std::to_string(co_parent));
+        births.text(4,std::to_string(co_parent));
+        std::vector<std::uint64_t> original;
+        std::string common_scope;
+        while(births.row()){
+            const auto id=parse_u64(sqlite3_column_text(births.get(),0));
+            const auto a=parse_u64(sqlite3_column_text(births.get(),1));
+            const auto b=parse_u64(sqlite3_column_text(births.get(),2));
+            const auto birthplace=parse_u64(sqlite3_column_text(births.get(),3));
+            const auto scope=sqlite_str(births.get(),4);
+            if(id<(1ULL<<62) || !id || !birthplace || !ship ||
+               scope.empty() || (co_parent &&
+                !((a==guardian && b==co_parent) ||
+                  (a==co_parent && b==guardian))) ||
+               (a!=guardian && b!=guardian &&
+                (!co_parent || (a!=co_parent && b!=co_parent))) ||
+               birthplace!=ship ||
+               (!common_scope.empty() && scope!=common_scope))
+                return false;
+            common_scope=scope;
+            // An active historical ferry dependent berth cannot be silently
+            // rebound to a planetary shuttle, even if the cached world
+            // happens to show the child at its original ship.
+            {
+                Statement active_table(db_,"SELECT 1 FROM sqlite_master "
+                    "WHERE type='table' AND name='sg_dependent_travel'");
+                if(active_table.row()) {
+                    Statement competing(db_,"SELECT 1 FROM sg_dependent_travel "
+                        "WHERE child_id=? AND status=1 LIMIT 1");
+                    competing.text(1,std::to_string(id));
+                    if(competing.row())return false;
+                }
+            }
+            const auto physical=world.physical_dependents().find(id);
+            if(physical==world.physical_dependents().end() ||
+               physical->second.home_ship!=ship ||
+               (physical->second.guardian_id!=guardian &&
+                physical->second.guardian_id!=co_parent) ||
+               world.npc_records().count(id) ||
+               world.npc_casualties().count(id))
+                return false;
+            Statement bridge(db_,"SELECT guardian_id,home_ship,command_id "
+                "FROM sg_colony_physical_child_authority WHERE child_id=?");
+            bridge.text(1,std::to_string(id));
+            if(!bridge.row() ||
+               parse_u64(sqlite3_column_text(bridge.get(),0))!=
+                    physical->second.guardian_id ||
+               parse_u64(sqlite3_column_text(bridge.get(),1))!=ship ||
+               parse_u64(sqlite3_column_text(bridge.get(),2))!=
+                    physical->second.registration_command ||
+               bridge.row())return false;
+            Statement natal(db_,"SELECT 1 FROM sg_med_society_birth "
+                "WHERE child_id=? AND family_scope=? AND home_ship=?");
+            natal.text(1,std::to_string(id));natal.text(2,scope);
+            natal.text(3,std::to_string(ship));
+            if(!natal.row() || natal.row())return false;
+            Statement dead(db_,"SELECT 1 FROM npc_family_deaths "
+                "WHERE scope=? AND npc_id=? LIMIT 1");
+            dead.text(1,scope);dead.text(2,std::to_string(id));
+            if(dead.row())return false;
+            // Flight is physical visitation, not a legal residence change.
+            // Born children with prior ART02 residence changes may not
+            // silently move through a ship-home-only contract.
+            Statement moved(db_,"SELECT destination FROM npc_family_moves "
+                "WHERE scope=? AND npc_id=? ORDER BY rowid DESC LIMIT 1");
+            moved.text(1,scope);moved.text(2,std::to_string(id));
+            const auto actual_address=moved.row()?
+                parse_u64(sqlite3_column_text(moved.get(),0)):ship;
+            if(actual_address!=(expected_legal_residence?
+                expected_legal_residence:ship))return false;
+            original.push_back(id);
+            if(original.size()>2)return false;
+        }
+        return original==children;
+    }
     std::string sqlite_path() const {
         const char* path=sqlite3_db_filename(db_,"main");
         if(!path)throw std::runtime_error("world SQLite file path unavailable");
@@ -614,7 +750,7 @@ public:
         Statement version(db_, "PRAGMA user_version");
         if (!version.row()) throw std::runtime_error("SQLite: no schema version");
         const int v = sqlite3_column_int(version.get(), 0);
-        if (v < 0 || v > 17) throw std::runtime_error("SQLite: incompatible schema version");
+        if (v < 0 || v > 18) throw std::runtime_error("SQLite: incompatible schema version");
         if (v == 0) {
             run(db_, "BEGIN IMMEDIATE");
             try {
@@ -1067,6 +1203,30 @@ public:
                 run(db_,"PRAGMA user_version=17");run(db_,"COMMIT");
             }catch(...){sqlite3_exec(db_,"ROLLBACK",nullptr,nullptr,nullptr);throw;}
         }
+        if(v<=17){
+            // The original world-step operation_log kind=2 cannot contain a
+            // command payload. Native pilot admissions use a separate
+            // append-only companion receipt with original writer provenance.
+            run(db_,"BEGIN IMMEDIATE");
+            try {
+                run(db_,"CREATE TABLE sg_native_npc_commands("
+                    "id TEXT PRIMARY KEY REFERENCES receipts(id),"
+                    "generation INTEGER NOT NULL CHECK(generation>0),"
+                    "command TEXT NOT NULL,"
+                    "pilot TEXT NOT NULL,"
+                    "world_hash TEXT NOT NULL,"
+                    "digest TEXT NOT NULL)");
+                run(db_,"CREATE INDEX sg_native_npc_commands_generation "
+                    "ON sg_native_npc_commands(generation)");
+                run(db_,"CREATE TRIGGER sg_native_npc_commands_no_update "
+                    "BEFORE UPDATE ON sg_native_npc_commands "
+                    "BEGIN SELECT RAISE(ABORT,'native command immutable'); END");
+                run(db_,"CREATE TRIGGER sg_native_npc_commands_no_delete "
+                    "BEFORE DELETE ON sg_native_npc_commands "
+                    "BEGIN SELECT RAISE(ABORT,'native command immutable'); END");
+                run(db_,"PRAGMA user_version=18");run(db_,"COMMIT");
+            }catch(...){sqlite3_exec(db_,"ROLLBACK",nullptr,nullptr,nullptr);throw;}
+        }
         } catch (...) { sqlite3_close_v2(db_); db_ = nullptr; throw; }
     }
     ~Store() { sqlite3_close(db_); }
@@ -1126,13 +1286,2751 @@ public:
             run(db_,"COMMIT");
         }catch(...){sqlite3_exec(db_,"ROLLBACK",nullptr,nullptr,nullptr);throw;}
     }
+    void verify_colony_notifications(const Simulation& state,std::uint64_t gen) const {
+        colony_safety::notice::verify(db_,state,gen);
+    }
+    std::vector<colony_safety::notice::Pending> pending_colony_notifications(std::uint64_t limit) const {
+        return colony_safety::notice::pending(db_,limit);
+    }
+    bool acknowledge_colony_notification(const Simulation& state,std::uint64_t gen,
+                                         std::uint64_t event,std::uint64_t npc) {
+        run(db_,"BEGIN IMMEDIATE");
+        try {
+            if(latest_generation(db_)!=gen)throw std::runtime_error("stale world for NPC notification");
+            colony_safety::notice::verify(db_,state,gen);
+            const auto accepted=colony_safety::notice::acknowledge(db_,state,gen,event,npc);
+            run(db_,"COMMIT");return accepted;
+        }catch(...){sqlite3_exec(db_,"ROLLBACK",nullptr,nullptr,nullptr);throw;}
+    }
+    std::uint64_t colony_notification_opportunity_count() const {
+        return colony_safety::notice::opportunity_count(db_);
+    }
+    std::uint64_t colony_notification_acknowledgement_count() const {
+        return colony_safety::notice::acknowledgement_count(db_);
+    }
+    // AUTO-04D.5A: independent admission provenance. No caller-provided
+    // NPC story or receipt header can bypass the persisted real-world state.
+    std::optional<PersistentWorld::AtomicColonyFamilyPlan> supervisor_plan(
+        std::uint64_t command_id) const{
+        if(!command_id)return std::nullopt;
+        Statement table(db_,"SELECT 1 FROM sqlite_master WHERE type='table' "
+            "AND name='sg_colony_npc_supervisor_plan'");
+        if(!table.row())return std::nullopt; // pre-v79 legacy admission
+        Statement q(db_,"SELECT p.intent_id,p.admission_generation,p.family_seed,"
+            "p.origin_colony,p.receiver_colony,p.regional_revision,p.owner_generation,"
+            "p.origin_family_revision,p.receiver_family_revision,p.adult_count,"
+            "p.child_count,d.source,d.receiver,d.family_scope,d.region_scope,"
+            "d.admission_generation,d.intent_id "
+            "FROM sg_colony_npc_supervisor_plan p "
+            "JOIN sg_colony_npc_autonomous_dispatch d ON d.command_id=p.command_id "
+            "WHERE p.command_id=?");
+        q.text(1,std::to_string(command_id));
+        if(!q.row())return std::nullopt;
+        PersistentWorld::AtomicColonyFamilyPlan p{};
+        p.command_id=command_id;
+        p.family.intent_id=parse_u64(sqlite3_column_text(q.get(),0));
+        const auto gen=sqlite3_column_int64(q.get(),1);
+        p.family.family_seed=parse_u64(sqlite3_column_text(q.get(),2));
+        p.origin_colony=sqlite_str(q.get(),3);
+        p.receiver_colony=sqlite_str(q.get(),4);
+        const auto reg_rev=sqlite3_column_int64(q.get(),5);
+        const auto owner_gen=sqlite3_column_int64(q.get(),6);
+        const auto from_rev=sqlite3_column_int64(q.get(),7);
+        const auto to_rev=sqlite3_column_int64(q.get(),8);
+        const auto adults=sqlite3_column_int64(q.get(),9);
+        const auto children=sqlite3_column_int64(q.get(),10);
+        p.family.source=parse_u64(sqlite3_column_text(q.get(),11));
+        p.family.receiver=parse_u64(sqlite3_column_text(q.get(),12));
+        p.family.family_scope=sqlite_str(q.get(),13);
+        p.region_scope=sqlite_str(q.get(),14);
+        if(gen<2 || sqlite3_column_int64(q.get(),15)!=gen ||
+           parse_u64(sqlite3_column_text(q.get(),16))!=p.family.intent_id ||
+           !p.family.source || !p.family.receiver ||
+           p.family.source==p.family.receiver ||
+           !p.family.family_seed || !p.family.intent_id ||
+           p.family.intent_id==command_id ||
+           p.family.family_scope.empty() || p.region_scope.empty() ||
+           p.origin_colony.empty() || p.receiver_colony.empty() ||
+           p.origin_colony==p.receiver_colony ||
+           reg_rev<1 || owner_gen<1 || from_rev<0 || to_rev<0 ||
+           adults<1 || children<1 || adults+children>16 || q.row())
+            throw std::runtime_error("supervisor saved transfer plan invalid or mismatched");
+        p.family.expected_world_generation=static_cast<std::uint64_t>(gen-1);
+        p.expected_region_revision=static_cast<std::uint64_t>(reg_rev);
+        p.expected_owner_generation=static_cast<std::uint64_t>(owner_gen);
+        p.expected_origin_family_revision=static_cast<std::uint64_t>(from_rev);
+        p.expected_receiver_family_revision=static_cast<std::uint64_t>(to_rev);
+        Statement rows(db_,"SELECT ordinal,person_id,guardian_id,kind,event_id "
+            "FROM sg_colony_npc_supervisor_member WHERE command_id=? ORDER BY ordinal");
+        rows.text(1,std::to_string(command_id));
+        std::set<std::uint64_t> people,events{command_id,p.family.intent_id};
+        std::uint64_t prev_adult=0,prev_child=0;
+        sqlite3_int64 index=0;
+        while(rows.row()){
+            const auto ordinal=sqlite3_column_int64(rows.get(),0);
+            const auto person=parse_u64(sqlite3_column_text(rows.get(),1));
+            const auto guardian=parse_u64(sqlite3_column_text(rows.get(),2));
+            const auto kind=sqlite3_column_int(rows.get(),3);
+            const auto event=parse_u64(sqlite3_column_text(rows.get(),4));
+            if(ordinal!=index || index>=adults+children || !person || !event ||
+               !people.insert(person).second || !events.insert(event).second)
+                throw std::runtime_error("supervisor plan has missing or duplicate member");
+            if(index<adults){
+                if(kind!=0 || guardian || person<=prev_adult ||
+                   person>=(1ULL<<62))
+                    throw std::runtime_error("supervisor adult roster not canonical");
+                prev_adult=person;p.family.adult_ids.push_back(person);
+            }else{
+                if(kind!=1 || !guardian || person<(1ULL<<62) ||
+                   person<=prev_child ||
+                   !std::binary_search(p.family.adult_ids.begin(),
+                                       p.family.adult_ids.end(),guardian))
+                    throw std::runtime_error("supervisor child guardian/roster not canonical");
+                prev_child=person;
+                p.family.children.push_back({person,guardian});
+            }
+            p.member_event_ids.push_back(event);
+            ++index;
+        }
+        if(index!=adults+children)
+            throw std::runtime_error("supervisor plan omitted an adult or dependent");
+        return p;
+    }
+    void verify_supervisor_plans(std::uint64_t max_generation) const{
+        Statement schema(db_,"SELECT name FROM sqlite_master WHERE type='table' "
+            "AND name IN ('sg_colony_npc_supervisor_activation',"
+            "'sg_colony_npc_supervisor_plan','sg_colony_npc_supervisor_member')");
+        unsigned seen=0;while(schema.row())++seen;
+        if(!seen)return; // pre-v79 world
+        if(seen!=3)throw std::runtime_error("partial NPC supervisor ledger");
+        for(const auto* tab:{"sg_colony_npc_supervisor_activation",
+                             "sg_colony_npc_supervisor_plan",
+                             "sg_colony_npc_supervisor_member"})
+            for(const auto* suffix:{"_immutable_update","_immutable_delete"}){
+                Statement trigger(db_,"SELECT 1 FROM sqlite_master "
+                    "WHERE type='trigger' AND name=?");
+                trigger.text(1,std::string(tab)+suffix);
+                if(!trigger.row() || trigger.row())
+                    throw std::runtime_error("supervisor immutable evidence trigger missing");
+            }
+        Statement first(db_,"SELECT first_generation FROM "
+            "sg_colony_npc_supervisor_activation WHERE singleton=1");
+        if(!first.row())throw std::runtime_error("supervisor activation missing");
+        const auto activation=sqlite3_column_int64(first.get(),0);
+        if(activation<2 || static_cast<std::uint64_t>(activation)>max_generation ||
+           first.row())
+            throw std::runtime_error("supervisor activation invalid");
+        Statement dispatch(db_,"SELECT command_id,admission_generation "
+            "FROM sg_colony_npc_autonomous_dispatch "
+            "WHERE admission_generation>=? ORDER BY admission_generation");
+        dispatch.i64(1,activation);
+        while(dispatch.row()){
+            const auto id=parse_u64(sqlite3_column_text(dispatch.get(),0));
+            const auto generation=sqlite3_column_int64(dispatch.get(),1);
+            auto plan=supervisor_plan(id);
+            if(!plan || generation!=static_cast<sqlite3_int64>(
+                   plan->family.expected_world_generation+1) ||
+               generation>static_cast<sqlite3_int64>(max_generation))
+                throw std::runtime_error("accepted NPC rescue lost its durable executable plan");
+            Statement accepted(db_,"SELECT kind,command FROM operation_log "
+                "WHERE generation=?");
+            accepted.i64(1,generation);
+            if(!accepted.row() || sqlite3_column_int(accepted.get(),0)!=1)
+                throw std::runtime_error("supervisor recovery has no admitted world command");
+            const auto command=decode_command(sqlite_str(accepted.get(),1));
+            if(command.id!=id || command.action!=Action::HostColonyDeparture ||
+               command.issuer!=Simulation::kServerAuthority ||
+               command.actor!=plan->family.source ||
+               command.target!=plan->family.receiver ||
+               command.passenger_ids!=plan->family.adult_ids ||
+               accepted.row())
+                throw std::runtime_error("supervisor plan does not match actual host command");
+            Statement prepared(db_,"SELECT generation,source,receiver,family_scope,"
+                "family_seed,adult_roster,child_guardians "
+                "FROM sg_colony_family_departure_prepare WHERE intent_id=?");
+            prepared.text(1,std::to_string(plan->family.intent_id));
+            if(!prepared.row() ||
+               sqlite3_column_int64(prepared.get(),0)!=generation-1 ||
+               sqlite_str(prepared.get(),1)!=std::to_string(plan->family.source) ||
+               sqlite_str(prepared.get(),2)!=std::to_string(plan->family.receiver) ||
+               sqlite_str(prepared.get(),3)!=plan->family.family_scope ||
+               sqlite_str(prepared.get(),4)!=std::to_string(plan->family.family_seed))
+                throw std::runtime_error("supervisor plan contradicts original preparation");
+            std::string adult_roster,child_roster;
+            for(const auto person:plan->family.adult_ids){
+                if(!adult_roster.empty())adult_roster.push_back(',');
+                adult_roster+=std::to_string(person);
+            }
+            for(const auto& child:plan->family.children){
+                if(!child_roster.empty())child_roster.push_back(',');
+                child_roster+=std::to_string(child.child_id)+":"+
+                    std::to_string(child.guardian_id);
+            }
+            if(sqlite_str(prepared.get(),5)!=adult_roster ||
+               sqlite_str(prepared.get(),6)!=child_roster || prepared.row())
+                throw std::runtime_error("supervisor saved member manifest was corrupted");
+            Statement checkpoint(db_,"SELECT state,checksum FROM snapshots "
+                "WHERE generation=?");
+            checkpoint.i64(1,generation);
+            if(!checkpoint.row())throw std::runtime_error("supervisor admission snapshot pruned");
+            const auto* ptr=sqlite3_column_blob(checkpoint.get(),0);
+            const auto len=sqlite3_column_bytes(checkpoint.get(),0);
+            if(!ptr || len<=0 || len>16*1024*1024)
+                throw std::runtime_error("invalid supervisor admission checkpoint");
+            const auto admitted=Simulation::from_snapshot(std::string(
+                static_cast<const char*>(ptr),static_cast<std::size_t>(len)));
+            if(admitted.state_hash()!=parse_u64(sqlite3_column_text(checkpoint.get(),1)) ||
+               checkpoint.row())
+                throw std::runtime_error("supervisor checkpoint has wrong physical hash");
+            std::vector<std::uint64_t> world_adults,world_children;
+            for(const auto& [person,record]:admitted.npc_records())
+                if(record.home_ship==plan->family.source)
+                    world_adults.push_back(person);
+            for(const auto& [person,child]:admitted.physical_dependents())
+                if(child.home_ship==plan->family.source){
+                    world_children.push_back(person);
+                    const auto member=std::find_if(plan->family.children.begin(),
+                        plan->family.children.end(),
+                        [&](const auto& x){return x.child_id==person &&
+                            x.guardian_id==child.guardian_id;});
+                    if(member==plan->family.children.end() ||
+                       child.location!=plan->family.source)
+                        throw std::runtime_error("supervisor saved dependent guardian forged");
+                }
+            std::vector<std::uint64_t> plan_children;
+            for(const auto& c:plan->family.children)plan_children.push_back(c.child_id);
+            if(world_adults!=plan->family.adult_ids ||
+               world_children!=plan_children)
+                throw std::runtime_error("supervisor plan did not contain entire real family");
+        }
+        Statement dangling(db_,"SELECT 1 FROM sg_colony_npc_supervisor_plan p "
+            "LEFT JOIN sg_colony_npc_autonomous_dispatch d "
+            "ON d.command_id=p.command_id WHERE d.command_id IS NULL LIMIT 1");
+        if(dangling.row())
+            throw std::runtime_error("orphaned supervisor plan header");
+        Statement orphan(db_,"SELECT 1 FROM sg_colony_npc_supervisor_member m "
+            "LEFT JOIN sg_colony_npc_supervisor_plan p "
+            "ON p.command_id=m.command_id WHERE p.command_id IS NULL LIMIT 1");
+        if(orphan.row())
+            throw std::runtime_error("orphaned supervisor plan member");
+    }
+    void verify_autonomous_dispatch(std::uint64_t max_generation) const{
+        Statement exists(db_,"SELECT 1 FROM sqlite_master WHERE type='table' "
+            "AND name='sg_colony_npc_autonomous_dispatch'");
+        if(!exists.row())return; // older worlds have no autonomous admissions
+        for(const auto* name:{"sg_colony_npc_auto_no_update",
+                              "sg_colony_npc_auto_no_delete"}){
+            Statement trigger(db_,"SELECT 1 FROM sqlite_master WHERE type='trigger' "
+                "AND name=?");
+            trigger.text(1,name);
+            if(!trigger.row() || trigger.row())
+                throw std::runtime_error("autonomous NPC dispatch immutable guard removed");
+        }
+        Statement all(db_,"SELECT command_id,intent_id,admission_generation,world_hash,"
+            "leader_id,observation_id,source,receiver,family_scope,region_scope,risk "
+            "FROM sg_colony_npc_autonomous_dispatch");
+        while(all.row()){
+            const auto command=parse_u64(sqlite3_column_text(all.get(),0));
+            const auto intent=parse_u64(sqlite3_column_text(all.get(),1));
+            const auto gen=sqlite3_column_int64(all.get(),2);
+            const auto hash=sqlite_str(all.get(),3);
+            const auto npc=parse_u64(sqlite3_column_text(all.get(),4));
+            const auto observation=sqlite3_column_int64(all.get(),5);
+            const auto source=parse_u64(sqlite3_column_text(all.get(),6));
+            const auto receiver=parse_u64(sqlite3_column_text(all.get(),7));
+            const auto family=sqlite_str(all.get(),8);
+            const auto region=sqlite_str(all.get(),9);
+            const auto risk=sqlite3_column_int(all.get(),10);
+            if(!command || !intent || command==intent || gen<2 ||
+               static_cast<std::uint64_t>(gen)>max_generation ||
+               !npc || observation<=0 || !source || !receiver || source==receiver ||
+               family.empty() || region.empty() || (risk!=2 && risk!=3))
+                throw std::runtime_error("autonomous NPC dispatch identity corrupted");
+            Statement snap(db_,"SELECT state,checksum FROM snapshots WHERE generation=?");
+            snap.i64(1,gen);
+            if(!snap.row())
+                throw std::runtime_error("autonomous dispatch admission snapshot pruned");
+            const auto* bytes=sqlite3_column_blob(snap.get(),0);
+            const auto size=sqlite3_column_bytes(snap.get(),0);
+            if(!bytes || size<=0 || size>16*1024*1024)
+                throw std::runtime_error("autonomous dispatch snapshot malformed");
+            const auto admitted=Simulation::from_snapshot(std::string(
+                static_cast<const char*>(bytes),static_cast<std::size_t>(size)));
+            if(admitted.state_hash()!=parse_u64(sqlite3_column_text(snap.get(),1)) ||
+               std::to_string(admitted.state_hash())!=hash || snap.row() ||
+               !admitted.has_command_id(command))
+                throw std::runtime_error("autonomous dispatch lacks real accepted world command");
+            const auto leader=admitted.npc_records().find(npc);
+            if(leader==admitted.npc_records().end() ||
+               leader->second.home_ship!=source ||
+               leader->second.location!=source ||
+               leader->second.transport_id ||
+               static_cast<int>(colony_safety::assess(admitted,source,source).risk)!=risk)
+                throw std::runtime_error("autonomous dispatch was not a local urgent NPC response");
+            Statement op(db_,"SELECT kind,state_hash FROM operation_log WHERE generation=?");
+            op.i64(1,gen);
+            if(!op.row() || sqlite3_column_int(op.get(),0)!=1 ||
+               sqlite_str(op.get(),1)!=hash || op.row())
+                throw std::runtime_error("autonomous dispatch lacks canonical admission journal");
+            Statement planned(db_,"SELECT generation,source,receiver,family_scope,status "
+                "FROM sg_colony_family_departure_prepare WHERE intent_id=?");
+            planned.text(1,std::to_string(intent));
+            if(!planned.row() || sqlite3_column_int64(planned.get(),0)!=gen-1 ||
+               sqlite_str(planned.get(),1)!=std::to_string(source) ||
+               sqlite_str(planned.get(),2)!=std::to_string(receiver) ||
+               sqlite_str(planned.get(),3)!=family ||
+               sqlite3_column_int(planned.get(),4)!=1 || planned.row())
+                throw std::runtime_error("autonomous dispatch lacks prepared real family");
+            Statement notice(db_,"SELECT o.generation,o.tick,o.site,o.risk,"
+                "e.ship,a.delivery_generation "
+                "FROM sg_colony_npc_opportunities o "
+                "JOIN sg_colony_npc_acks a ON a.event_id=o.event_id AND a.npc_id=o.npc_id "
+                "JOIN sg_colony_response_events e ON e.id=o.event_id "
+                "WHERE o.event_id=? AND o.npc_id=?");
+            notice.i64(1,observation);notice.i64(2,static_cast<sqlite3_int64>(npc));
+            if(!notice.row() ||
+               sqlite3_column_int64(notice.get(),0)>gen ||
+               sqlite3_column_int64(notice.get(),1)>
+                   static_cast<sqlite3_int64>(admitted.tick()) ||
+               sqlite3_column_int64(notice.get(),2)!=
+                   static_cast<sqlite3_int64>(source) ||
+               sqlite3_column_int(notice.get(),3)!=risk ||
+               sqlite3_column_int64(notice.get(),4)!=
+                   static_cast<sqlite3_int64>(source) ||
+               sqlite3_column_int64(notice.get(),5)>gen || notice.row())
+                throw std::runtime_error("autonomous dispatch lacks actually delivered NPC notice");
+            Statement newest(db_,"SELECT id FROM sg_colony_response_events "
+                "WHERE site=? AND generation<=? ORDER BY id DESC LIMIT 1");
+            newest.i64(1,static_cast<sqlite3_int64>(source));newest.i64(2,gen);
+            if(!newest.row() ||
+               sqlite3_column_int64(newest.get(),0)!=observation || newest.row())
+                throw std::runtime_error("autonomous dispatch used obsolete warning");
+        }
+    }
+    // AUTO-04D.5C1: independently check every NPC-initiated local transfer.
+    // A durable intent is not an executed delivery: a positive result requires
+    // the real Applied world event, inventory delta and deterministic replay.
+    void verify_npc_habitat_supplies(std::uint64_t max_generation) const{
+        Statement schema(db_,"SELECT 1 FROM sqlite_master WHERE type='table' "
+            "AND name='sg_colony_npc_emergency_supply'");
+        if(!schema.row())return;
+        for(const auto* suffix:{"_no_update","_no_delete"}){
+            Statement trigger(db_,"SELECT 1 FROM sqlite_master "
+                "WHERE type='trigger' AND name=?");
+            trigger.text(1,std::string("sg_colony_npc_emergency_supply")+suffix);
+            if(!trigger.row() || trigger.row())
+                throw std::runtime_error("NPC emergency supply immutable witness missing");
+        }
+        Statement all(db_,"SELECT command_id,generation,world_hash,npc_id,"
+            "notice_id,source_ship,habitat,resource,amount_kg,"
+            "source_before_kg,habitat_before_kg,risk "
+            "FROM sg_colony_npc_emergency_supply ORDER BY generation");
+        while(all.row()){
+            const auto id=parse_u64(sqlite3_column_text(all.get(),0));
+            const auto gen=sqlite3_column_int64(all.get(),1);
+            const auto hash=sqlite_str(all.get(),2);
+            const auto npc=parse_u64(sqlite3_column_text(all.get(),3));
+            const auto notice=sqlite3_column_int64(all.get(),4);
+            const auto source=parse_u64(sqlite3_column_text(all.get(),5));
+            const auto site=parse_u64(sqlite3_column_text(all.get(),6));
+            const int selector=sqlite3_column_int(all.get(),7);
+            const auto amount=sqlite3_column_int64(all.get(),8);
+            const auto from=sqlite3_column_int64(all.get(),9);
+            const auto at=sqlite3_column_int64(all.get(),10);
+            const auto risk=sqlite3_column_int(all.get(),11);
+            if(!id || gen<2 || static_cast<std::uint64_t>(gen)>max_generation ||
+               !npc || notice<=0 || !source || !site || source==site ||
+               selector<1 || selector>3 || amount<1 || amount>10000 ||
+               from<amount || at<0 || (risk!=2 && risk!=3))
+                throw std::runtime_error("NPC emergency supply record malformed");
+            Statement op(db_,"SELECT kind,command,state_hash FROM operation_log "
+                "WHERE generation=?");
+            op.i64(1,gen);
+            if(!op.row() || sqlite3_column_int(op.get(),0)!=1 ||
+               sqlite_str(op.get(),2)!=hash)
+                throw std::runtime_error("NPC supply missing canonical admission");
+            const auto command=decode_command(sqlite_str(op.get(),1));
+            if(command.id!=id || command.action!=Action::TransferHabitatStock ||
+               command.actor!=source || command.target!=site ||
+               command.thrust_x!=selector || command.thrust_y!=0 ||
+               command.amount!=amount || command.transport_id ||
+               !command.passenger_ids.empty() || op.row())
+                throw std::runtime_error("NPC supply command/receipt substituted");
+            Statement before(db_,"SELECT state,checksum FROM snapshots "
+                "WHERE generation=?");
+            before.i64(1,gen);
+            if(!before.row())throw std::runtime_error("NPC supply admission snapshot missing");
+            const auto* bytes=sqlite3_column_blob(before.get(),0);
+            const auto size=sqlite3_column_bytes(before.get(),0);
+            if(!bytes || size<=0 || size>16*1024*1024)
+                throw std::runtime_error("NPC supply snapshot malformed");
+            const auto admitted=Simulation::from_snapshot(
+                std::string(static_cast<const char*>(bytes),static_cast<std::size_t>(size)));
+            if(admitted.state_hash()!=parse_u64(sqlite3_column_text(before.get(),1)) ||
+               std::to_string(admitted.state_hash())!=hash || before.row() ||
+               !admitted.has_command_id(id))
+                throw std::runtime_error("NPC supply snapshot/accepted command mismatch");
+            const auto* owner=admitted.find(source);
+            const auto* shipstock=admitted.life_support(source);
+            const auto* habitat=admitted.habitat(site);
+            const auto npc_record=admitted.npc_records().find(npc);
+            if(!owner || command.issuer!=owner->owner_id ||
+               command.issuer==Simulation::kServerAuthority ||
+               !shipstock || !habitat || habitat->source_ship!=source ||
+               !habitat->residents ||
+               npc_record==admitted.npc_records().end() ||
+               npc_record->second.home_ship!=source ||
+               npc_record->second.location!=site ||
+               npc_record->second.transport_id ||
+               static_cast<int>(colony_safety::assess(admitted,source,site).risk)!=risk)
+                throw std::runtime_error("NPC supply admission lacked living local emergency");
+            const auto select=[&](const ColonyLifeSupport& l){
+                return selector==1?l.food_kg:selector==2?l.water_kg:l.oxygen_kg;
+            };
+            if(select(*shipstock)!=from || select(habitat->life)!=at ||
+               from<amount)
+                throw std::runtime_error("NPC supply source inventory authority modified");
+            Statement proof(db_,"SELECT o.site,o.risk,e.ship,a.delivery_generation "
+                "FROM sg_colony_npc_opportunities o "
+                "JOIN sg_colony_response_events e ON e.id=o.event_id "
+                "JOIN sg_colony_npc_acks a ON a.event_id=o.event_id AND a.npc_id=o.npc_id "
+                "WHERE o.event_id=? AND o.npc_id=?");
+            proof.i64(1,notice);proof.i64(2,static_cast<sqlite3_int64>(npc));
+            if(!proof.row() ||
+               sqlite3_column_int64(proof.get(),0)!=static_cast<sqlite3_int64>(site) ||
+               sqlite3_column_int(proof.get(),1)!=risk ||
+               sqlite3_column_int64(proof.get(),2)!=static_cast<sqlite3_int64>(source) ||
+               sqlite3_column_int64(proof.get(),3)>gen || proof.row())
+                throw std::runtime_error("NPC supply has no delivered local warning");
+            Statement latest(db_,"SELECT id FROM sg_colony_response_events "
+                "WHERE site=? AND generation<=? ORDER BY id DESC LIMIT 1");
+            latest.i64(1,static_cast<sqlite3_int64>(site));latest.i64(2,gen);
+            if(!latest.row() || sqlite3_column_int64(latest.get(),0)!=notice ||
+               latest.row())
+                throw std::runtime_error("NPC supply used obsolete risk event");
+            Statement event(db_,"SELECT generation,outcome,transferred FROM historical_events "
+                "WHERE command_id=?");
+            event.text(1,std::to_string(id));
+            if(event.row()){
+                const auto completed=sqlite3_column_int64(event.get(),0);
+                if(completed!=gen+1 ||
+                   sqlite3_column_int(event.get(),1)!=static_cast<int>(Outcome::Applied) ||
+                   sqlite3_column_int64(event.get(),2)!=amount || event.row())
+                    throw std::runtime_error("NPC emergency transfer not actually applied");
+                Statement after(db_,"SELECT state,checksum FROM snapshots "
+                    "WHERE generation=?");
+                after.i64(1,completed);
+                if(!after.row())throw std::runtime_error("NPC delivery snapshot pruned");
+                const auto* later=sqlite3_column_blob(after.get(),0);
+                const auto length=sqlite3_column_bytes(after.get(),0);
+                if(!later || length<=0 || length>16*1024*1024)
+                    throw std::runtime_error("NPC delivered snapshot invalid");
+                const auto physical=Simulation::from_snapshot(
+                    std::string(static_cast<const char*>(later),static_cast<std::size_t>(length)));
+                auto replay=admitted;
+                replay.step();
+                if(physical.state_hash()!=parse_u64(sqlite3_column_text(after.get(),1)) ||
+                   physical.state_hash()!=replay.state_hash() ||
+                   physical.total_material_kg()!=admitted.total_material_kg() ||
+                   after.row())
+                    throw std::runtime_error("NPC stock delivery lacks physical replay");
+            }else if(static_cast<std::uint64_t>(gen)!=max_generation){
+                throw std::runtime_error("NPC stock admission lost its due execution");
+            }
+        }
+    }
+    bool npc_habitat_supply_applied(std::uint64_t command_id,std::uint64_t gen) const{
+        Statement exists(db_,"SELECT 1 FROM sqlite_master WHERE type='table' "
+            "AND name='sg_colony_npc_emergency_supply'");
+        if(!exists.row())return false;
+        verify_npc_habitat_supplies(gen);
+        Statement q(db_,"SELECT 1 FROM sg_colony_npc_emergency_supply s "
+            "JOIN historical_events e ON e.command_id=s.command_id "
+            "WHERE s.command_id=? AND e.outcome=? AND e.transferred=s.amount_kg");
+        q.text(1,std::to_string(command_id));
+        q.i64(2,static_cast<int>(Outcome::Applied));
+        return q.row() && !q.row();
+    }
+    // DEF-01A. A human-on-watch actually observes a nearby ship. The
+    // presence of a foreign ship alone never authorizes weapons or a strike.
+    colony_defense::Contact record_colony_watch_contact(
+        const Simulation& world,std::uint64_t generation,
+        std::uint64_t event_id,EntityId source,
+        std::uint64_t observer,EntityId foreign){
+        if(!event_id || event_id>
+           static_cast<std::uint64_t>(std::numeric_limits<sqlite3_int64>::max()))
+            throw std::invalid_argument("invalid bounded defense event ID");
+        const auto contacts=colony_defense::observe_local_contacts(world,source,observer);
+        const auto it=std::find_if(contacts.begin(),contacts.end(),
+            [&](const auto& c){return c.foreign_ship==foreign;});
+        if(it==contacts.end())throw std::runtime_error(
+            "no real local NPC sighting of requested foreign ship");
+        const auto record=*it;
+        run(db_,"BEGIN IMMEDIATE");
+        try{
+            if(latest_generation(db_)!=generation)
+                throw std::runtime_error("stale world generation for watch contact");
+            run(db_,"CREATE TABLE IF NOT EXISTS sg_colony_watch_contacts("
+                "event_id INTEGER PRIMARY KEY CHECK(event_id>0),"
+                "world_generation INTEGER NOT NULL CHECK(world_generation>0),"
+                "world_hash TEXT NOT NULL,"
+                "tick INTEGER NOT NULL CHECK(tick>=0),"
+                "source TEXT NOT NULL,observer TEXT NOT NULL,"
+                "foreign_ship TEXT NOT NULL,foreign_owner TEXT NOT NULL,"
+                "system INTEGER NOT NULL,distance_squared INTEGER NOT NULL CHECK(distance_squared>=0))");
+            run(db_,"CREATE TRIGGER IF NOT EXISTS sg_colony_watch_no_update "
+                "BEFORE UPDATE ON sg_colony_watch_contacts "
+                "BEGIN SELECT RAISE(ABORT,'immutable local contact'); END");
+            run(db_,"CREATE TRIGGER IF NOT EXISTS sg_colony_watch_no_delete "
+                "BEFORE DELETE ON sg_colony_watch_contacts "
+                "BEGIN SELECT RAISE(ABORT,'immutable local contact'); END");
+            Statement q(db_,"INSERT INTO sg_colony_watch_contacts VALUES("
+                "?,?,?,?,?,?,?,?,?,?)");
+            q.i64(1,static_cast<sqlite3_int64>(event_id));
+            q.i64(2,static_cast<sqlite3_int64>(generation));
+            q.text(3,std::to_string(world.state_hash()));
+            q.i64(4,static_cast<sqlite3_int64>(record.world_tick));
+            q.text(5,std::to_string(source));
+            q.text(6,std::to_string(observer));
+            q.text(7,std::to_string(foreign));
+            q.text(8,std::to_string(record.foreign_owner));
+            q.i64(9,record.system);
+            q.i64(10,static_cast<sqlite3_int64>(record.distance_squared));
+            q.execute();
+            run(db_,"COMMIT");
+        }catch(...){
+            sqlite3_exec(db_,"ROLLBACK",nullptr,nullptr,nullptr);
+            throw;
+        }
+        return record;
+    }
+    void verify_colony_watch_contacts(std::uint64_t maximum_generation) const{
+        Statement schema(db_,"SELECT 1 FROM sqlite_master WHERE type='table' "
+            "AND name='sg_colony_watch_contacts'");
+        if(!schema.row())return;
+        for(const auto* guard:{"sg_colony_watch_no_update",
+                               "sg_colony_watch_no_delete"}){
+            Statement trigger(db_,"SELECT 1 FROM sqlite_master "
+                "WHERE type='trigger' AND name=?");
+            trigger.text(1,guard);
+            if(!trigger.row() || trigger.row())
+                throw std::runtime_error("local NPC watch immutable guard missing");
+        }
+        Statement q(db_,"SELECT event_id,world_generation,world_hash,tick,"
+            "source,observer,foreign_ship,foreign_owner,system,distance_squared "
+            "FROM sg_colony_watch_contacts ORDER BY event_id");
+        while(q.row()){
+            const auto event=sqlite3_column_int64(q.get(),0);
+            const auto generation=sqlite3_column_int64(q.get(),1);
+            const auto hash=sqlite_str(q.get(),2);
+            const auto tick=sqlite3_column_int64(q.get(),3);
+            const auto source=parse_u64(sqlite3_column_text(q.get(),4));
+            const auto npc=parse_u64(sqlite3_column_text(q.get(),5));
+            const auto foreign=parse_u64(sqlite3_column_text(q.get(),6));
+            const auto owner=parse_u64(sqlite3_column_text(q.get(),7));
+            const auto system=sqlite3_column_int64(q.get(),8);
+            const auto distance=sqlite3_column_int64(q.get(),9);
+            if(event<1 || generation<1 ||
+               static_cast<std::uint64_t>(generation)>maximum_generation ||
+               tick<0 || !source || !npc || !foreign || !owner ||
+               source==foreign || system<1 || distance<0)
+                throw std::runtime_error("local colony contact evidence malformed");
+            Statement snap(db_,"SELECT state,checksum FROM snapshots "
+                "WHERE generation=?");
+            snap.i64(1,generation);
+            if(!snap.row())throw std::runtime_error("local watch snapshot pruned");
+            const auto* ptr=sqlite3_column_blob(snap.get(),0);
+            const auto len=sqlite3_column_bytes(snap.get(),0);
+            if(!ptr || len<=0 || len>16*1024*1024)
+                throw std::runtime_error("local watch snapshot invalid");
+            const auto observed=Simulation::from_snapshot(
+                std::string(static_cast<const char*>(ptr),static_cast<std::size_t>(len)));
+            if(observed.state_hash()!=parse_u64(sqlite3_column_text(snap.get(),1)) ||
+               std::to_string(observed.state_hash())!=hash ||
+               observed.tick()!=static_cast<std::uint64_t>(tick) || snap.row())
+                throw std::runtime_error("local watch world hash or time corrupted");
+            const auto contacts=colony_defense::observe_local_contacts(observed,source,npc);
+            const auto it=std::find_if(contacts.begin(),contacts.end(),
+                [&](const auto& c){return c.foreign_ship==foreign;});
+            if(it==contacts.end() || it->foreign_owner!=owner ||
+               it->system!=static_cast<std::uint32_t>(system) ||
+               it->distance_squared!=static_cast<std::uint64_t>(distance))
+                throw std::runtime_error("local watch witness forged or not physically possible");
+        }
+    }
+    // CONFLICT-01A: colony political agenda exists independently of any
+    // player's conduct. Host approves a real, named, resident leader. Every
+    // later warning/raid preparation needs one specific observed contact.
+    void establish_colony_agenda(const Simulation& world,
+         std::uint64_t generation,std::uint64_t agenda_id,
+         EntityId source,std::uint64_t npc,colony_conflict::Agenda agenda){
+        if(!agenda_id || agenda_id>
+              static_cast<std::uint64_t>(std::numeric_limits<sqlite3_int64>::max()) ||
+           !source || !npc || static_cast<int>(agenda)<0 ||
+           static_cast<int>(agenda)>3)
+            throw std::invalid_argument("invalid colony political agenda");
+        const auto* entity=world.find(source);
+        const auto person=world.npc_records().find(npc);
+        if(!entity || entity->type!=EntityType::Ship ||
+           !entity->owner_id || !world.colony_ship(source) ||
+           person==world.npc_records().end() ||
+           person->second.home_ship!=source || person->second.location!=source ||
+           person->second.transport_id || !world.npc_available_for_duty(npc))
+            throw std::runtime_error("agenda leader is not living physically present colony NPC");
+        run(db_,"BEGIN IMMEDIATE");
+        try{
+            if(latest_generation(db_)!=generation)
+                throw std::runtime_error("stale world before colony political agenda");
+            run(db_,"CREATE TABLE IF NOT EXISTS sg_colony_conflict_agenda("
+                "event_id INTEGER PRIMARY KEY CHECK(event_id>0),"
+                "world_generation INTEGER NOT NULL CHECK(world_generation>0),"
+                "world_hash TEXT NOT NULL,tick INTEGER NOT NULL,"
+                "colony TEXT NOT NULL UNIQUE,leader TEXT NOT NULL,"
+                "agenda INTEGER NOT NULL CHECK(agenda BETWEEN 0 AND 3))");
+            run(db_,"CREATE TRIGGER IF NOT EXISTS sg_conflict_agenda_no_update "
+                "BEFORE UPDATE ON sg_colony_conflict_agenda "
+                "BEGIN SELECT RAISE(ABORT,'immutable founding colony agenda'); END");
+            run(db_,"CREATE TRIGGER IF NOT EXISTS sg_conflict_agenda_no_delete "
+                "BEFORE DELETE ON sg_colony_conflict_agenda "
+                "BEGIN SELECT RAISE(ABORT,'immutable founding colony agenda'); END");
+            Statement insert(db_,"INSERT INTO sg_colony_conflict_agenda "
+                "VALUES(?,?,?,?,?,?,?)");
+            insert.i64(1,static_cast<sqlite3_int64>(agenda_id));
+            insert.i64(2,static_cast<sqlite3_int64>(generation));
+            insert.text(3,std::to_string(world.state_hash()));
+            insert.i64(4,static_cast<sqlite3_int64>(world.tick()));
+            insert.text(5,std::to_string(source));
+            insert.text(6,std::to_string(npc));
+            insert.i64(7,static_cast<int>(agenda));
+            insert.execute();
+            run(db_,"COMMIT");
+        }catch(...){
+            sqlite3_exec(db_,"ROLLBACK",nullptr,nullptr,nullptr);throw;
+        }
+    }
+
+    // CONFLICT-01B3: effective diplomacy is an as-of-generation lookup.
+    // A transition published at generation N first controls generation N+1.
+    // This preserves the meaning of every already-accepted old decision.
+    colony_conflict::GovernanceEpoch effective_governance(
+        EntityId source,std::uint64_t decision_generation) const{
+        if(!source || !decision_generation)
+            throw std::invalid_argument("governance lookup needs a physical colony and generation");
+        Statement foundation(db_,"SELECT event_id,leader,agenda,world_generation "
+            "FROM sg_colony_conflict_agenda WHERE colony=?");
+        foundation.text(1,std::to_string(source));
+        if(!foundation.row())throw std::runtime_error("no founded colony government");
+        colony_conflict::GovernanceEpoch out;
+        out.colony=source;
+        const auto founding_id=sqlite3_column_int64(foundation.get(),0);
+        out.leader_id=parse_u64(sqlite3_column_text(foundation.get(),1));
+        const int first_agenda=sqlite3_column_int(foundation.get(),2);
+        const auto established=sqlite3_column_int64(foundation.get(),3);
+        if(founding_id<1 || !out.leader_id ||
+           first_agenda<0 || first_agenda>3 || established<1 ||
+           static_cast<std::uint64_t>(established)>decision_generation ||
+           foundation.row())
+            throw std::runtime_error("invalid founding leadership history");
+        out.founding_event_id=static_cast<std::uint64_t>(founding_id);
+        out.agenda=static_cast<colony_conflict::Agenda>(first_agenda);
+        Statement exists(db_,"SELECT 1 FROM sqlite_master WHERE type='table' "
+            "AND name='sg_colony_governance_epochs'");
+        if(!exists.row())return out;
+        Statement epoch(db_,"SELECT event_id,prior_event,ordinal,leader,agenda,"
+            "policy,kind,world_generation FROM sg_colony_governance_epochs "
+            "WHERE colony=? AND world_generation<? "
+            "ORDER BY ordinal DESC LIMIT 1");
+        epoch.text(1,std::to_string(source));
+        epoch.i64(2,static_cast<sqlite3_int64>(decision_generation));
+        if(epoch.row()){
+            const auto event=sqlite3_column_int64(epoch.get(),0);
+            const auto prev=sqlite3_column_int64(epoch.get(),1);
+            const auto ordinal=sqlite3_column_int64(epoch.get(),2);
+            const auto leader=parse_u64(sqlite3_column_text(epoch.get(),3));
+            const auto agenda=sqlite3_column_int(epoch.get(),4);
+            const auto policy=sqlite3_column_int(epoch.get(),5);
+            const auto kind=sqlite3_column_int(epoch.get(),6);
+            const auto born=sqlite3_column_int64(epoch.get(),7);
+            if(event<1 || prev<0 || ordinal<1 || !leader ||
+               agenda<0 || agenda>3 || policy<0 || policy>2 ||
+               kind<0 || kind>2 || born<1 ||
+               static_cast<std::uint64_t>(born)>=decision_generation ||
+               epoch.row())
+                throw std::runtime_error("historical leadership epoch malformed");
+            out.event_id=static_cast<std::uint64_t>(event);
+            out.prior_event_id=static_cast<std::uint64_t>(prev);
+            out.ordinal=static_cast<std::uint64_t>(ordinal);
+            out.leader_id=leader;
+            out.agenda=static_cast<colony_conflict::Agenda>(agenda);
+            out.policy=static_cast<colony_conflict::DiplomaticPolicy>(policy);
+            out.kind=static_cast<colony_conflict::TransitionKind>(kind);
+        }
+        return out;
+    }
+    void validate_governance_handoff(const Simulation& world,
+        EntityId source,const colony_conflict::GovernanceEpoch& prior,
+        std::uint64_t successor,colony_conflict::Agenda agenda,
+        colony_conflict::DiplomaticPolicy policy,
+        colony_conflict::TransitionKind kind,PlayerId approving_owner) const{
+        const auto* entity=world.find(source);
+        if(!entity || entity->type!=EntityType::Ship ||
+           !world.colony_ship(source) || !entity->owner_id ||
+           entity->owner_id!=approving_owner ||
+           static_cast<int>(agenda)<0 || static_cast<int>(agenda)>3 ||
+           static_cast<int>(policy)<0 || static_cast<int>(policy)>2 ||
+           static_cast<int>(kind)<0 || static_cast<int>(kind)>2)
+            throw std::runtime_error("unauthorized or invalid colony constitutional handoff");
+        const auto next=world.npc_records().find(successor);
+        if(!successor || next==world.npc_records().end() ||
+           next->second.home_ship!=source ||
+           next->second.location!=source ||
+           next->second.transport_id ||
+           !world.npc_available_for_duty(successor))
+            throw std::runtime_error("successor not an available resident adult NPC");
+        const auto prior_person=world.npc_records().find(prior.leader_id);
+        const bool incumbent_present=prior_person!=world.npc_records().end() &&
+            prior_person->second.home_ship==source &&
+            prior_person->second.location==source &&
+            !prior_person->second.transport_id &&
+            world.npc_available_for_duty(prior.leader_id);
+        const bool replacement=successor!=prior.leader_id;
+        if((kind==colony_conflict::TransitionKind::Appointment &&
+            (!replacement || !incumbent_present)) ||
+           (kind==colony_conflict::TransitionKind::EmergencyVacancy &&
+            (!replacement || incumbent_present)) ||
+           (kind==colony_conflict::TransitionKind::PolicyRevision &&
+            (replacement || !incumbent_present ||
+             (agenda==prior.agenda && policy==prior.policy))))
+            throw std::runtime_error("succession cause does not match physical authority");
+    }
+    colony_conflict::GovernanceEpoch record_governance_transition(
+        const Simulation& world,std::uint64_t generation,
+        std::uint64_t event,EntityId source,std::uint64_t successor,
+        colony_conflict::Agenda agenda,colony_conflict::DiplomaticPolicy policy,
+        colony_conflict::TransitionKind kind,PlayerId approving_owner){
+        if(!event || event>static_cast<std::uint64_t>(
+             std::numeric_limits<sqlite3_int64>::max()))
+            throw std::invalid_argument("invalid durable governance event");
+        run(db_,"BEGIN IMMEDIATE");
+        try{
+            if(latest_generation(db_)!=generation)
+                throw std::runtime_error("stale generation for leadership succession");
+            const auto previous=effective_governance(source,generation);
+            validate_governance_handoff(
+                world,source,previous,successor,agenda,policy,kind,approving_owner);
+            run(db_,"CREATE TABLE IF NOT EXISTS sg_colony_governance_epochs("
+                "event_id INTEGER PRIMARY KEY CHECK(event_id>0),"
+                "world_generation INTEGER NOT NULL CHECK(world_generation>0),"
+                "world_hash TEXT NOT NULL,tick INTEGER NOT NULL,"
+                "colony TEXT NOT NULL,owner TEXT NOT NULL,"
+                "ordinal INTEGER NOT NULL CHECK(ordinal>0),"
+                "prior_event INTEGER NOT NULL CHECK(prior_event>=0),"
+                "prior_leader TEXT NOT NULL,"
+                "prior_agenda INTEGER NOT NULL CHECK(prior_agenda BETWEEN 0 AND 3),"
+                "prior_policy INTEGER NOT NULL CHECK(prior_policy BETWEEN 0 AND 2),"
+                "leader TEXT NOT NULL,"
+                "agenda INTEGER NOT NULL CHECK(agenda BETWEEN 0 AND 3),"
+                "policy INTEGER NOT NULL CHECK(policy BETWEEN 0 AND 2),"
+                "kind INTEGER NOT NULL CHECK(kind BETWEEN 0 AND 2),"
+                "UNIQUE(colony,ordinal),UNIQUE(colony,world_generation))");
+            run(db_,"CREATE TRIGGER IF NOT EXISTS sg_colony_governance_no_update "
+                "BEFORE UPDATE ON sg_colony_governance_epochs "
+                "BEGIN SELECT RAISE(ABORT,'immutable constitutional epoch'); END");
+            run(db_,"CREATE TRIGGER IF NOT EXISTS sg_colony_governance_no_delete "
+                "BEFORE DELETE ON sg_colony_governance_epochs "
+                "BEGIN SELECT RAISE(ABORT,'immutable constitutional epoch'); END");
+            Statement insert(db_,"INSERT INTO sg_colony_governance_epochs "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)");
+            insert.i64(1,static_cast<sqlite3_int64>(event));
+            insert.i64(2,static_cast<sqlite3_int64>(generation));
+            insert.text(3,std::to_string(world.state_hash()));
+            insert.i64(4,static_cast<sqlite3_int64>(world.tick()));
+            insert.text(5,std::to_string(source));
+            insert.text(6,std::to_string(approving_owner));
+            insert.i64(7,static_cast<sqlite3_int64>(previous.ordinal+1));
+            insert.i64(8,static_cast<sqlite3_int64>(previous.event_id));
+            insert.text(9,std::to_string(previous.leader_id));
+            insert.i64(10,static_cast<int>(previous.agenda));
+            insert.i64(11,static_cast<int>(previous.policy));
+            insert.text(12,std::to_string(successor));
+            insert.i64(13,static_cast<int>(agenda));
+            insert.i64(14,static_cast<int>(policy));
+            insert.i64(15,static_cast<int>(kind));
+            insert.execute();
+            run(db_,"COMMIT");
+            colony_conflict::GovernanceEpoch out=previous;
+            out.prior_event_id=previous.event_id;
+            out.event_id=event;
+            ++out.ordinal;
+            out.leader_id=successor;
+            out.agenda=agenda;
+            out.policy=policy;
+            out.kind=kind;
+            return out; // published now, effective strictly next generation
+        }catch(...){
+            sqlite3_exec(db_,"ROLLBACK",nullptr,nullptr,nullptr);throw;
+        }
+    }
+    void verify_colony_governance(std::uint64_t max_generation) const{
+        Statement exists(db_,"SELECT 1 FROM sqlite_master WHERE type='table' "
+            "AND name='sg_colony_governance_epochs'");
+        if(!exists.row())return;
+        for(const auto* name:{"sg_colony_governance_no_update",
+                              "sg_colony_governance_no_delete"}){
+            Statement guard(db_,"SELECT 1 FROM sqlite_master "
+                "WHERE type='trigger' AND name=?");
+            guard.text(1,name);
+            if(!guard.row() || guard.row())
+                throw std::runtime_error("governance immutable guard absent");
+        }
+        Statement rows(db_,"SELECT event_id,world_generation,world_hash,tick,"
+            "colony,owner,ordinal,prior_event,prior_leader,prior_agenda,"
+            "prior_policy,leader,agenda,policy,kind "
+            "FROM sg_colony_governance_epochs "
+            "ORDER BY colony,ordinal");
+        std::map<EntityId,std::uint64_t> previous_generation;
+        while(rows.row()){
+            const auto id=sqlite3_column_int64(rows.get(),0);
+            const auto gen=sqlite3_column_int64(rows.get(),1);
+            const auto hash=sqlite_str(rows.get(),2);
+            const auto tick=sqlite3_column_int64(rows.get(),3);
+            const auto source=parse_u64(sqlite3_column_text(rows.get(),4));
+            const auto owner=parse_u64(sqlite3_column_text(rows.get(),5));
+            const auto ordinal=sqlite3_column_int64(rows.get(),6);
+            const auto previous_event=sqlite3_column_int64(rows.get(),7);
+            const auto previous_leader=parse_u64(sqlite3_column_text(rows.get(),8));
+            const auto previous_agenda=sqlite3_column_int(rows.get(),9);
+            const auto previous_policy=sqlite3_column_int(rows.get(),10);
+            const auto successor=parse_u64(sqlite3_column_text(rows.get(),11));
+            const auto agenda=sqlite3_column_int(rows.get(),12);
+            const auto policy=sqlite3_column_int(rows.get(),13);
+            const auto kind=sqlite3_column_int(rows.get(),14);
+            if(id<1 || gen<1 || static_cast<std::uint64_t>(gen)>max_generation ||
+               tick<0 || !source || !owner || ordinal<1 || previous_event<0 ||
+               !previous_leader || !successor ||
+               previous_agenda<0 || previous_agenda>3 ||
+               previous_policy<0 || previous_policy>2 ||
+               agenda<0 || agenda>3 || policy<0 || policy>2 ||
+               kind<0 || kind>2 ||
+               previous_generation[source]>=static_cast<std::uint64_t>(gen))
+                throw std::runtime_error("invalid dated leadership succession chronology");
+            Statement snap(db_,"SELECT state,checksum FROM snapshots "
+                "WHERE generation=?");
+            snap.i64(1,gen);
+            if(!snap.row())throw std::runtime_error("governance origin snapshot pruned");
+            const auto* bytes=sqlite3_column_blob(snap.get(),0);
+            const auto len=sqlite3_column_bytes(snap.get(),0);
+            if(!bytes || len<=0 || len>16*1024*1024)
+                throw std::runtime_error("governance origin snapshot malformed");
+            const auto original=Simulation::from_snapshot(std::string(
+                static_cast<const char*>(bytes),static_cast<std::size_t>(len)));
+            if(original.state_hash()!=parse_u64(sqlite3_column_text(snap.get(),1)) ||
+               std::to_string(original.state_hash())!=hash ||
+               original.tick()!=static_cast<std::uint64_t>(tick) || snap.row())
+                throw std::runtime_error("governance original world rewritten");
+            const auto previous=effective_governance(
+                source,static_cast<std::uint64_t>(gen));
+            if(previous.event_id!=static_cast<std::uint64_t>(previous_event) ||
+               previous.ordinal+1!=static_cast<std::uint64_t>(ordinal) ||
+               previous.leader_id!=previous_leader ||
+               static_cast<int>(previous.agenda)!=previous_agenda ||
+               static_cast<int>(previous.policy)!=previous_policy)
+                throw std::runtime_error("governance epoch ancestry forged");
+            validate_governance_handoff(
+                original,source,previous,successor,
+                static_cast<colony_conflict::Agenda>(agenda),
+                static_cast<colony_conflict::DiplomaticPolicy>(policy),
+                static_cast<colony_conflict::TransitionKind>(kind),owner);
+            previous_generation[source]=static_cast<std::uint64_t>(gen);
+        }
+    }
+
+
+    // EXIT-01A: only a real eligible nonleader adult actually living under
+    // critical conditions can produce a record of pressure to seek departure.
+    // It is a physical-risk witness, NOT proof of subjective intent to leave.
+    std::optional<colony_conflict::ExitPressure> assess_colony_exit_pressure(
+        const Simulation& world,std::uint64_t generation,
+        EntityId source,std::uint64_t npc_id) const{
+        if(!source || !npc_id || !generation)
+            throw std::invalid_argument("exit pressure requires named NPC and real colony");
+        const auto* entity=world.find(source);
+        const auto* colony=world.colony_ship(source);
+        const auto person=world.npc_records().find(npc_id);
+        if(!entity || !colony || entity->type!=EntityType::Ship ||
+           !entity->owner_id || person==world.npc_records().end() ||
+           person->second.home_ship!=source ||
+           person->second.location!=source ||
+           person->second.transport_id ||
+           !world.npc_available_for_duty(npc_id))
+            return std::nullopt;
+        const auto govt=effective_governance(source,generation);
+        // Leadership vacancy has its own already-verified B3 process. Do not
+        // strand the local government through the first individual exit gate.
+        if(govt.leader_id==npc_id)return std::nullopt;
+        const auto risk=colony_safety::assess(world,source,source).risk;
+        if(static_cast<int>(risk)<static_cast<int>(colony_safety::Risk::Critical))
+            return std::nullopt;
+        colony_conflict::ExitPressure p;
+        p.world_generation=generation;
+        p.governance_event_id=govt.event_id;
+        p.source_colony=source;
+        p.source_owner=entity->owner_id;
+        p.npc_id=npc_id;
+        p.source_risk=risk;
+        return p;
+    }
+    colony_conflict::ExitPressure record_colony_exit_pressure(
+        const Simulation& world,std::uint64_t generation,
+        std::uint64_t event_id,EntityId source,std::uint64_t npc_id){
+        if(!event_id || event_id>static_cast<std::uint64_t>(
+             std::numeric_limits<sqlite3_int64>::max()))
+            throw std::invalid_argument("invalid exit-pressure evidence event id");
+        run(db_,"BEGIN IMMEDIATE");
+        try{
+            if(latest_generation(db_)!=generation)
+                throw std::runtime_error("exit pressure uses stale physical generation");
+            auto p=assess_colony_exit_pressure(world,generation,source,npc_id);
+            if(!p)
+                throw std::runtime_error("named NPC lacks real exit-pressure evidence");
+            run(db_,"CREATE TABLE IF NOT EXISTS sg_colony_npc_exit_pressure("
+                "event_id INTEGER PRIMARY KEY CHECK(event_id>0),"
+                "world_generation INTEGER NOT NULL CHECK(world_generation>0),"
+                "world_hash TEXT NOT NULL,tick INTEGER NOT NULL,"
+                "colony TEXT NOT NULL,source_owner TEXT NOT NULL,npc TEXT NOT NULL,"
+                "governance_event INTEGER NOT NULL CHECK(governance_event>=0),"
+                "risk INTEGER NOT NULL CHECK(risk IN(2,3)),"
+                "UNIQUE(colony,npc,governance_event))");
+            run(db_,"CREATE TRIGGER IF NOT EXISTS sg_npc_exit_pressure_no_update "
+                "BEFORE UPDATE ON sg_colony_npc_exit_pressure "
+                "BEGIN SELECT RAISE(ABORT,'immutable real NPC exit pressure'); END");
+            run(db_,"CREATE TRIGGER IF NOT EXISTS sg_npc_exit_pressure_no_delete "
+                "BEFORE DELETE ON sg_colony_npc_exit_pressure "
+                "BEGIN SELECT RAISE(ABORT,'immutable real NPC exit pressure'); END");
+            Statement ins(db_,"INSERT INTO sg_colony_npc_exit_pressure "
+                "VALUES(?,?,?,?,?,?,?,?,?)");
+            ins.i64(1,static_cast<sqlite3_int64>(event_id));
+            ins.i64(2,static_cast<sqlite3_int64>(generation));
+            ins.text(3,std::to_string(world.state_hash()));
+            ins.i64(4,static_cast<sqlite3_int64>(world.tick()));
+            ins.text(5,std::to_string(source));
+            ins.text(6,std::to_string(p->source_owner));
+            ins.text(7,std::to_string(npc_id));
+            ins.i64(8,static_cast<sqlite3_int64>(p->governance_event_id));
+            ins.i64(9,static_cast<int>(p->source_risk));
+            ins.execute();
+            run(db_,"COMMIT");
+            p->event_id=event_id;
+            return *p;
+        }catch(...){
+            sqlite3_exec(db_,"ROLLBACK",nullptr,nullptr,nullptr);throw;
+        }
+    }
+    void verify_colony_exit_pressure(std::uint64_t max_generation) const{
+        Statement present(db_,"SELECT 1 FROM sqlite_master WHERE type='table' "
+            "AND name='sg_colony_npc_exit_pressure'");
+        if(!present.row())return;
+        for(const auto* name:{"sg_npc_exit_pressure_no_update",
+                              "sg_npc_exit_pressure_no_delete"}){
+            Statement guard(db_,"SELECT 1 FROM sqlite_master "
+                "WHERE type='trigger' AND name=?");
+            guard.text(1,name);
+            if(!guard.row() || guard.row())
+                throw std::runtime_error("NPC exit evidence immutable guard missing");
+        }
+        Statement q(db_,"SELECT event_id,world_generation,world_hash,tick,"
+            "colony,source_owner,npc,governance_event,risk "
+            "FROM sg_colony_npc_exit_pressure");
+        while(q.row()){
+            const auto id=sqlite3_column_int64(q.get(),0);
+            const auto generation=sqlite3_column_int64(q.get(),1);
+            const auto hash=sqlite_str(q.get(),2);
+            const auto tick=sqlite3_column_int64(q.get(),3);
+            const auto source=parse_u64(sqlite3_column_text(q.get(),4));
+            const auto owner=parse_u64(sqlite3_column_text(q.get(),5));
+            const auto npc=parse_u64(sqlite3_column_text(q.get(),6));
+            const auto govt=sqlite3_column_int64(q.get(),7);
+            const auto risk=sqlite3_column_int(q.get(),8);
+            if(id<1 || generation<1 ||
+               static_cast<std::uint64_t>(generation)>max_generation ||
+               tick<0 || !source || !owner || !npc || govt<0)
+                throw std::runtime_error("invalid NPC exit evidence chronology");
+            Statement cp(db_,"SELECT state,checksum FROM snapshots WHERE generation=?");
+            cp.i64(1,generation);
+            if(!cp.row())throw std::runtime_error("NPC exit evidence original snapshot pruned");
+            const auto* bytes=sqlite3_column_blob(cp.get(),0);
+            const auto size=sqlite3_column_bytes(cp.get(),0);
+            if(!bytes || size<=0 || size>16*1024*1024)
+                throw std::runtime_error("NPC exit evidence snapshot malformed");
+            const auto original=Simulation::from_snapshot(std::string(
+                static_cast<const char*>(bytes),static_cast<std::size_t>(size)));
+            if(original.state_hash()!=parse_u64(sqlite3_column_text(cp.get(),1)) ||
+               std::to_string(original.state_hash())!=hash ||
+               original.tick()!=static_cast<std::uint64_t>(tick) || cp.row())
+                throw std::runtime_error("NPC exit evidence physical state forged");
+            const auto proof=assess_colony_exit_pressure(
+                original,static_cast<std::uint64_t>(generation),source,npc);
+            if(!proof || proof->source_owner!=owner ||
+               proof->governance_event_id!=static_cast<std::uint64_t>(govt) ||
+               static_cast<int>(proof->source_risk)!=risk)
+                throw std::runtime_error("NPC exit evidence invented a resident or shortage");
+        }
+    }
+
+
+
+    // EXIT-01C: read the committed latest appraisal strictly prior to a
+    // generation. No retroactive recalculation under later leadership or
+    // rapport, even if a different appraisal was recorded on the same tick.
+    std::optional<colony_conflict::PersonalOutlook> personal_outlook_before(
+        EntityId source,std::uint64_t npc,std::uint64_t generation,
+        bool across_colonies=false) const{
+        Statement table(db_,"SELECT 1 FROM sqlite_master WHERE type='table' "
+            "AND name='sg_colony_npc_personal_outlook'");
+        if(!table.row())return std::nullopt;
+        const std::string sql=std::string(
+            "SELECT event_id,prior_event,world_generation,tick,")+
+            "colony,npc,leader,interaction_event,governance_event,"+
+            "risk,rapport,delta,discontent,considering_departure "+
+            "FROM sg_colony_npc_personal_outlook "+
+            (across_colonies?"WHERE npc=? AND world_generation<? ":
+                             "WHERE colony=? AND npc=? AND world_generation<? ")+
+            "ORDER BY world_generation DESC LIMIT 1";
+        Statement q(db_,sql.c_str());
+        if(!across_colonies)q.text(1,std::to_string(source));
+        q.text(across_colonies?1:2,std::to_string(npc));
+        q.i64(across_colonies?2:3,static_cast<sqlite3_int64>(generation));
+        if(!q.row())return std::nullopt;
+        colony_conflict::PersonalOutlook p;
+        const auto event=sqlite3_column_int64(q.get(),0);
+        const auto prior=sqlite3_column_int64(q.get(),1);
+        const auto gen=sqlite3_column_int64(q.get(),2);
+        const auto tick=sqlite3_column_int64(q.get(),3);
+        const auto interaction=sqlite3_column_int64(q.get(),7);
+        const auto governance=sqlite3_column_int64(q.get(),8);
+        if(event<1 || prior<0 || gen<1 || tick<0 ||
+           interaction<0 || governance<0)
+            throw std::runtime_error("malformed historical personal appraisal");
+        p.event_id=static_cast<std::uint64_t>(event);
+        p.prior_event_id=static_cast<std::uint64_t>(prior);
+        p.world_generation=static_cast<std::uint64_t>(gen);
+        p.world_tick=static_cast<std::uint64_t>(tick);
+        p.colony=parse_u64(sqlite3_column_text(q.get(),4));
+        p.npc_id=parse_u64(sqlite3_column_text(q.get(),5));
+        p.leader_id=parse_u64(sqlite3_column_text(q.get(),6));
+        p.interaction_event_id=static_cast<std::uint64_t>(interaction);
+        p.government_event_id=static_cast<std::uint64_t>(governance);
+        const auto risk=sqlite3_column_int(q.get(),9);
+        p.leader_rapport=sqlite3_column_int(q.get(),10);
+        p.delta=sqlite3_column_int(q.get(),11);
+        p.discontent=sqlite3_column_int(q.get(),12);
+        const auto intending=sqlite3_column_int(q.get(),13);
+        if(!p.colony || !p.npc_id || !p.leader_id ||
+           (!across_colonies && p.colony!=source) ||
+           p.npc_id!=npc || p.world_generation>=generation ||
+           risk<0 || risk>3 || p.leader_rapport<-100 ||
+           p.leader_rapport>100 || p.discontent<0 || p.discontent>100 ||
+           (intending!=0 && intending!=1) || q.row())
+            throw std::runtime_error("personal appraisal values or uniqueness forged");
+        p.risk=static_cast<colony_safety::Risk>(risk);
+        p.considering_departure=(intending==1);
+        return p;
+    }
+    std::optional<colony_conflict::PersonalOutlook> assess_personal_outlook(
+        const Simulation& world,std::uint64_t generation,
+        EntityId source,std::uint64_t npc_id) const{
+        if(!source || !npc_id || !generation)
+            throw std::invalid_argument("personal outlook needs a named resident");
+        const auto* colony=world.find(source);
+        const auto* owned=world.colony_ship(source);
+        const auto resident=world.npc_records().find(npc_id);
+        if(!colony || !owned || colony->type!=EntityType::Ship ||
+           !colony->owner_id || resident==world.npc_records().end() ||
+           resident->second.home_ship!=source ||
+           resident->second.location!=source ||
+           resident->second.transport_id ||
+           !world.npc_available_for_duty(npc_id))
+            return std::nullopt;
+        const auto govt=effective_governance(source,generation);
+        if(govt.leader_id==npc_id)return std::nullopt;
+        // An immigrant carries the same NPC identity and biographical
+        // discontent into the new colony. Appraisals never reset to zero
+        // merely because the legal home changed in ART02/ECON03.
+        const auto previous=personal_outlook_before(
+            source,npc_id,generation,true);
+        if(previous){
+            if(world.tick()<previous->world_tick ||
+               world.tick()-previous->world_tick<8)return std::nullopt;
+        }
+        colony_conflict::PersonalOutlook p;
+        p.world_generation=generation;p.world_tick=world.tick();
+        p.colony=source;p.npc_id=npc_id;p.leader_id=govt.leader_id;
+        p.government_event_id=govt.event_id;
+        p.risk=colony_safety::assess(world,source,source).risk;
+        // Only historically committed, directed actual interaction appraisals
+        // involving this named resident and the then-current local leader.
+        // Rapport is PERSON-SPECIFIC, and absence means neutral; neither
+        // group-wide rumor nor leadership policy becomes everyone else's mood.
+        Statement relation(db_,"SELECT id,rapport FROM social_interactions "
+            "WHERE observer=? AND actor=? AND generation<? "
+            "ORDER BY generation DESC,id DESC LIMIT 1");
+        relation.text(1,std::to_string(npc_id));
+        relation.text(2,std::to_string(govt.leader_id));
+        relation.i64(3,static_cast<sqlite3_int64>(generation));
+        if(relation.row()){
+            const auto id=sqlite3_column_int64(relation.get(),0);
+            const auto score=sqlite3_column_int(relation.get(),1);
+            if(id<1 || score<-100 || score>100 || relation.row())
+                throw std::runtime_error("malformed dated directional social interaction");
+            p.interaction_event_id=static_cast<std::uint64_t>(id);
+            p.leader_rapport=score;
+        }
+        switch(p.risk){
+            case colony_safety::Risk::Safe: p.delta=-28;break;
+            case colony_safety::Risk::ForecastShortage: p.delta=8;break;
+            case colony_safety::Risk::Critical: p.delta=34;break;
+            case colony_safety::Risk::Emergency: p.delta=46;break;
+        }
+        if(p.interaction_event_id){
+            if(p.leader_rapport<=-12)p.delta+=12;
+            else if(p.leader_rapport>=8)p.delta-=20;
+        }
+        const int old=previous?previous->discontent:0;
+        p.discontent=std::clamp(old+p.delta,0,100);
+        // A real deteriorating personal history, not one global crisis tick.
+        // Once considering a move, the resident needs substantial sustained
+        // improvement to abandon it; one repaired supply tick is not magic.
+        // A legitimate NEW healthy residence relieves the immediate desire
+        // to abandon the former colony without destroying historical feelings.
+        // A new unsafe home can still activate a genuinely new local intent.
+        const bool arrived_in_new_home=previous && previous->colony!=source;
+        p.considering_departure=
+            (arrived_in_new_home && p.risk==colony_safety::Risk::Safe)
+            ? false :
+            ((previous && previous->considering_departure &&
+              !arrived_in_new_home)
+              ? p.discontent>=30 : p.discontent>=65);
+        p.prior_event_id=previous?previous->event_id:0;
+        return p;
+    }
+    colony_conflict::PersonalOutlook record_personal_outlook(
+        const Simulation& world,std::uint64_t generation,
+        std::uint64_t event_id,EntityId source,std::uint64_t npc_id){
+        if(!event_id || event_id>static_cast<std::uint64_t>(
+           std::numeric_limits<sqlite3_int64>::max()))
+            throw std::invalid_argument("invalid dated personal appraisal event");
+        run(db_,"BEGIN IMMEDIATE");
+        try{
+            if(latest_generation(db_)!=generation)
+                throw std::runtime_error("personal appraisal world generation changed");
+            auto p=assess_personal_outlook(world,generation,source,npc_id);
+            if(!p)throw std::runtime_error(
+                "no new physical or dated social conditions for this resident");
+            run(db_,"CREATE TABLE IF NOT EXISTS sg_colony_npc_personal_outlook("
+                "event_id INTEGER PRIMARY KEY CHECK(event_id>0),"
+                "world_generation INTEGER NOT NULL CHECK(world_generation>0),"
+                "world_hash TEXT NOT NULL,tick INTEGER NOT NULL CHECK(tick>=0),"
+                "colony TEXT NOT NULL,npc TEXT NOT NULL,"
+                "leader TEXT NOT NULL,governance_event INTEGER NOT NULL CHECK(governance_event>=0),"
+                "interaction_event INTEGER NOT NULL CHECK(interaction_event>=0),"
+                "risk INTEGER NOT NULL CHECK(risk BETWEEN 0 AND 3),"
+                "rapport INTEGER NOT NULL CHECK(rapport BETWEEN -100 AND 100),"
+                "prior_event INTEGER NOT NULL CHECK(prior_event>=0),"
+                "delta INTEGER NOT NULL,discontent INTEGER NOT NULL "
+                "CHECK(discontent BETWEEN 0 AND 100),"
+                "considering_departure INTEGER NOT NULL CHECK(considering_departure IN(0,1)),"
+                "UNIQUE(colony,npc,world_generation))");
+            run(db_,"CREATE TRIGGER IF NOT EXISTS sg_personal_outlook_no_update "
+                "BEFORE UPDATE ON sg_colony_npc_personal_outlook "
+                "BEGIN SELECT RAISE(ABORT,'immutable dated personal history'); END");
+            run(db_,"CREATE TRIGGER IF NOT EXISTS sg_personal_outlook_no_delete "
+                "BEFORE DELETE ON sg_colony_npc_personal_outlook "
+                "BEGIN SELECT RAISE(ABORT,'immutable dated personal history'); END");
+            Statement ins(db_,"INSERT INTO sg_colony_npc_personal_outlook "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)");
+            ins.i64(1,static_cast<sqlite3_int64>(event_id));
+            ins.i64(2,static_cast<sqlite3_int64>(generation));
+            ins.text(3,std::to_string(world.state_hash()));
+            ins.i64(4,static_cast<sqlite3_int64>(world.tick()));
+            ins.text(5,std::to_string(source));ins.text(6,std::to_string(npc_id));
+            ins.text(7,std::to_string(p->leader_id));
+            ins.i64(8,static_cast<sqlite3_int64>(p->government_event_id));
+            ins.i64(9,static_cast<sqlite3_int64>(p->interaction_event_id));
+            ins.i64(10,static_cast<int>(p->risk));
+            ins.i64(11,p->leader_rapport);
+            ins.i64(12,static_cast<sqlite3_int64>(p->prior_event_id));
+            ins.i64(13,p->delta);
+            ins.i64(14,p->discontent);
+            ins.i64(15,p->considering_departure?1:0);
+            ins.execute();
+            run(db_,"COMMIT");
+            p->event_id=event_id;
+            return *p;
+        }catch(...){sqlite3_exec(db_,"ROLLBACK",nullptr,nullptr,nullptr);throw;}
+    }
+    void verify_personal_outlooks(std::uint64_t max_generation) const{
+        Statement exists(db_,"SELECT 1 FROM sqlite_master WHERE type='table' "
+            "AND name='sg_colony_npc_personal_outlook'");
+        if(!exists.row())return;
+        for(const auto* name:{"sg_personal_outlook_no_update",
+                              "sg_personal_outlook_no_delete"}){
+            Statement guard(db_,"SELECT 1 FROM sqlite_master "
+                "WHERE type='trigger' AND name=?");
+            guard.text(1,name);
+            if(!guard.row() || guard.row())
+                throw std::runtime_error("personal-history immutability guard missing");
+        }
+        Statement rows(db_,"SELECT event_id,world_generation,world_hash,tick,"
+            "colony,npc,leader,governance_event,interaction_event,risk,rapport,"
+            "prior_event,delta,discontent,considering_departure "
+            "FROM sg_colony_npc_personal_outlook");
+        while(rows.row()){
+            const auto id=sqlite3_column_int64(rows.get(),0);
+            const auto gen=sqlite3_column_int64(rows.get(),1);
+            const auto hash=sqlite_str(rows.get(),2);
+            const auto tick=sqlite3_column_int64(rows.get(),3);
+            const auto source=parse_u64(sqlite3_column_text(rows.get(),4));
+            const auto npc=parse_u64(sqlite3_column_text(rows.get(),5));
+            if(id<1 || gen<1 || static_cast<std::uint64_t>(gen)>max_generation ||
+               tick<0 || !source || !npc)
+                throw std::runtime_error("invalid resident personal-history chronology");
+            Statement snap(db_,"SELECT state,checksum FROM snapshots "
+                "WHERE generation=?");
+            snap.i64(1,gen);
+            if(!snap.row())throw std::runtime_error("personal-history source world pruned");
+            const auto* bytes=sqlite3_column_blob(snap.get(),0);
+            const auto n=sqlite3_column_bytes(snap.get(),0);
+            if(!bytes || n<=0 || n>16*1024*1024)
+                throw std::runtime_error("personal-history original snapshot malformed");
+            const auto original=Simulation::from_snapshot(std::string(
+                static_cast<const char*>(bytes),static_cast<std::size_t>(n)));
+            if(original.state_hash()!=parse_u64(sqlite3_column_text(snap.get(),1)) ||
+               std::to_string(original.state_hash())!=hash ||
+               original.tick()!=static_cast<std::uint64_t>(tick) || snap.row())
+                throw std::runtime_error("personal-history original world modified");
+            const auto predicted=assess_personal_outlook(
+                original,static_cast<std::uint64_t>(gen),source,npc);
+            if(!predicted ||
+               predicted->leader_id!=parse_u64(sqlite3_column_text(rows.get(),6)) ||
+               predicted->government_event_id!=static_cast<std::uint64_t>(
+                   sqlite3_column_int64(rows.get(),7)) ||
+               predicted->interaction_event_id!=static_cast<std::uint64_t>(
+                   sqlite3_column_int64(rows.get(),8)) ||
+               static_cast<int>(predicted->risk)!=sqlite3_column_int(rows.get(),9) ||
+               predicted->leader_rapport!=sqlite3_column_int(rows.get(),10) ||
+               predicted->prior_event_id!=static_cast<std::uint64_t>(
+                   sqlite3_column_int64(rows.get(),11)) ||
+               predicted->delta!=sqlite3_column_int(rows.get(),12) ||
+               predicted->discontent!=sqlite3_column_int(rows.get(),13) ||
+               static_cast<int>(predicted->considering_departure)!=
+                   sqlite3_column_int(rows.get(),14))
+                throw std::runtime_error(
+                    "resident personal memory, lived risk or social evidence forged");
+        }
+    }
+
+    // EXIT-01B: a concrete receiving-owner-approved immigration admission.
+    // This only makes an adult eligible for an existing real ferry voyage;
+    // neither a fabricated departure nor an automatic labor/population edit.
+    PersistentWorld::VoluntaryImmigrationAdmission assess_voluntary_admission(
+        const Simulation& world,std::uint64_t generation,
+        std::uint64_t pressure_event,EntityId origin,EntityId destination,
+        EntityId ferry,std::uint64_t npc,std::uint64_t transport_id,
+        PlayerId receiving_owner,bool require_current_custody=false,
+        bool historical_legacy_personal_rule=false) const{
+        if(!pressure_event || !origin || !destination || !ferry ||
+           origin==destination || ferry==origin || ferry==destination ||
+           !npc || !transport_id || !receiving_owner)
+            throw std::invalid_argument("incomplete NPC immigration admission");
+        const auto* source=world.find(origin);
+        const auto* target=world.find(destination);
+        const auto* carrier=world.find(ferry);
+        const auto* target_life=world.life_support(destination);
+        const auto* ferry_life=world.life_support(ferry);
+        const auto from=world.colony_ship(origin),to=world.colony_ship(destination);
+        const auto person=world.npc_records().find(npc);
+        if(!source || !target || !carrier || !from || !to ||
+           !target_life || !ferry_life ||
+           source->type!=EntityType::Ship ||
+           target->type!=EntityType::Ship ||
+           carrier->type!=EntityType::Ship ||
+           !source->owner_id || target->owner_id!=receiving_owner ||
+           (carrier->owner_id!=source->owner_id &&
+            carrier->owner_id!=receiving_owner) ||
+           carrier->system_id!=source->system_id ||
+           person==world.npc_records().end() ||
+           person->second.home_ship!=origin ||
+           person->second.location!=origin ||
+           person->second.transport_id ||
+           person->second.assigned_site!=origin ||
+           person->second.role!=NpcRole::Ship ||
+           !world.npc_available_for_duty(npc) ||
+           world.named_medics().count(npc) || from->crew<=1 ||
+           to->crew>=1000 || world.voyage_status(transport_id)!=0)
+            throw std::runtime_error("immigration admission lacks eligible real person or receiving colony");
+        // The current solo-adult entry gate is deliberately conservative:
+        // family closure needs the existing two-parent/child migration path.
+        if(require_current_custody && has_child_or_dependent_link(origin))
+            throw std::runtime_error("adult immigration must not bypass ART02 child custody");
+        if(colony_safety::assess(world,destination,destination).risk!=
+               colony_safety::Risk::Safe)
+            throw std::runtime_error("receiver lacks healthy life support");
+        const auto govt=effective_governance(origin,generation);
+        if(govt.leader_id==npc)
+            throw std::runtime_error("individual immigrant would vacate incumbent government");
+        // Only this particular resident's PREVIOUSLY committed personal
+        // history—not collective panic, a guessed sentiment or a single
+        // physical shortage—can authorize their attempt to emigrate. A
+        // recovering resident may cease wanting to leave even with a
+        // historical critical-shortage witness on file.
+        const auto own=personal_outlook_before(origin,npc,generation);
+        if(!historical_legacy_personal_rule &&
+           (!own || !own->considering_departure))
+            throw std::runtime_error("resident has no active historically grounded decision to depart");
+        Statement pressure(db_,"SELECT world_generation,colony,source_owner,npc,"
+            "governance_event,risk FROM sg_colony_npc_exit_pressure WHERE event_id=?");
+        pressure.i64(1,static_cast<sqlite3_int64>(pressure_event));
+        if(!pressure.row())throw std::runtime_error("immigrant lacks real individual exit-pressure witness");
+        const auto born=sqlite3_column_int64(pressure.get(),0);
+        const auto source_id=parse_u64(sqlite3_column_text(pressure.get(),1));
+        const auto source_owner=parse_u64(sqlite3_column_text(pressure.get(),2));
+        const auto witnessed=parse_u64(sqlite3_column_text(pressure.get(),3));
+        const auto past_govt=sqlite3_column_int64(pressure.get(),4);
+        const auto old_risk=sqlite3_column_int(pressure.get(),5);
+        if(born<=0 || static_cast<std::uint64_t>(born)>generation ||
+           source_id!=origin || source_owner!=source->owner_id ||
+           witnessed!=npc || past_govt<0 ||
+           old_risk<2 || old_risk>3 || pressure.row())
+            throw std::runtime_error("pressure witness does not belong to this adult/current government");
+        // Read-only backward compatibility: the earlier EXIT-01B issue
+        // required critical scarcity *at the actual permit generation*, not
+        // a personal mood record which did not yet exist.
+        if(historical_legacy_personal_rule &&
+           (static_cast<int>(colony_safety::assess(
+                  world,origin,origin).risk)<
+                static_cast<int>(colony_safety::Risk::Critical) ||
+            static_cast<std::uint64_t>(past_govt)!=govt.event_id))
+            throw std::runtime_error("legacy immigrant had no real crisis at issuance");
+        PersistentWorld::VoluntaryImmigrationAdmission a;
+        a.exit_pressure_event_id=pressure_event;
+        a.personal_outlook_event_id=historical_legacy_personal_rule?0:own->event_id;
+        a.world_generation=generation;
+        a.npc_id=npc;a.transport_id=transport_id;
+        a.origin=origin;a.destination=destination;a.ferry=ferry;
+        a.original_owner=source->owner_id;a.receiving_owner=receiving_owner;
+        return a;
+    }
+    PersistentWorld::VoluntaryImmigrationAdmission record_voluntary_admission(
+        const Simulation& world,std::uint64_t generation,std::uint64_t event,
+        std::uint64_t pressure,EntityId origin,EntityId destination,EntityId ferry,
+        std::uint64_t npc,std::uint64_t transport,PlayerId receiving_owner){
+        if(!event || event>static_cast<std::uint64_t>(
+           std::numeric_limits<sqlite3_int64>::max()))
+            throw std::invalid_argument("invalid immigrant admission event ID");
+        run(db_,"BEGIN IMMEDIATE");
+        try{
+            if(latest_generation(db_)!=generation)
+                throw std::runtime_error("stale world for immigrant admission");
+            auto a=assess_voluntary_admission(
+                world,generation,pressure,origin,destination,ferry,npc,
+                transport,receiving_owner,true);
+            run(db_,"CREATE TABLE IF NOT EXISTS sg_colony_voluntary_immigration("
+                "event_id INTEGER PRIMARY KEY CHECK(event_id>0),"
+                "world_generation INTEGER NOT NULL CHECK(world_generation>0),"
+                "world_hash TEXT NOT NULL,tick INTEGER NOT NULL,"
+                "pressure_event INTEGER NOT NULL UNIQUE,"
+                "origin TEXT NOT NULL,destination TEXT NOT NULL,"
+                "ferry TEXT NOT NULL,npc TEXT NOT NULL,"
+                "transport TEXT NOT NULL UNIQUE,"
+                "original_owner TEXT NOT NULL,receiving_owner TEXT NOT NULL,"
+                "governance_event INTEGER NOT NULL CHECK(governance_event>=0),"
+                "personal_intent_event INTEGER NOT NULL DEFAULT 0 "
+                "CHECK(personal_intent_event>=0))");
+            // Pre-EXIT01C saves have a 13-column immutable admission table;
+            // preserve all its original records with a typed zero legacy
+            // personal intent, rather than rewriting their historical terms.
+            bool has_intent=false;
+            {Statement info(db_,"PRAGMA table_info(sg_colony_voluntary_immigration)");
+             while(info.row())if(sqlite_str(info.get(),1)=="personal_intent_event")
+                 has_intent=true;}
+            if(!has_intent)
+                run(db_,"ALTER TABLE sg_colony_voluntary_immigration ADD COLUMN "
+                    "personal_intent_event INTEGER NOT NULL DEFAULT 0 "
+                    "CHECK(personal_intent_event>=0)");
+            run(db_,"CREATE TRIGGER IF NOT EXISTS sg_voluntary_immigration_no_update "
+                "BEFORE UPDATE ON sg_colony_voluntary_immigration "
+                "BEGIN SELECT RAISE(ABORT,'immutable receiving colony admission'); END");
+            run(db_,"CREATE TRIGGER IF NOT EXISTS sg_voluntary_immigration_no_delete "
+                "BEFORE DELETE ON sg_colony_voluntary_immigration "
+                "BEGIN SELECT RAISE(ABORT,'immutable receiving colony admission'); END");
+            Statement ins(db_,"INSERT INTO sg_colony_voluntary_immigration ("
+                "event_id,world_generation,world_hash,tick,pressure_event,"
+                "origin,destination,ferry,npc,transport,original_owner,"
+                "receiving_owner,governance_event,personal_intent_event) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)");
+            ins.i64(1,static_cast<sqlite3_int64>(event));
+            ins.i64(2,static_cast<sqlite3_int64>(generation));
+            ins.text(3,std::to_string(world.state_hash()));
+            ins.i64(4,static_cast<sqlite3_int64>(world.tick()));
+            ins.i64(5,static_cast<sqlite3_int64>(pressure));
+            ins.text(6,std::to_string(origin));
+            ins.text(7,std::to_string(destination));
+            ins.text(8,std::to_string(ferry));
+            ins.text(9,std::to_string(npc));
+            ins.text(10,std::to_string(transport));
+            ins.text(11,std::to_string(a.original_owner));
+            ins.text(12,std::to_string(receiving_owner));
+            ins.i64(13,static_cast<sqlite3_int64>(
+                effective_governance(origin,generation).event_id));
+            ins.i64(14,static_cast<sqlite3_int64>(a.personal_outlook_event_id));
+            if(!a.personal_outlook_event_id)
+                throw std::runtime_error("new admission cannot omit actual personal intent");
+            ins.execute();
+            run(db_,"COMMIT");
+            a.event_id=event;
+            return a;
+        }catch(...){sqlite3_exec(db_,"ROLLBACK",nullptr,nullptr,nullptr);throw;}
+    }
+    PersistentWorld::VoluntaryImmigrationAdmission immigration_admission(
+        std::uint64_t event) const{
+        Statement table(db_,"SELECT 1 FROM sqlite_master WHERE type='table' "
+            "AND name='sg_colony_voluntary_immigration'");
+        if(!table.row())throw std::runtime_error("no immigrant admission ledger");
+        bool has_intent=false;
+        {Statement cols(db_,"PRAGMA table_info(sg_colony_voluntary_immigration)");
+         while(cols.row())if(sqlite_str(cols.get(),1)=="personal_intent_event")
+             has_intent=true;}
+        const std::string read_sql=std::string(
+            "SELECT world_generation,pressure_event,origin,")+
+            "destination,ferry,npc,transport,original_owner,receiving_owner,"+
+            (has_intent?"personal_intent_event":"0")+
+            " FROM sg_colony_voluntary_immigration WHERE event_id=?";
+        Statement q(db_,read_sql.c_str());
+        q.i64(1,static_cast<sqlite3_int64>(event));
+        if(!q.row())throw std::runtime_error("unknown immigrant admission");
+        PersistentWorld::VoluntaryImmigrationAdmission a;
+        a.event_id=event;
+        a.world_generation=static_cast<std::uint64_t>(sqlite3_column_int64(q.get(),0));
+        a.exit_pressure_event_id=static_cast<std::uint64_t>(sqlite3_column_int64(q.get(),1));
+        a.origin=parse_u64(sqlite3_column_text(q.get(),2));
+        a.destination=parse_u64(sqlite3_column_text(q.get(),3));
+        a.ferry=parse_u64(sqlite3_column_text(q.get(),4));
+        a.npc_id=parse_u64(sqlite3_column_text(q.get(),5));
+        a.transport_id=parse_u64(sqlite3_column_text(q.get(),6));
+        a.original_owner=parse_u64(sqlite3_column_text(q.get(),7));
+        a.receiving_owner=parse_u64(sqlite3_column_text(q.get(),8));
+        const auto intended=sqlite3_column_int64(q.get(),9);
+        if(intended<0)throw std::runtime_error("invalid immigration personal reason");
+        a.personal_outlook_event_id=static_cast<std::uint64_t>(intended);
+        if(q.row())throw std::runtime_error("duplicate immigrant admission");
+        return a;
+    }
+    // EXIT-01D: host supervisor helpers read only the authoritative SQLite
+    // journals. Auto allocated IDs come from the committed real ledger, not
+    // from untrusted client arguments or guessed world timestamps.
+    bool has_founded_governance(EntityId source) const{
+        Statement t(db_,"SELECT 1 FROM sqlite_master WHERE type='table' "
+            "AND name='sg_colony_conflict_agenda'");
+        if(!t.row())return false;
+        Statement q(db_,"SELECT 1 FROM sg_colony_conflict_agenda WHERE colony=?");
+        q.text(1,std::to_string(source));
+        return q.row();
+    }
+    std::uint64_t next_personal_outlook_event_id() const{
+        Statement t(db_,"SELECT 1 FROM sqlite_master WHERE type='table' "
+            "AND name='sg_colony_npc_personal_outlook'");
+        if(!t.row())return 1;
+        Statement q(db_,"SELECT COALESCE(MAX(event_id),0) "
+            "FROM sg_colony_npc_personal_outlook");
+        if(!q.row())throw std::runtime_error("missing personal history counter");
+        const auto old=sqlite3_column_int64(q.get(),0);
+        if(old<0 || old==std::numeric_limits<sqlite3_int64>::max())
+            throw std::overflow_error("personal history event IDs exhausted");
+        return static_cast<std::uint64_t>(old)+1;
+    }
+    bool personal_outlook_recorded_at(EntityId origin,std::uint64_t npc,
+                                      std::uint64_t generation) const{
+        Statement t(db_,"SELECT 1 FROM sqlite_master WHERE type='table' "
+            "AND name='sg_colony_npc_personal_outlook'");
+        if(!t.row())return false;
+        Statement q(db_,"SELECT 1 FROM sg_colony_npc_personal_outlook "
+            "WHERE colony=? AND npc=? AND world_generation=?");
+        q.text(1,std::to_string(origin));
+        q.text(2,std::to_string(npc));
+        q.i64(3,static_cast<sqlite3_int64>(generation));
+        return q.row();
+    }
+    std::optional<std::uint64_t> existing_exit_pressure(
+        EntityId origin,std::uint64_t npc) const{
+        Statement t(db_,"SELECT 1 FROM sqlite_master WHERE type='table' "
+            "AND name='sg_colony_npc_exit_pressure'");
+        if(!t.row())return std::nullopt;
+        Statement q(db_,"SELECT event_id FROM sg_colony_npc_exit_pressure "
+            "WHERE colony=? AND npc=? ORDER BY world_generation DESC LIMIT 1");
+        q.text(1,std::to_string(origin));
+        q.text(2,std::to_string(npc));
+        if(!q.row())return std::nullopt;
+        const auto v=sqlite3_column_int64(q.get(),0);
+        if(v<=0 || q.row())throw std::runtime_error("invalid past scarcity witness");
+        return static_cast<std::uint64_t>(v);
+    }
+    std::optional<PersistentWorld::VoluntaryImmigrationAdmission>
+    outstanding_voluntary_admission(EntityId origin,std::uint64_t npc) const{
+        Statement t(db_,"SELECT 1 FROM sqlite_master WHERE type='table' "
+            "AND name='sg_colony_voluntary_immigration'");
+        if(!t.row())return std::nullopt;
+        Statement settled(db_,"SELECT 1 FROM sqlite_master WHERE type='table' "
+            "AND name='sg_colony_voluntary_immigration_settled'");
+        const bool has_receipts=settled.row();
+        const std::string sql=std::string(
+            "SELECT a.event_id FROM sg_colony_voluntary_immigration a ")+
+            (has_receipts?
+             "LEFT JOIN sg_colony_voluntary_immigration_settled s "
+             "ON s.admission_event=a.event_id ":"")+
+            "WHERE a.origin=? AND a.npc=? "+
+            (has_receipts?"AND s.admission_event IS NULL ":"")+
+            "ORDER BY a.event_id DESC LIMIT 1";
+        Statement q(db_,sql.c_str());
+        q.text(1,std::to_string(origin));q.text(2,std::to_string(npc));
+        if(!q.row())return std::nullopt;
+        const auto event=sqlite3_column_int64(q.get(),0);
+        if(event<=0 || q.row())throw std::runtime_error("invalid outstanding immigration");
+        return immigration_admission(static_cast<std::uint64_t>(event));
+    }
+
+    bool immigration_pending_for_transport(
+        std::uint64_t npc,std::uint64_t transport) const{
+        Statement table(db_,"SELECT 1 FROM sqlite_master WHERE type='table' "
+            "AND name='sg_colony_voluntary_immigration'");
+        if(!table.row())return false;
+        Statement q(db_,"SELECT 1 FROM sg_colony_voluntary_immigration "
+            "WHERE npc=? AND transport=?");
+        q.text(1,std::to_string(npc));q.text(2,std::to_string(transport));
+        return q.row();
+    }
+    void verify_colony_voluntary_immigration(std::uint64_t max_generation) const{
+        Statement present(db_,"SELECT 1 FROM sqlite_master WHERE type='table' "
+            "AND name='sg_colony_voluntary_immigration'");
+        Statement finalized(db_,"SELECT 1 FROM sqlite_master WHERE type='table' "
+            "AND name='sg_colony_voluntary_immigration_settled'");
+        const bool have_permits=present.row(),have_settled=finalized.row();
+        if(!have_permits){if(have_settled)throw std::runtime_error(
+            "immigration settlement without admissions");return;}
+        for(const auto* trigger:{"sg_voluntary_immigration_no_update",
+                                 "sg_voluntary_immigration_no_delete"}){
+            Statement t(db_,"SELECT 1 FROM sqlite_master WHERE type='trigger' AND name=?");
+            t.text(1,trigger);
+            if(!t.row() || t.row())throw std::runtime_error(
+                "missing immutable immigration admission guard");
+        }
+        if(have_settled)for(const auto* trigger:{
+            "sg_voluntary_immigration_settled_no_update",
+            "sg_voluntary_immigration_settled_no_delete"}){
+            Statement t(db_,"SELECT 1 FROM sqlite_master WHERE type='trigger' AND name=?");
+            t.text(1,trigger);
+            if(!t.row() || t.row())throw std::runtime_error(
+                "missing immutable immigration settlement guard");
+        }
+        bool has_intent=false;
+        {Statement cols(db_,"PRAGMA table_info(sg_colony_voluntary_immigration)");
+         while(cols.row())if(sqlite_str(cols.get(),1)=="personal_intent_event")
+             has_intent=true;}
+        const std::string verify_sql=std::string(
+            "SELECT event_id,world_generation,world_hash,tick,")+
+            "pressure_event,origin,destination,ferry,npc,transport,"+
+            "original_owner,receiving_owner,governance_event,"+
+            (has_intent?"personal_intent_event":"0")+
+            " FROM sg_colony_voluntary_immigration";
+        Statement rows(db_,verify_sql.c_str());
+        while(rows.row()){
+            const auto id=sqlite3_column_int64(rows.get(),0);
+            const auto gen=sqlite3_column_int64(rows.get(),1);
+            const auto hash=sqlite_str(rows.get(),2);
+            const auto tick=sqlite3_column_int64(rows.get(),3);
+            const auto pressure=sqlite3_column_int64(rows.get(),4);
+            const auto origin=parse_u64(sqlite3_column_text(rows.get(),5));
+            const auto dest=parse_u64(sqlite3_column_text(rows.get(),6));
+            const auto ferry=parse_u64(sqlite3_column_text(rows.get(),7));
+            const auto npc=parse_u64(sqlite3_column_text(rows.get(),8));
+            const auto transport=parse_u64(sqlite3_column_text(rows.get(),9));
+            const auto old_owner=parse_u64(sqlite3_column_text(rows.get(),10));
+            const auto receiver=parse_u64(sqlite3_column_text(rows.get(),11));
+            const auto gov=sqlite3_column_int64(rows.get(),12);
+            const auto intent=sqlite3_column_int64(rows.get(),13);
+            if(id<1 || gen<1 || static_cast<std::uint64_t>(gen)>max_generation ||
+               tick<0 || pressure<1 || gov<0 || intent<0 ||
+               !origin || !dest || !ferry ||
+               !npc || !transport || !old_owner || !receiver)
+                throw std::runtime_error("invalid immigration admission chronology");
+            Statement snap(db_,"SELECT state,checksum FROM snapshots WHERE generation=?");
+            snap.i64(1,gen);
+            if(!snap.row())throw std::runtime_error("immigration source generation pruned");
+            const auto* bytes=sqlite3_column_blob(snap.get(),0);
+            const auto len=sqlite3_column_bytes(snap.get(),0);
+            if(!bytes || len<=0 || len>16*1024*1024)
+                throw std::runtime_error("immigration source snapshot malformed");
+            const auto original=Simulation::from_snapshot(std::string(
+                static_cast<const char*>(bytes),static_cast<std::size_t>(len)));
+            if(original.state_hash()!=parse_u64(sqlite3_column_text(snap.get(),1)) ||
+               std::to_string(original.state_hash())!=hash ||
+               original.tick()!=static_cast<std::uint64_t>(tick) || snap.row())
+                throw std::runtime_error("immigration admission original world forged");
+            // Preserve authentic EXIT-01B admissions issued before the
+            // personal-history scheme existed: they have no intent column or
+            // a zero default after the additive schema upgrade. A post-v88
+            // forged admission cannot erase its nonzero personal decision and
+            // claim the older scarcity-only rule instead.
+            const bool legacy=intent==0;
+            // A schema-column downgrade is not sufficient to masquerade a
+            // newly issued personal-intent permit as an older one.
+            if(legacy){
+                Statement personal_table(db_,"SELECT 1 FROM sqlite_master "
+                    "WHERE type='table' AND name='sg_colony_npc_personal_outlook'");
+                if(personal_table.row()){
+                    Statement before(db_,"SELECT 1 FROM sg_colony_npc_personal_outlook "
+                        "WHERE world_generation<? LIMIT 1");
+                    before.i64(1,gen);
+                    if(before.row())throw std::runtime_error(
+                        "post-personal-history admission stripped its actual NPC decision");
+                }
+            }
+            const auto calculated=assess_voluntary_admission(original,
+                static_cast<std::uint64_t>(gen),static_cast<std::uint64_t>(pressure),
+                origin,dest,ferry,npc,transport,receiver,false,legacy);
+            if(calculated.original_owner!=old_owner ||
+               calculated.personal_outlook_event_id!=static_cast<std::uint64_t>(intent) ||
+               effective_governance(origin,static_cast<std::uint64_t>(gen)).event_id!=
+                   static_cast<std::uint64_t>(gov))
+                throw std::runtime_error("immigration consent, personal intent or former government forged");
+            bool moved=false;
+            std::string command;
+            std::uint64_t committed=0;
+            // If not yet migrated, admission remains pending after a restart.
+            Statement migrate_table(db_,"SELECT 1 FROM sqlite_master WHERE type='table' "
+                "AND name='sg_society_migration'");
+            if(migrate_table.row()){
+                Statement migration(db_,"SELECT command_id,world_generation "
+                    "FROM sg_society_migration WHERE npc_id=? AND transport_id=? "
+                    "AND origin=? AND destination=?");
+                migration.text(1,std::to_string(npc));migration.text(2,std::to_string(transport));
+                migration.text(3,std::to_string(origin));migration.text(4,std::to_string(dest));
+                if(migration.row()){
+                    moved=true;command=sqlite_str(migration.get(),0);
+                    committed=static_cast<std::uint64_t>(sqlite3_column_int64(migration.get(),1));
+                    if(migration.row() || committed<=static_cast<std::uint64_t>(gen))
+                        throw std::runtime_error("migration time-traveled before acceptance");
+                }
+            }
+            if(moved){
+                // The original authoritative post-execution world must
+                // independently contain the SAME physical ferry and named
+                // manifest promised by the receiving-colony admission.
+                Statement arrived(db_,"SELECT state,checksum FROM snapshots "
+                    "WHERE generation=?");
+                arrived.i64(1,static_cast<sqlite3_int64>(committed));
+                if(!arrived.row())throw std::runtime_error(
+                    "immigration original arrival snapshot pruned");
+                const auto* arrived_bytes=sqlite3_column_blob(arrived.get(),0);
+                const auto arrived_len=sqlite3_column_bytes(arrived.get(),0);
+                if(!arrived_bytes || arrived_len<=0 || arrived_len>16*1024*1024)
+                    throw std::runtime_error("immigration original arrival snapshot malformed");
+                const auto arrival_world=Simulation::from_snapshot(std::string(
+                    static_cast<const char*>(arrived_bytes),
+                    static_cast<std::size_t>(arrived_len)));
+                if(arrival_world.state_hash()!=parse_u64(
+                       sqlite3_column_text(arrived.get(),1)) ||
+                   !arrival_world.completed_voyage_matches(
+                       transport,ferry,origin,dest,std::vector<std::uint64_t>{npc}) ||
+                   arrival_world.npc_records().at(npc).home_ship!=dest ||
+                   arrived.row())
+                    throw std::runtime_error("immigration ferry/custody history was forged");
+            }
+            if(moved && !have_settled)
+                throw std::runtime_error("voluntary immigration lost settlement receipt");
+            if(have_settled){
+                Statement receipt(db_,"SELECT migration_command,world_generation "
+                    "FROM sg_colony_voluntary_immigration_settled WHERE admission_event=?");
+                receipt.i64(1,id);
+                const bool arrived=receipt.row();
+                if(arrived){
+                    const auto linked=sqlite_str(receipt.get(),0);
+                    const auto linked_gen=sqlite3_column_int64(receipt.get(),1);
+                    if(!moved || command!=linked ||
+                       linked_gen!=static_cast<sqlite3_int64>(committed) ||
+                       receipt.row())throw std::runtime_error(
+                           "voluntary immigration receipt is not a committed migration");
+                }else if(moved)throw std::runtime_error(
+                    "voluntary migrant moved without immutable matching receipt");
+            }
+        }
+        if(have_settled){
+            Statement orphans(db_,"SELECT 1 FROM sg_colony_voluntary_immigration_settled s "
+                "LEFT JOIN sg_colony_voluntary_immigration a "
+                "ON a.event_id=s.admission_event WHERE a.event_id IS NULL LIMIT 1");
+            if(orphans.row())throw std::runtime_error(
+                "orphan completed immigration without an original accepted source");
+        }
+    }
+    bool verified_voluntary_immigration(std::uint64_t event) const{
+        Statement table(db_,"SELECT 1 FROM sqlite_master WHERE type='table' "
+            "AND name='sg_colony_voluntary_immigration_settled'");
+        if(!table.row())return false;
+        Statement q(db_,"SELECT 1 FROM sg_colony_voluntary_immigration_settled "
+            "WHERE admission_event=?");
+        q.i64(1,static_cast<sqlite3_int64>(event));
+        return q.row();
+    }
+
+
+    void validate_voluntary_settlement(
+        const Simulation& world,std::uint64_t generation,
+        const SocietyMigrationPlan& plan) const{
+        if(!plan.voluntary_admission_event_id || plan.co_parent_id ||
+           !plan.dependents.empty())
+            throw std::runtime_error("solo voluntary immigration cannot bypass household closure");
+        const auto a=immigration_admission(plan.voluntary_admission_event_id);
+        if(a.world_generation>=generation ||
+           a.npc_id!=plan.npc_id || a.transport_id!=plan.transport_id ||
+           a.origin!=plan.origin || a.destination!=plan.destination)
+            throw std::runtime_error("settlement is not the admitted physical immigration route");
+        const auto* source=world.find(a.origin),*dest=world.find(a.destination);
+        if(!source || !dest || source->owner_id!=a.original_owner ||
+           dest->owner_id!=a.receiving_owner)
+            throw std::runtime_error("receiving-owner or source-owner authority changed");
+        if(colony_safety::assess(world,a.destination,a.destination).risk!=
+           colony_safety::Risk::Safe)
+            throw std::runtime_error("receiving colony became unsafe during voyage");
+        if(!world.completed_voyage_matches(
+               a.transport_id,a.ferry,a.origin,a.destination,
+               std::vector<std::uint64_t>{a.npc_id}))
+            throw std::runtime_error("immigrant lacks exact completed admitted ferry and passenger manifest");
+        const auto person=world.npc_records().find(a.npc_id);
+        if(person==world.npc_records().end() ||
+           person->second.home_ship!=a.origin ||
+           person->second.location!=a.destination ||
+           person->second.transport_id)
+            throw std::runtime_error("immigrant not at admitted destination");
+        if(verified_voluntary_immigration(a.event_id))
+            throw std::runtime_error("voluntary immigration already settled");
+    }
+    void insert_voluntary_settlement_receipt(sqlite3* db,
+        std::uint64_t admission_event,const SocietyMigrationPlan& p,
+        std::uint64_t committed_generation) const{
+        if(!db || !admission_event || !p.command_id || !committed_generation)
+            throw std::runtime_error("incomplete immigration effect binding");
+        run(db,"CREATE TABLE IF NOT EXISTS sg_colony_voluntary_immigration_settled("
+            "admission_event INTEGER PRIMARY KEY CHECK(admission_event>0),"
+            "migration_command TEXT NOT NULL UNIQUE,"
+            "world_generation INTEGER NOT NULL CHECK(world_generation>0))");
+        run(db,"CREATE TRIGGER IF NOT EXISTS sg_voluntary_immigration_settled_no_update "
+            "BEFORE UPDATE ON sg_colony_voluntary_immigration_settled "
+            "BEGIN SELECT RAISE(ABORT,'immutable completed immigration'); END");
+        run(db,"CREATE TRIGGER IF NOT EXISTS sg_voluntary_immigration_settled_no_delete "
+            "BEFORE DELETE ON sg_colony_voluntary_immigration_settled "
+            "BEGIN SELECT RAISE(ABORT,'immutable completed immigration'); END");
+        // The normal authoritative ART02 family move, ECON03 regional
+        // transfer and source/destination world update have already been
+        // checked/inserted in this SAME Store::commit SQL transaction.
+        Statement registered(db,"SELECT command_id,world_generation,npc_id,"
+            "transport_id,origin,destination,household_count "
+            "FROM sg_society_migration WHERE command_id=?");
+        registered.text(1,std::to_string(p.command_id));
+        if(!registered.row() ||
+           sqlite_str(registered.get(),0)!=std::to_string(p.command_id) ||
+           sqlite3_column_int64(registered.get(),1)!=
+               static_cast<sqlite3_int64>(committed_generation) ||
+           sqlite_str(registered.get(),2)!=std::to_string(p.npc_id) ||
+           sqlite_str(registered.get(),3)!=std::to_string(p.transport_id) ||
+           sqlite_str(registered.get(),4)!=std::to_string(p.origin) ||
+           sqlite_str(registered.get(),5)!=std::to_string(p.destination) ||
+           sqlite3_column_int64(registered.get(),6)!=1 ||
+           registered.row())
+            throw std::runtime_error("voluntary settlement lacks exactly one native immigration transfer");
+        Statement insert(db,"INSERT INTO sg_colony_voluntary_immigration_settled "
+            "VALUES(?,?,?)");
+        insert.i64(1,static_cast<sqlite3_int64>(admission_event));
+        insert.text(2,std::to_string(p.command_id));
+        insert.i64(3,static_cast<sqlite3_int64>(committed_generation));
+        insert.execute();
+    }
+
+    colony_conflict::Decision assess_colony_aggression(
+        const Simulation& world,std::uint64_t generation,
+        EntityId source,std::uint64_t contact_event_id,
+        bool governed=false) const{
+        if(!source || !contact_event_id || contact_event_id>
+           static_cast<std::uint64_t>(std::numeric_limits<sqlite3_int64>::max()))
+            throw std::invalid_argument("missing physical aggression provenance");
+        Statement agenda(db_,"SELECT event_id,leader,agenda FROM "
+            "sg_colony_conflict_agenda WHERE colony=?");
+        agenda.text(1,std::to_string(source));
+        if(!agenda.row())throw std::runtime_error("colony has no durable leadership agenda");
+        auto leader=parse_u64(sqlite3_column_text(agenda.get(),1));
+        int disposition=sqlite3_column_int(agenda.get(),2);
+        if(!leader || disposition<0 || disposition>3 || agenda.row())
+            throw std::runtime_error("invalid founding colony agenda");
+        colony_conflict::GovernanceEpoch epoch;
+        if(governed){
+            epoch=effective_governance(source,generation);
+            leader=epoch.leader_id;
+            disposition=static_cast<int>(epoch.agenda);
+        }
+        Statement contact(db_,"SELECT world_generation,tick,source,observer,"
+            "foreign_ship,foreign_owner,system,distance_squared "
+            "FROM sg_colony_watch_contacts WHERE event_id=?");
+        contact.i64(1,static_cast<sqlite3_int64>(contact_event_id));
+        if(!contact.row())throw std::runtime_error("no real witnessed foreign-ship contact");
+        const auto observed_generation=sqlite3_column_int64(contact.get(),0);
+        colony_defense::Contact seen;
+        seen.world_tick=static_cast<std::uint64_t>(
+            sqlite3_column_int64(contact.get(),1));
+        seen.source=parse_u64(sqlite3_column_text(contact.get(),2));
+        seen.observer_npc=parse_u64(sqlite3_column_text(contact.get(),3));
+        seen.foreign_ship=parse_u64(sqlite3_column_text(contact.get(),4));
+        seen.foreign_owner=parse_u64(sqlite3_column_text(contact.get(),5));
+        seen.system=static_cast<std::uint32_t>(
+            sqlite3_column_int64(contact.get(),6));
+        seen.distance_squared=static_cast<std::uint64_t>(
+            sqlite3_column_int64(contact.get(),7));
+        if(observed_generation!=static_cast<sqlite3_int64>(generation) ||
+           seen.source!=source || seen.world_tick!=world.tick() ||
+           !seen.foreign_ship || contact.row())
+            throw std::runtime_error("stale/wrong-colony contact cannot motivate action");
+        auto d=colony_conflict::evaluate(world,source,leader,
+            static_cast<colony_conflict::Agenda>(disposition),seen,contact_event_id);
+        if(governed){
+            d.governance_event_id=epoch.event_id;
+            d.diplomatic_policy=epoch.policy;
+        }
+        return d;
+    }
+    colony_conflict::Decision record_colony_aggression(
+        const Simulation& world,std::uint64_t generation,
+        std::uint64_t decision_id,EntityId source,std::uint64_t contact_id){
+        if(!decision_id || decision_id>
+           static_cast<std::uint64_t>(std::numeric_limits<sqlite3_int64>::max()) ||
+           decision_id==contact_id)
+            throw std::invalid_argument("invalid or reused offensive decision id");
+        run(db_,"BEGIN IMMEDIATE");
+        try{
+            if(latest_generation(db_)!=generation)
+                throw std::runtime_error("stale world generation for offensive intent");
+            Statement dated(db_,"SELECT 1 FROM sqlite_master WHERE type='table' "
+                "AND name='sg_colony_diplomatic_intent'");
+            if(dated.row()){
+                Statement used(db_,"SELECT 1 FROM sg_colony_diplomatic_intent "
+                    "WHERE contact_event=?");
+                used.i64(1,static_cast<sqlite3_int64>(contact_id));
+                if(used.row())throw std::runtime_error(
+                    "contact already consumed by a dated strategic intent");
+            }
+            // After an epoch takes effect, the legacy founder-only API may
+            // not bypass the newly resident representative's political rules.
+            if(effective_governance(source,generation).event_id)
+                throw std::runtime_error("founder-only strategy retired after succession");
+            const auto choice=assess_colony_aggression(world,generation,source,contact_id);
+            Statement agenda(db_,"SELECT event_id FROM sg_colony_conflict_agenda "
+                "WHERE colony=?");
+            agenda.text(1,std::to_string(source));
+            if(!agenda.row())throw std::runtime_error("no leadership agenda");
+            const auto agenda_event=sqlite3_column_int64(agenda.get(),0);
+            if(agenda.row())throw std::runtime_error("multiple colony agendas");
+            run(db_,"CREATE TABLE IF NOT EXISTS sg_colony_conflict_intent("
+                "event_id INTEGER PRIMARY KEY CHECK(event_id>0),"
+                "world_generation INTEGER NOT NULL CHECK(world_generation>0),"
+                "world_hash TEXT NOT NULL,tick INTEGER NOT NULL,"
+                "colony TEXT NOT NULL,leader TEXT NOT NULL,"
+                "agenda_event INTEGER NOT NULL,contact_event INTEGER NOT NULL UNIQUE,"
+                "target_ship TEXT NOT NULL,target_owner TEXT NOT NULL,"
+                "motive INTEGER NOT NULL CHECK(motive BETWEEN 0 AND 4),"
+                "posture INTEGER NOT NULL CHECK(posture BETWEEN 0 AND 4),"
+                "risk INTEGER NOT NULL CHECK(risk BETWEEN 0 AND 3))");
+            run(db_,"CREATE TRIGGER IF NOT EXISTS sg_conflict_intent_no_update "
+                "BEFORE UPDATE ON sg_colony_conflict_intent "
+                "BEGIN SELECT RAISE(ABORT,'immutable colony strategic intent'); END");
+            run(db_,"CREATE TRIGGER IF NOT EXISTS sg_conflict_intent_no_delete "
+                "BEFORE DELETE ON sg_colony_conflict_intent "
+                "BEGIN SELECT RAISE(ABORT,'immutable colony strategic intent'); END");
+            Statement ins(db_,"INSERT INTO sg_colony_conflict_intent "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)");
+            ins.i64(1,static_cast<sqlite3_int64>(decision_id));
+            ins.i64(2,static_cast<sqlite3_int64>(generation));
+            ins.text(3,std::to_string(world.state_hash()));
+            ins.i64(4,static_cast<sqlite3_int64>(world.tick()));
+            ins.text(5,std::to_string(source));
+            ins.text(6,std::to_string(choice.leader_id));
+            ins.i64(7,agenda_event);
+            ins.i64(8,static_cast<sqlite3_int64>(contact_id));
+            ins.text(9,std::to_string(choice.target_ship));
+            ins.text(10,std::to_string(choice.target_owner));
+            ins.i64(11,static_cast<int>(choice.motive));
+            ins.i64(12,static_cast<int>(choice.posture));
+            ins.i64(13,static_cast<int>(choice.source_risk));
+            ins.execute();
+            run(db_,"COMMIT");
+            return choice;
+        }catch(...){
+            sqlite3_exec(db_,"ROLLBACK",nullptr,nullptr,nullptr);throw;
+        }
+    }
+    void verify_colony_conflicts(std::uint64_t max_generation) const{
+        Statement have_agenda(db_,"SELECT 1 FROM sqlite_master WHERE type='table' "
+            "AND name='sg_colony_conflict_agenda'");
+        Statement have_intent(db_,"SELECT 1 FROM sqlite_master WHERE type='table' "
+            "AND name='sg_colony_conflict_intent'");
+        const bool agenda_exists=have_agenda.row(),intent_exists=have_intent.row();
+        if(!agenda_exists && !intent_exists)return;
+        if(!agenda_exists)throw std::runtime_error("colony intent without agenda");
+        for(const auto* tr:{"sg_conflict_agenda_no_update",
+                            "sg_conflict_agenda_no_delete"}){
+            Statement q(db_,"SELECT 1 FROM sqlite_master "
+                "WHERE type='trigger' AND name=?");
+            q.text(1,tr);
+            if(!q.row() || q.row())
+                throw std::runtime_error("colony founding intent guard missing");
+        }
+        if(intent_exists){
+            for(const auto* tr:{"sg_conflict_intent_no_update",
+                                "sg_conflict_intent_no_delete"}){
+                Statement q(db_,"SELECT 1 FROM sqlite_master "
+                    "WHERE type='trigger' AND name=?");
+                q.text(1,tr);
+                if(!q.row() || q.row())
+                    throw std::runtime_error("colony strategic intent guard missing");
+            }
+        }
+        // Cross-check leadership founding against the original preserved
+        // physical colony/leader snapshot, not current possibly changed roles.
+        Statement agendas(db_,"SELECT event_id,world_generation,world_hash,"
+            "tick,colony,leader,agenda FROM sg_colony_conflict_agenda");
+        while(agendas.row()){
+            const auto generation=sqlite3_column_int64(agendas.get(),1);
+            const auto expected_hash=sqlite_str(agendas.get(),2);
+            const auto tick=sqlite3_column_int64(agendas.get(),3);
+            const auto colony=parse_u64(sqlite3_column_text(agendas.get(),4));
+            const auto leader=parse_u64(sqlite3_column_text(agendas.get(),5));
+            const auto disposition=sqlite3_column_int(agendas.get(),6);
+            if(sqlite3_column_int64(agendas.get(),0)<1 || generation<1 ||
+               static_cast<std::uint64_t>(generation)>max_generation ||
+               tick<0 || !colony || !leader || disposition<0 || disposition>3)
+                throw std::runtime_error("historical colony agenda invalid");
+            Statement snap(db_,"SELECT state,checksum FROM snapshots WHERE generation=?");
+            snap.i64(1,generation);
+            if(!snap.row())throw std::runtime_error("founding colony snapshot pruned");
+            const auto size=sqlite3_column_bytes(snap.get(),0);
+            const auto* bytes=sqlite3_column_blob(snap.get(),0);
+            if(!bytes || size<=0 || size>16*1024*1024)
+                throw std::runtime_error("founding colony snapshot malformed");
+            const auto w=Simulation::from_snapshot(std::string(
+                static_cast<const char*>(bytes),static_cast<std::size_t>(size)));
+            const auto* entity=w.find(colony);
+            const auto person=w.npc_records().find(leader);
+            if(w.state_hash()!=parse_u64(sqlite3_column_text(snap.get(),1)) ||
+               std::to_string(w.state_hash())!=expected_hash ||
+               w.tick()!=static_cast<std::uint64_t>(tick) || snap.row() ||
+               !entity || entity->type!=EntityType::Ship ||
+               !entity->owner_id || !w.colony_ship(colony) ||
+               person==w.npc_records().end() ||
+               person->second.home_ship!=colony ||
+               person->second.location!=colony ||
+               person->second.transport_id ||
+               !w.npc_available_for_duty(leader))
+                throw std::runtime_error("colony political agenda origin forged");
+        }
+        if(!intent_exists)return;
+        Statement decisions(db_,"SELECT event_id,world_generation,world_hash,tick,"
+            "colony,leader,agenda_event,contact_event,target_ship,target_owner,"
+            "motive,posture,risk FROM sg_colony_conflict_intent");
+        while(decisions.row()){
+            const auto event=sqlite3_column_int64(decisions.get(),0);
+            const auto gen=sqlite3_column_int64(decisions.get(),1);
+            const auto hash=sqlite_str(decisions.get(),2);
+            const auto tick=sqlite3_column_int64(decisions.get(),3);
+            const auto source=parse_u64(sqlite3_column_text(decisions.get(),4));
+            const auto leader=parse_u64(sqlite3_column_text(decisions.get(),5));
+            const auto agenda_event=sqlite3_column_int64(decisions.get(),6);
+            const auto contact_event=sqlite3_column_int64(decisions.get(),7);
+            const auto target=parse_u64(sqlite3_column_text(decisions.get(),8));
+            const auto owner=parse_u64(sqlite3_column_text(decisions.get(),9));
+            const auto motive=sqlite3_column_int(decisions.get(),10);
+            const auto posture=sqlite3_column_int(decisions.get(),11);
+            const auto risk=sqlite3_column_int(decisions.get(),12);
+            if(event<1 || gen<1 || static_cast<std::uint64_t>(gen)>max_generation ||
+               tick<0 || !source || !leader || !target || !owner ||
+               agenda_event<1 || contact_event<1)
+                throw std::runtime_error("offensive strategic intent malformed");
+            Statement linked(db_,"SELECT event_id FROM sg_colony_conflict_agenda "
+                "WHERE colony=? AND leader=?");
+            linked.text(1,std::to_string(source));linked.text(2,std::to_string(leader));
+            if(!linked.row() ||
+               sqlite3_column_int64(linked.get(),0)!=agenda_event ||
+               linked.row())
+                throw std::runtime_error("offensive intent invented a leader");
+            Statement cp(db_,"SELECT state,checksum FROM snapshots WHERE generation=?");
+            cp.i64(1,gen);
+            if(!cp.row())throw std::runtime_error("offensive decision snapshot pruned");
+            const auto len=sqlite3_column_bytes(cp.get(),0);
+            const auto* bytes=sqlite3_column_blob(cp.get(),0);
+            if(!bytes || len<=0 || len>16*1024*1024)
+                throw std::runtime_error("offensive decision snapshot malformed");
+            const auto w=Simulation::from_snapshot(std::string(
+                static_cast<const char*>(bytes),static_cast<std::size_t>(len)));
+            if(w.state_hash()!=parse_u64(sqlite3_column_text(cp.get(),1)) ||
+               std::to_string(w.state_hash())!=hash ||
+               w.tick()!=static_cast<std::uint64_t>(tick) || cp.row())
+                throw std::runtime_error("offensive decision physical provenance forged");
+            const auto recomputed=assess_colony_aggression(w,
+                static_cast<std::uint64_t>(gen),source,
+                static_cast<std::uint64_t>(contact_event));
+            if(recomputed.leader_id!=leader || recomputed.target_ship!=target ||
+               recomputed.target_owner!=owner ||
+               static_cast<int>(recomputed.motive)!=motive ||
+               static_cast<int>(recomputed.posture)!=posture ||
+               static_cast<int>(recomputed.source_risk)!=risk)
+                throw std::runtime_error("offensive posture or motive replaced");
+        }
+    }
+    struct GrievanceEvidence {
+        std::uint64_t leader=0,agenda_event=0,incident_generation=0;
+        PlayerId actor_owner=0;
+        std::string incident_id;
+        int fidelity=0,valence=0,confidence=0;
+    };
+    GrievanceEvidence interpret_colony_incident(
+        const Simulation& present,std::uint64_t generation,
+        EntityId source,std::uint64_t knowledge_id) const{
+        if(!source || !knowledge_id)throw std::invalid_argument(
+            "colony interpretation requires real source and NPC knowledge");
+        // A newly appointed leader can now receive and interpret genuine
+        // GRSM claims. Earlier revisions still re-evaluate under the founder
+        // when audited against their original generation.
+        const auto epoch=effective_governance(source,generation);
+        GrievanceEvidence proof;
+        proof.agenda_event=epoch.event_id?epoch.event_id:epoch.founding_event_id;
+        proof.leader=epoch.leader_id;
+        const auto* entity=present.find(source);
+        const auto leader=present.npc_records().find(proof.leader);
+        if(!entity || !present.colony_ship(source) || !entity->owner_id ||
+           leader==present.npc_records().end() ||
+           leader->second.home_ship!=source ||
+           leader->second.location!=source ||
+           leader->second.transport_id ||
+           !present.npc_available_for_duty(proof.leader))
+            throw std::runtime_error("colony representative not physically available");
+        Statement opinion(db_,"SELECT id,incident_id,COALESCE(parent_id,0),"
+            "speaker_id,recipient_id,fidelity,valence,confidence,generation,tick,"
+            "account FROM npc_knowledge WHERE id=?");
+        opinion.i64(1,static_cast<sqlite3_int64>(knowledge_id));
+        if(!opinion.row())throw std::runtime_error("NPC was not informed of historical event");
+        const auto claim=read_knowledge(opinion.get());
+        if(!valid_knowledge(claim) || claim.id!=knowledge_id ||
+           !claim.parent_id || claim.recipient_npc!=proof.leader ||
+           claim.fidelity==ClaimFidelity::LocalObservation ||
+           claim.generation>generation || claim.tick>present.tick() ||
+           opinion.row())
+            throw std::runtime_error("no delivered subjective claim to real colony leader");
+        proof.fidelity=static_cast<int>(claim.fidelity);
+        proof.valence=claim.valence;
+        proof.confidence=claim.confidence;
+        proof.incident_id=claim.incident_id;
+        Statement physical(db_,"SELECT generation,kind,source,destination,"
+            "command_id FROM physical_incidents WHERE incident_id=?");
+        physical.text(1,proof.incident_id);
+        if(!physical.row() ||
+           sqlite3_column_int(physical.get(),1)!=
+                static_cast<int>(PhysicalKind::ShipDestroyed) ||
+           sqlite3_column_int64(physical.get(),0)<1 ||
+           static_cast<std::uint64_t>(sqlite3_column_int64(physical.get(),0))>generation)
+            throw std::runtime_error("claim lacks real ship-destruction event");
+        proof.incident_generation=static_cast<std::uint64_t>(
+            sqlite3_column_int64(physical.get(),0));
+        const auto actor=parse_u64(sqlite3_column_text(physical.get(),2));
+        const auto victim=parse_u64(sqlite3_column_text(physical.get(),3));
+        const auto command=parse_u64(sqlite3_column_text(physical.get(),4));
+        if(!actor || !victim || !command || actor==victim || physical.row())
+            throw std::runtime_error("original damage participants corrupted");
+        // Use the actual incident-generation world snapshot to identify the
+        // attacker owner; a player-entered rumor must never supply that ID.
+        Statement cp(db_,"SELECT state,checksum FROM snapshots WHERE generation=?");
+        cp.i64(1,static_cast<sqlite3_int64>(proof.incident_generation));
+        if(!cp.row())throw std::runtime_error(
+            "historical attack snapshot pruned; attribution refused");
+        const auto* bytes=sqlite3_column_blob(cp.get(),0);
+        const auto length=sqlite3_column_bytes(cp.get(),0);
+        if(!bytes || length<=0 || length>16*1024*1024)
+            throw std::runtime_error("historical attack snapshot malformed");
+        const auto actual=Simulation::from_snapshot(std::string(
+            static_cast<const char*>(bytes),static_cast<std::size_t>(length)));
+        const auto* attacker=actual.find(actor);
+        const auto* wreck=actual.find(victim);
+        if(actual.state_hash()!=parse_u64(sqlite3_column_text(cp.get(),1)) ||
+           !attacker || attacker->type!=EntityType::Ship ||
+           !attacker->owner_id || !wreck || wreck->type!=EntityType::Wreck ||
+           !actual.has_command_id(command) || cp.row())
+            throw std::runtime_error("original physical attack no longer verifiable");
+        if(attacker->owner_id==entity->owner_id)
+            throw std::runtime_error("self-attacks cannot become foreign-owner grievance");
+        proof.actor_owner=attacker->owner_id;
+        return proof;
+    }
+    colony_conflict::RelationRevision latest_colony_relationship(
+        EntityId source,PlayerId target) const{
+        colony_conflict::RelationRevision out;
+        out.colony=source;out.target_owner=target;
+        Statement exists(db_,"SELECT 1 FROM sqlite_master WHERE type='table' "
+            "AND name='sg_colony_relationship_revisions'");
+        if(!exists.row())return out;
+        Statement q(db_,"SELECT event_id,revision,leader,knowledge_id,"
+            "incident_generation,prior_event,old_score,delta,new_score "
+            "FROM sg_colony_relationship_revisions "
+            "WHERE colony=? AND target_owner=? ORDER BY revision DESC LIMIT 1");
+        q.text(1,std::to_string(source));q.text(2,std::to_string(target));
+        if(q.row()){
+            out.event_id=static_cast<std::uint64_t>(sqlite3_column_int64(q.get(),0));
+            out.revision=static_cast<std::uint64_t>(sqlite3_column_int64(q.get(),1));
+            out.leader_id=parse_u64(sqlite3_column_text(q.get(),2));
+            out.knowledge_id=static_cast<std::uint64_t>(sqlite3_column_int64(q.get(),3));
+            out.incident_generation=static_cast<std::uint64_t>(sqlite3_column_int64(q.get(),4));
+            out.prior_event_id=static_cast<std::uint64_t>(sqlite3_column_int64(q.get(),5));
+            out.old_score=sqlite3_column_int(q.get(),6);
+            out.delta=sqlite3_column_int(q.get(),7);
+            out.new_score=sqlite3_column_int(q.get(),8);
+            out.attitude=colony_conflict::attitude_for_score(out.new_score);
+            if(q.row())throw std::runtime_error("ambiguous colony relationship tip");
+        }
+        return out;
+    }
+    colony_conflict::RelationRevision assess_colony_relationship(
+        const Simulation& present,std::uint64_t generation,
+        EntityId source,std::uint64_t knowledge_id) const{
+        const auto proof=interpret_colony_incident(
+            present,generation,source,knowledge_id);
+        colony_conflict::RelationRevision out=latest_colony_relationship(
+            source,proof.actor_owner);
+        // One physical event can be discussed by multiple NPCs, but may not
+        // be counted more than once for a given colony and foreign owner.
+        Statement exists(db_,"SELECT 1 FROM sqlite_master WHERE type='table' "
+            "AND name='sg_colony_relationship_revisions'");
+        if(exists.row()){
+            Statement duplicate(db_,"SELECT 1 FROM sg_colony_relationship_revisions "
+                "WHERE colony=? AND target_owner=? AND incident_id=?");
+            duplicate.text(1,std::to_string(source));
+            duplicate.text(2,std::to_string(proof.actor_owner));
+            duplicate.text(3,proof.incident_id);
+            if(duplicate.row())throw std::runtime_error(
+                "colony already interpreted this same real incident");
+        }
+        out.prior_event_id=out.event_id;
+        out.event_id=0;
+        out.revision+=1;
+        out.old_score=out.new_score;
+        out.leader_id=proof.leader;
+        out.knowledge_id=knowledge_id;
+        out.incident_generation=proof.incident_generation;
+        out.delta=colony_conflict::relationship_delta(
+            proof.fidelity,proof.valence,proof.confidence);
+        out.new_score=std::clamp(out.old_score+out.delta,-100,100);
+        out.attitude=colony_conflict::attitude_for_score(out.new_score);
+        if(!out.delta)throw std::runtime_error(
+            "zero-confidence claim cannot rewrite diplomatic history");
+        return out;
+    }
+    colony_conflict::RelationRevision record_colony_relationship(
+        const Simulation& world,std::uint64_t generation,std::uint64_t id,
+        EntityId source,std::uint64_t knowledge_id){
+        if(!id || id>static_cast<std::uint64_t>(
+            std::numeric_limits<sqlite3_int64>::max()))
+            throw std::invalid_argument("invalid diplomatic revision event ID");
+        run(db_,"BEGIN IMMEDIATE");
+        try{
+            if(latest_generation(db_)!=generation)
+                throw std::runtime_error("stale world during colony diplomacy revision");
+            auto out=assess_colony_relationship(
+                world,generation,source,knowledge_id);
+            const auto proof=interpret_colony_incident(
+                world,generation,source,knowledge_id);
+            run(db_,"CREATE TABLE IF NOT EXISTS sg_colony_relationship_revisions("
+                "event_id INTEGER PRIMARY KEY CHECK(event_id>0),"
+                "generation INTEGER NOT NULL CHECK(generation>0),"
+                "world_hash TEXT NOT NULL,tick INTEGER NOT NULL,"
+                "colony TEXT NOT NULL,leader TEXT NOT NULL,agenda_event INTEGER NOT NULL,"
+                "knowledge_id INTEGER NOT NULL UNIQUE,"
+                "incident_id TEXT NOT NULL,incident_generation INTEGER NOT NULL,"
+                "target_owner TEXT NOT NULL,revision INTEGER NOT NULL CHECK(revision>0),"
+                "prior_event INTEGER NOT NULL,old_score INTEGER NOT NULL,"
+                "delta INTEGER NOT NULL,new_score INTEGER NOT NULL,"
+                "fidelity INTEGER NOT NULL,valence INTEGER NOT NULL,"
+                "confidence INTEGER NOT NULL,"
+                "UNIQUE(colony,target_owner,incident_id),"
+                "UNIQUE(colony,target_owner,revision))");
+            run(db_,"CREATE TRIGGER IF NOT EXISTS sg_colony_relation_no_update "
+                "BEFORE UPDATE ON sg_colony_relationship_revisions "
+                "BEGIN SELECT RAISE(ABORT,'immutable colony diplomatic decision'); END");
+            run(db_,"CREATE TRIGGER IF NOT EXISTS sg_colony_relation_no_delete "
+                "BEFORE DELETE ON sg_colony_relationship_revisions "
+                "BEGIN SELECT RAISE(ABORT,'immutable colony diplomatic decision'); END");
+            Statement q(db_,"INSERT INTO sg_colony_relationship_revisions "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)");
+            q.i64(1,static_cast<sqlite3_int64>(id));
+            q.i64(2,static_cast<sqlite3_int64>(generation));
+            q.text(3,std::to_string(world.state_hash()));
+            q.i64(4,static_cast<sqlite3_int64>(world.tick()));
+            q.text(5,std::to_string(source));
+            q.text(6,std::to_string(proof.leader));
+            q.i64(7,static_cast<sqlite3_int64>(proof.agenda_event));
+            q.i64(8,static_cast<sqlite3_int64>(knowledge_id));
+            q.text(9,proof.incident_id);
+            q.i64(10,static_cast<sqlite3_int64>(proof.incident_generation));
+            q.text(11,std::to_string(proof.actor_owner));
+            q.i64(12,static_cast<sqlite3_int64>(out.revision));
+            q.i64(13,static_cast<sqlite3_int64>(out.prior_event_id));
+            q.i64(14,out.old_score);q.i64(15,out.delta);q.i64(16,out.new_score);
+            q.i64(17,proof.fidelity);q.i64(18,proof.valence);
+            q.i64(19,proof.confidence);
+            q.execute();
+            run(db_,"COMMIT");
+            out.event_id=id;
+            return out;
+        }catch(...){
+            sqlite3_exec(db_,"ROLLBACK",nullptr,nullptr,nullptr);
+            throw;
+        }
+    }
+    void verify_colony_relationships(std::uint64_t max_generation) const{
+        Statement exists(db_,"SELECT 1 FROM sqlite_master WHERE type='table' "
+            "AND name='sg_colony_relationship_revisions'");
+        if(!exists.row())return;
+        for(const auto* guard:{"sg_colony_relation_no_update",
+                               "sg_colony_relation_no_delete"}){
+            Statement q(db_,"SELECT 1 FROM sqlite_master "
+                "WHERE type='trigger' AND name=?");
+            q.text(1,guard);
+            if(!q.row() || q.row())
+                throw std::runtime_error("colony relation immutability removed");
+        }
+        Statement rows(db_,"SELECT event_id,generation,world_hash,tick,colony,"
+            "leader,agenda_event,knowledge_id,incident_id,incident_generation,"
+            "target_owner,revision,prior_event,old_score,delta,new_score,"
+            "fidelity,valence,confidence "
+            "FROM sg_colony_relationship_revisions "
+            "ORDER BY generation,revision,event_id");
+        std::map<std::pair<EntityId,PlayerId>,colony_conflict::RelationRevision> prior;
+        while(rows.row()){
+            const auto event=sqlite3_column_int64(rows.get(),0);
+            const auto generation=sqlite3_column_int64(rows.get(),1);
+            const auto hash=sqlite_str(rows.get(),2);
+            const auto tick=sqlite3_column_int64(rows.get(),3);
+            const auto source=parse_u64(sqlite3_column_text(rows.get(),4));
+            const auto leader=parse_u64(sqlite3_column_text(rows.get(),5));
+            const auto agenda=sqlite3_column_int64(rows.get(),6);
+            const auto knowledge=sqlite3_column_int64(rows.get(),7);
+            const auto incident=sqlite_str(rows.get(),8);
+            const auto incident_generation=sqlite3_column_int64(rows.get(),9);
+            const auto owner=parse_u64(sqlite3_column_text(rows.get(),10));
+            const auto revision=sqlite3_column_int64(rows.get(),11);
+            const auto prev=sqlite3_column_int64(rows.get(),12);
+            const auto before=sqlite3_column_int(rows.get(),13);
+            const auto delta=sqlite3_column_int(rows.get(),14);
+            const auto after=sqlite3_column_int(rows.get(),15);
+            const auto fidelity=sqlite3_column_int(rows.get(),16);
+            const auto valence=sqlite3_column_int(rows.get(),17);
+            const auto confidence=sqlite3_column_int(rows.get(),18);
+            if(event<1 || generation<1 || generation>
+               static_cast<sqlite3_int64>(max_generation) ||
+               tick<0 || !source || !leader || agenda<1 ||
+               knowledge<1 || incident.empty() ||
+               incident_generation<1 || incident_generation>generation ||
+               !owner || revision<1 || prev<0 ||
+               before< -100 || before>100 ||
+               after< -100 || after>100)
+                throw std::runtime_error("colony diplomatic revision metadata corrupted");
+            Statement snap(db_,"SELECT state,checksum FROM snapshots "
+                "WHERE generation=?");
+            snap.i64(1,generation);
+            if(!snap.row())throw std::runtime_error("colony relation world snapshot missing");
+            const auto* ptr=sqlite3_column_blob(snap.get(),0);
+            const auto len=sqlite3_column_bytes(snap.get(),0);
+            if(!ptr || len<=0 || len>16*1024*1024)
+                throw std::runtime_error("colony relation physical snapshot malformed");
+            const auto historical=Simulation::from_snapshot(std::string(
+                static_cast<const char*>(ptr),static_cast<std::size_t>(len)));
+            if(historical.state_hash()!=parse_u64(sqlite3_column_text(snap.get(),1)) ||
+               std::to_string(historical.state_hash())!=hash ||
+               historical.tick()!=static_cast<std::uint64_t>(tick) || snap.row())
+                throw std::runtime_error("colony relationship world claim substituted");
+            const auto proof=interpret_colony_incident(
+                historical,static_cast<std::uint64_t>(generation),
+                source,static_cast<std::uint64_t>(knowledge));
+            if(proof.leader!=leader || proof.agenda_event!=
+               static_cast<std::uint64_t>(agenda) ||
+               proof.incident_id!=incident ||
+               proof.incident_generation!=
+                    static_cast<std::uint64_t>(incident_generation) ||
+               proof.actor_owner!=owner ||
+               proof.fidelity!=fidelity ||
+               proof.valence!=valence || proof.confidence!=confidence)
+                throw std::runtime_error("colony grievance lost its actual NPC evidence");
+            auto& prior_row=prior[{source,owner}];
+            if(static_cast<std::uint64_t>(revision)!=prior_row.revision+1 ||
+               static_cast<std::uint64_t>(prev)!=prior_row.event_id ||
+               before!=prior_row.new_score ||
+               delta!=colony_conflict::relationship_delta(
+                   fidelity,valence,confidence) ||
+               after!=std::clamp(before+delta,-100,100) ||
+               delta==0)
+                throw std::runtime_error("colony relation revision chain or score forged");
+            prior_row.event_id=static_cast<std::uint64_t>(event);
+            prior_row.revision=static_cast<std::uint64_t>(revision);
+            prior_row.new_score=after;
+        }
+    }
+
+    // 01B2 generations are deliberate evidence fences: later relations in
+    // the SAME generation cannot change an already accepted intent.
+    colony_conflict::RelationRevision relation_before_generation(
+        EntityId colony,PlayerId owner,std::uint64_t decision_generation) const{
+        colony_conflict::RelationRevision out;
+        out.colony=colony;out.target_owner=owner;
+        Statement exists(db_,"SELECT 1 FROM sqlite_master WHERE type='table' "
+            "AND name='sg_colony_relationship_revisions'");
+        if(!exists.row())return out;
+        Statement q(db_,"SELECT event_id,revision,new_score,generation "
+            "FROM sg_colony_relationship_revisions "
+            "WHERE colony=? AND target_owner=? AND generation<? "
+            "ORDER BY generation DESC,revision DESC LIMIT 1");
+        q.text(1,std::to_string(colony));q.text(2,std::to_string(owner));
+        q.i64(3,static_cast<sqlite3_int64>(decision_generation));
+        if(q.row()){
+            const auto id=sqlite3_column_int64(q.get(),0);
+            const auto rev=sqlite3_column_int64(q.get(),1);
+            const auto score=sqlite3_column_int(q.get(),2);
+            const auto gen=sqlite3_column_int64(q.get(),3);
+            if(id<1 || rev<1 || gen<1 ||
+               static_cast<std::uint64_t>(gen)>=decision_generation ||
+               score< -100 || score>100 || q.row())
+                throw std::runtime_error("invalid historical relation epoch");
+            out.event_id=static_cast<std::uint64_t>(id);
+            out.revision=static_cast<std::uint64_t>(rev);
+            out.new_score=score;
+            out.attitude=colony_conflict::attitude_for_score(score);
+        }
+        return out;
+    }
+    colony_conflict::Decision assess_colony_diplomacy(
+        const Simulation& world,std::uint64_t generation,
+        EntityId source,std::uint64_t contact) const{
+        const auto base=assess_colony_aggression(
+            world,generation,source,contact,true);
+        const auto opinion=relation_before_generation(
+            source,base.target_owner,generation);
+        return colony_conflict::evaluate_diplomatic(
+            base,opinion.new_score,opinion.event_id,base.diplomatic_policy);
+    }
+    colony_conflict::Decision record_colony_diplomacy(
+        const Simulation& world,std::uint64_t generation,
+        std::uint64_t id,EntityId source,std::uint64_t contact){
+        if(!id || id>static_cast<std::uint64_t>(
+                std::numeric_limits<sqlite3_int64>::max()) || id==contact)
+            throw std::invalid_argument("invalid diplomatic intent id");
+        run(db_,"BEGIN IMMEDIATE");
+        try{
+            if(latest_generation(db_)!=generation)
+                throw std::runtime_error("stale diplomatic decision generation");
+            Statement old(db_,"SELECT 1 FROM sqlite_master WHERE type='table' "
+                "AND name='sg_colony_conflict_intent'");
+            if(old.row()){
+                Statement used(db_,"SELECT 1 FROM sg_colony_conflict_intent "
+                    "WHERE contact_event=?");
+                used.i64(1,static_cast<sqlite3_int64>(contact));
+                if(used.row())throw std::runtime_error(
+                    "contact already consumed by original strategic intent");
+            }
+            const auto d=assess_colony_diplomacy(world,generation,source,contact);
+            const auto govt=effective_governance(source,generation);
+            if(d.leader_id!=govt.leader_id ||
+               d.governance_event_id!=govt.event_id ||
+               d.agenda!=govt.agenda)
+                throw std::runtime_error("dated intent did not use active government");
+            const auto agenda=static_cast<sqlite3_int64>(
+                govt.event_id?govt.event_id:govt.founding_event_id);
+            run(db_,"CREATE TABLE IF NOT EXISTS sg_colony_diplomatic_intent("
+                "event_id INTEGER PRIMARY KEY CHECK(event_id>0),"
+                "world_generation INTEGER NOT NULL CHECK(world_generation>0),"
+                "world_hash TEXT NOT NULL,tick INTEGER NOT NULL,"
+                "colony TEXT NOT NULL,leader TEXT NOT NULL,"
+                "agenda_event INTEGER NOT NULL,"
+                "contact_event INTEGER NOT NULL UNIQUE,"
+                "target_ship TEXT NOT NULL,target_owner TEXT NOT NULL,"
+                "relation_event INTEGER NOT NULL CHECK(relation_event>=0),"
+                "relation_score INTEGER NOT NULL CHECK(relation_score BETWEEN -100 AND 100),"
+                "motive INTEGER NOT NULL CHECK(motive BETWEEN 0 AND 4),"
+                "posture INTEGER NOT NULL CHECK(posture BETWEEN 0 AND 4),"
+                "risk INTEGER NOT NULL CHECK(risk BETWEEN 0 AND 3))");
+            run(db_,"CREATE TRIGGER IF NOT EXISTS sg_diplomatic_intent_no_update "
+                "BEFORE UPDATE ON sg_colony_diplomatic_intent "
+                "BEGIN SELECT RAISE(ABORT,'immutable diplomatic intent'); END");
+            run(db_,"CREATE TRIGGER IF NOT EXISTS sg_diplomatic_intent_no_delete "
+                "BEFORE DELETE ON sg_colony_diplomatic_intent "
+                "BEGIN SELECT RAISE(ABORT,'immutable diplomatic intent'); END");
+            Statement insert(db_,"INSERT INTO sg_colony_diplomatic_intent "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)");
+            insert.i64(1,static_cast<sqlite3_int64>(id));
+            insert.i64(2,static_cast<sqlite3_int64>(generation));
+            insert.text(3,std::to_string(world.state_hash()));
+            insert.i64(4,static_cast<sqlite3_int64>(world.tick()));
+            insert.text(5,std::to_string(source));insert.text(6,std::to_string(d.leader_id));
+            insert.i64(7,agenda);insert.i64(8,static_cast<sqlite3_int64>(contact));
+            insert.text(9,std::to_string(d.target_ship));insert.text(10,std::to_string(d.target_owner));
+            insert.i64(11,static_cast<sqlite3_int64>(d.relation_event_id));
+            insert.i64(12,d.relation_score);
+            insert.i64(13,static_cast<int>(d.motive));insert.i64(14,static_cast<int>(d.posture));
+            insert.i64(15,static_cast<int>(d.source_risk));insert.execute();
+            run(db_,"COMMIT");
+            return d;
+        }catch(...){sqlite3_exec(db_,"ROLLBACK",nullptr,nullptr,nullptr);throw;}
+    }
+    void verify_colony_diplomatic_intents(std::uint64_t max_generation) const{
+        Statement exists(db_,"SELECT 1 FROM sqlite_master WHERE type='table' "
+            "AND name='sg_colony_diplomatic_intent'");
+        if(!exists.row())return;
+        for(const auto* guard:{"sg_diplomatic_intent_no_update",
+                               "sg_diplomatic_intent_no_delete"}){
+            Statement check(db_,"SELECT 1 FROM sqlite_master WHERE type='trigger' "
+                "AND name=?");
+            check.text(1,guard);
+            if(!check.row() || check.row())
+                throw std::runtime_error("missing immutable diplomatic intent guard");
+        }
+        Statement rows(db_,"SELECT event_id,world_generation,world_hash,tick,"
+            "colony,leader,agenda_event,contact_event,target_ship,target_owner,"
+            "relation_event,relation_score,motive,posture,risk "
+            "FROM sg_colony_diplomatic_intent");
+        while(rows.row()){
+            const auto id=sqlite3_column_int64(rows.get(),0);
+            const auto gen=sqlite3_column_int64(rows.get(),1);
+            const auto hash=sqlite_str(rows.get(),2);
+            const auto tick=sqlite3_column_int64(rows.get(),3);
+            const auto colony=parse_u64(sqlite3_column_text(rows.get(),4));
+            const auto leader=parse_u64(sqlite3_column_text(rows.get(),5));
+            const auto agenda=sqlite3_column_int64(rows.get(),6);
+            const auto contact=sqlite3_column_int64(rows.get(),7);
+            const auto target=parse_u64(sqlite3_column_text(rows.get(),8));
+            const auto owner=parse_u64(sqlite3_column_text(rows.get(),9));
+            const auto relation=sqlite3_column_int64(rows.get(),10);
+            const auto score=sqlite3_column_int(rows.get(),11);
+            const auto motive=sqlite3_column_int(rows.get(),12);
+            const auto posture=sqlite3_column_int(rows.get(),13);
+            const auto risk=sqlite3_column_int(rows.get(),14);
+            if(id<1 || gen<1 || static_cast<std::uint64_t>(gen)>max_generation ||
+               tick<0 || !colony || !leader || agenda<1 || contact<1 ||
+               !target || !owner || relation<0 || score< -100 || score>100)
+                throw std::runtime_error("malformed historical diplomatic intent");
+            const auto past=effective_governance(
+                colony,static_cast<std::uint64_t>(gen));
+            const auto original_agenda=static_cast<sqlite3_int64>(
+                past.event_id?past.event_id:past.founding_event_id);
+            if(past.leader_id!=leader || original_agenda!=agenda)
+                throw std::runtime_error("diplomatic decision forged former government");
+            Statement old(db_,"SELECT 1 FROM sqlite_master WHERE type='table' "
+                "AND name='sg_colony_conflict_intent'");
+            if(old.row()){
+                Statement used(db_,"SELECT 1 FROM sg_colony_conflict_intent "
+                    "WHERE contact_event=?");
+                used.i64(1,contact);
+                if(used.row())throw std::runtime_error("strategic double use of contact");
+            }
+            Statement snapshot(db_,"SELECT state,checksum FROM snapshots "
+                "WHERE generation=?");
+            snapshot.i64(1,gen);
+            if(!snapshot.row())throw std::runtime_error("diplomacy snapshot pruned");
+            const auto* bytes=sqlite3_column_blob(snapshot.get(),0);
+            const auto len=sqlite3_column_bytes(snapshot.get(),0);
+            if(!bytes || len<=0 || len>16*1024*1024)
+                throw std::runtime_error("diplomacy snapshot malformed");
+            const auto w=Simulation::from_snapshot(std::string(
+                static_cast<const char*>(bytes),static_cast<std::size_t>(len)));
+            if(w.state_hash()!=parse_u64(sqlite3_column_text(snapshot.get(),1)) ||
+               std::to_string(w.state_hash())!=hash ||
+               w.tick()!=static_cast<std::uint64_t>(tick) || snapshot.row())
+                throw std::runtime_error("diplomatic intent lost original world");
+            const auto recomputed=assess_colony_diplomacy(
+                w,static_cast<std::uint64_t>(gen),colony,
+                static_cast<std::uint64_t>(contact));
+            if(recomputed.leader_id!=leader || recomputed.target_ship!=target ||
+               recomputed.target_owner!=owner ||
+               recomputed.relation_event_id!=static_cast<std::uint64_t>(relation) ||
+               recomputed.relation_score!=score ||
+               static_cast<int>(recomputed.motive)!=motive ||
+               static_cast<int>(recomputed.posture)!=posture ||
+               static_cast<int>(recomputed.source_risk)!=risk)
+                throw std::runtime_error("historical diplomatic intent changed");
+        }
+    }
+    void verify_colony_response(const Simulation& state,std::uint64_t gen) const {
+        colony_safety::journal::verify(db_,state,gen);
+    }
+    std::uint64_t colony_response_event_count() const {
+        return colony_safety::journal::event_count(db_);
+    }
     Store(const Store&) = delete;
     Store& operator=(const Store&) = delete;
 
+    colony_family::Audit audit_colony_family_departure(
+            const Simulation& world,const colony_family::DeparturePlan& request) const {
+        return colony_family::assess(world,db_,request);
+    }
+    bool prepare_colony_family_departure(
+            const Simulation& world,std::uint64_t generation,
+            const colony_family::DeparturePlan& plan,FailPoint fail){
+        if(!plan.intent_id || plan.intent_id>=static_cast<std::uint64_t>(std::numeric_limits<sqlite3_int64>::max()) ||
+           !plan.expected_world_generation ||
+           plan.expected_world_generation!=generation)return false;
+        const auto encode_adults=[&](){
+            std::string out;
+            for(auto id:plan.adult_ids){
+                if(!out.empty())out.push_back(',');
+                out+=std::to_string(id);
+            }
+            return out;
+        };
+        const auto encode_children=[&](){
+            std::string out;
+            for(const auto& c:plan.children){
+                if(!out.empty())out.push_back(',');
+                out+=std::to_string(c.child_id);
+                out.push_back(':');out+=std::to_string(c.guardian_id);
+            }
+            return out;
+        };
+        const auto adults=encode_adults(),children=encode_children();
+        run(db_,"BEGIN IMMEDIATE");
+        try {
+            if(latest_generation(db_)!=generation)
+                throw std::runtime_error("family preparation stale canonical world generation");
+            const auto audited=colony_family::assess(world,db_,plan);
+            if(!audited.ready_for_transaction){
+                run(db_,"ROLLBACK");
+                return false;
+            }
+            // This is a PREPARED manifest, never an executed relocation.
+            // Triggers protect against accidental rewriting of witnessed data.
+            run(db_,"CREATE TABLE IF NOT EXISTS sg_colony_family_departure_prepare("
+                    "intent_id TEXT PRIMARY KEY, generation INTEGER NOT NULL CHECK(generation>0),"
+                    "world_hash TEXT NOT NULL, source TEXT NOT NULL, receiver TEXT NOT NULL,"
+                    "family_scope TEXT NOT NULL, family_seed TEXT NOT NULL,"
+                    "adult_roster TEXT NOT NULL, child_guardians TEXT NOT NULL,"
+                    "status INTEGER NOT NULL CHECK(status=1))");
+            run(db_,"CREATE TRIGGER IF NOT EXISTS sg_colony_family_prepare_no_update "
+                    "BEFORE UPDATE ON sg_colony_family_departure_prepare "
+                    "BEGIN SELECT RAISE(ABORT,'prepared family evidence is immutable'); END");
+            run(db_,"CREATE TRIGGER IF NOT EXISTS sg_colony_family_prepare_no_delete "
+                    "BEFORE DELETE ON sg_colony_family_departure_prepare "
+                    "BEGIN SELECT RAISE(ABORT,'prepared family evidence is immutable'); END");
+            const auto id=std::to_string(plan.intent_id);
+            const auto hash=std::to_string(world.state_hash());
+            const auto source=std::to_string(plan.source);
+            const auto receiver=std::to_string(plan.receiver);
+            const auto seed=std::to_string(plan.family_seed);
+            Statement prior(db_,"SELECT generation,world_hash,source,receiver,family_scope,"
+                "family_seed,adult_roster,child_guardians,status "
+                "FROM sg_colony_family_departure_prepare WHERE intent_id=?");
+            prior.text(1,id);
+            if(prior.row()){
+                const bool identical=
+                    sqlite3_column_int64(prior.get(),0)==static_cast<sqlite3_int64>(generation) &&
+                    sqlite_str(prior.get(),1)==hash &&
+                    sqlite_str(prior.get(),2)==source &&
+                    sqlite_str(prior.get(),3)==receiver &&
+                    sqlite_str(prior.get(),4)==plan.family_scope &&
+                    sqlite_str(prior.get(),5)==seed &&
+                    sqlite_str(prior.get(),6)==adults &&
+                    sqlite_str(prior.get(),7)==children &&
+                    sqlite3_column_int(prior.get(),8)==1 &&
+                    !prior.row();
+                run(db_,"COMMIT");
+                return identical;
+            }
+            Statement insert(db_,"INSERT INTO sg_colony_family_departure_prepare "
+                "VALUES(?,?,?,?,?,?,?,?,?,1)");
+            insert.text(1,id);
+            insert.i64(2,static_cast<std::int64_t>(generation));
+            insert.text(3,hash);
+            insert.text(4,source);
+            insert.text(5,receiver);
+            insert.text(6,plan.family_scope);
+            insert.text(7,seed);
+            insert.text(8,adults);
+            insert.text(9,children);
+            insert.execute();
+            if(fail==FailPoint::AfterReceiptWrite || fail==FailPoint::AfterSnapshotWrite)
+                throw std::runtime_error("injected family preparation crash before commit");
+            run(db_,"COMMIT");
+            return true;
+        }catch(...){
+            sqlite3_exec(db_,"ROLLBACK",nullptr,nullptr,nullptr);
+            throw;
+        }
+    }
+    // An ART02 child enters the physical world only when the existing birth
+    // registry and the independently witnessed world-birth bridge agree.
+    // Call under the SAME SQLite writer transaction as the new world event.
+    void verify_physical_dependent_birth(const Simulation& world,
+        const Command& c,const std::string& scope,std::uint64_t seed) const {
+        if(!c.transport_id || c.transport_id<(1ULL<<62) ||
+           c.passenger_ids.size()!=1 || !c.passenger_ids.front() ||
+           !c.actor || c.actor!=c.target || scope.empty() || !seed)
+            throw std::runtime_error("invalid dependent registration identity");
+        if(world.physical_dependents().count(c.transport_id) ||
+           world.npc_records().count(c.transport_id) ||
+           world.npc_casualties().count(c.transport_id))
+            throw std::runtime_error("dependent already physically registered");
+        const auto guardian=world.npc_records().find(c.passenger_ids.front());
+        if(guardian==world.npc_records().end() ||
+           guardian->second.location!=c.actor ||
+           guardian->second.home_ship!=c.actor || guardian->second.transport_id)
+            throw std::runtime_error("dependent guardian lacks physical residence");
+        Statement bridge(db_,"SELECT event_id,parent_a,parent_b,family_scope FROM "
+                             "sg_med_society_birth WHERE child_id=? AND home_ship=?");
+        bridge.text(1,std::to_string(c.transport_id));
+        bridge.text(2,std::to_string(c.actor));
+        if(!bridge.row())throw std::runtime_error("dependent birth has no world bridge");
+        const auto birth_event=sqlite_str(bridge.get(),0);
+        const auto parent_a=parse_u64(sqlite3_column_text(bridge.get(),1));
+        const auto parent_b=parse_u64(sqlite3_column_text(bridge.get(),2));
+        if(sqlite_str(bridge.get(),3)!=scope || bridge.row())
+            throw std::runtime_error("dependent birth bridge family scope conflict");
+        Statement natal(db_,"SELECT parent_a,parent_b,settlement FROM npc_family_births "
+                            "WHERE scope=? AND event_id=? AND child_id=?");
+        natal.text(1,scope);natal.text(2,birth_event);
+        natal.text(3,std::to_string(c.transport_id));
+        if(!natal.row() ||
+           parse_u64(sqlite3_column_text(natal.get(),0))!=parent_a ||
+           parse_u64(sqlite3_column_text(natal.get(),1))!=parent_b ||
+           parse_u64(sqlite3_column_text(natal.get(),2))!=c.actor ||
+           natal.row())
+            throw std::runtime_error("world/ART02 original parent records diverge");
+        Statement deceased(db_,"SELECT 1 FROM npc_family_deaths "
+            "WHERE scope=? AND npc_id=? LIMIT 1");
+        deceased.text(1,scope);deceased.text(2,std::to_string(c.transport_id));
+        if(deceased.row())throw std::runtime_error("cannot register deceased dependent");
+        if(has_dependent_table()){
+            Statement ferry(db_,"SELECT 1 FROM sg_dependent_travel WHERE child_id=? "
+                                 "AND status=1 LIMIT 1");
+            ferry.text(1,std::to_string(c.transport_id));
+            if(ferry.row())throw std::runtime_error("cannot register child aboard an active ferry");
+        }
+        NpcAppearanceStore family(db_,scope,seed,
+            [&](std::uint64_t id){return world.npc_records().count(id)!=0;});
+        if(family.current_residence(c.transport_id)!=c.actor ||
+           family.current_residence(c.passenger_ids.front())!=c.actor)
+            throw std::runtime_error("child/guardian census location mismatch");
+        const auto lawful=family.current_nonparent_guardian(c.transport_id);
+        if(lawful ? lawful!=c.passenger_ids.front() :
+           (parent_a!=c.passenger_ids.front() && parent_b!=c.passenger_ids.front()))
+            throw std::runtime_error("not the child's legally recorded guardian");
+    }
+    void verify_physical_dependent_authority(const Simulation& world) const{
+        Statement tables(db_,"SELECT 1 FROM sqlite_master WHERE type='table' "
+            "AND name='sg_colony_physical_child_authority'");
+        if(!tables.row()){
+            if(!world.physical_dependents().empty())
+                throw std::runtime_error("physical child exists without durable birth authority table");
+            return;
+        }
+        for(const auto& [id,d]:world.physical_dependents()){
+            Statement auth(db_,"SELECT command_id,guardian_id,home_ship FROM "
+                "sg_colony_physical_child_authority WHERE child_id=?");
+            auth.text(1,std::to_string(id));
+            if(!auth.row() ||
+               parse_u64(sqlite3_column_text(auth.get(),0))!=d.registration_command ||
+               parse_u64(sqlite3_column_text(auth.get(),1))!=d.guardian_id)
+                throw std::runtime_error("physical dependent lacks immutable birth authority");
+            const auto original_home=parse_u64(sqlite3_column_text(auth.get(),2));
+            if(auth.row())throw std::runtime_error("duplicate physical birth authority");
+            if(original_home!=d.home_ship){
+                // The registration remains immutable at its ORIGINAL home.
+                // A real v60 physical transfer is separately witnessed by
+                // the entire family evacuation and its ART02 member receipt.
+                Statement moved(db_,"SELECT e.source,e.receiver,m.guardian_id "
+                    "FROM sg_colony_family_evacuation_member m "
+                    "JOIN sg_colony_family_evacuation e ON e.command_id=m.command_id "
+                    "WHERE m.person_id=? AND m.kind=1");
+                moved.text(1,std::to_string(id));
+                if(!moved.row() ||
+                   parse_u64(sqlite3_column_text(moved.get(),0))!=original_home ||
+                   parse_u64(sqlite3_column_text(moved.get(),1))!=d.home_ship ||
+                   parse_u64(sqlite3_column_text(moved.get(),2))!=d.guardian_id ||
+                   moved.row())
+                    throw std::runtime_error("child home changed without verified evacuation receipt");
+            }
+        }
+    }
     bool has_dependent_table() const {
         Statement t(db_,"SELECT 1 FROM sqlite_master WHERE type='table' "
                         "AND name='sg_dependent_travel'");
         return t.row();
+    }
+    // Whole-colony adult departure cannot silently orphan any known ART02
+    // dependent or world-recorded birth. Historical child links are refused
+    // conservatively until a complete guardian+births closure adapter exists.
+    bool has_child_or_dependent_link(EntityId scope) const {
+        const auto key=std::to_string(scope);
+        if(has_dependent_table()){
+            Statement child(db_,"SELECT 1 FROM sg_dependent_travel "
+                                 "WHERE ferry=? OR origin=? OR destination=? LIMIT 1");
+            child.text(1,key);child.text(2,key);child.text(3,key);
+            if(child.row())return true;
+        }
+        Statement table(db_,"SELECT 1 FROM sqlite_master "
+                             "WHERE type='table' AND name='sg_med_society_birth'");
+        if(table.row()){
+            Statement birth(db_,"SELECT 1 FROM sg_med_society_birth WHERE home_ship=? LIMIT 1");
+            birth.text(1,key);
+            if(birth.row())return true;
+        }
+        return false;
+    }
+    // DOCK-03: a shore-duty worker is a named person, not the entire colony.
+    // A family elsewhere on the ship must not block unrelated adults from
+    // taking local work. Parents/guardians with recorded dependents remain
+    // ineligible until a separate same-berth caregiver policy is implemented.
+    bool named_worker_has_dependent_link(std::uint64_t npc) const {
+        if(!npc)return true;
+        const auto key=std::to_string(npc);
+        Statement births(db_,"SELECT 1 FROM sqlite_master "
+                              "WHERE type='table' AND name='sg_med_society_birth'");
+        if(births.row()){
+            Statement p(db_,"SELECT 1 FROM sg_med_society_birth "
+                             "WHERE parent_a=? OR parent_b=? LIMIT 1");
+            p.text(1,key);p.text(2,key);
+            if(p.row())return true;
+        }
+        if(has_dependent_table()){
+            bool paired=false;
+            {Statement cols(db_,"PRAGMA table_info(sg_dependent_travel)");
+             while(cols.row())
+                 if(sqlite_str(cols.get(),1)=="co_guardian_id")paired=true;}
+            if(paired){
+                Statement guardian(db_,"SELECT 1 FROM sg_dependent_travel "
+                                      "WHERE guardian_id=? OR co_guardian_id=? LIMIT 1");
+                guardian.text(1,key);guardian.text(2,key);
+                if(guardian.row())return true;
+            }else{
+                Statement guardian(db_,"SELECT 1 FROM sg_dependent_travel "
+                                      "WHERE guardian_id=? LIMIT 1");
+                guardian.text(1,key);
+                if(guardian.row())return true;
+            }
+        }
+        Statement table(db_,"SELECT 1 FROM sqlite_master WHERE type='table' "
+                             "AND name='sg_colony_physical_child_authority'");
+        if(table.row()){
+            Statement guard(db_,"SELECT 1 FROM sg_colony_physical_child_authority "
+                                "WHERE guardian_id=? LIMIT 1");
+            guard.text(1,key);
+            if(guard.row())return true;
+        }
+        return false;
     }
     std::int64_t active_dependent_berths(EntityId ferry) const {
         if(!has_dependent_table())return 0;
@@ -1250,6 +4148,360 @@ public:
                     throw std::runtime_error("SQLite: duplicate/unknown command in operation journal");
             }
         }
+        // A native NPC flight command is emitted INSIDE a trusted world tick.
+        // Its separate immutable companion row and normal receipt must agree
+        // with the original step hash, source flight, pilot and command ID.
+        // Historic snapshots may be pruned; a source-bound digest survives.
+        {
+            Statement native(db_,"SELECT id,generation,command,pilot,world_hash,digest "
+                "FROM sg_native_npc_commands ORDER BY generation,id");
+            while(native.row()){
+                const auto id=parse_u64(sqlite3_column_text(native.get(),0));
+                const auto g=sqlite3_column_int64(native.get(),1);
+                if(g<=1 || !restored.has_command_id(id))
+                    throw std::runtime_error("SQLite: invalid original NPC admission row");
+                const auto command=sqlite_str(native.get(),2);
+                const auto c=decode_command(command);
+                const auto pilot=parse_u64(sqlite3_column_text(native.get(),3));
+                const auto world_hash=sqlite_str(native.get(),4);
+                const auto digest=sqlite_str(native.get(),5);
+                constexpr std::uint64_t tag=std::uint64_t{1}<<61;
+                const auto flight_id=(c.id & ~tag)>>9;
+                const auto seq=c.id & 511;
+                if(c.id!=id || !(id & tag) || (id & (std::uint64_t{1}<<62)) ||
+                   !flight_id || flight_id>=(std::uint64_t{1}<<40) || !seq ||
+                   id!=(tag|(flight_id<<9)|seq) || c.sequence!=id ||
+                   (c.action!=Action::Thrust &&
+                    c.action!=Action::RequestDock &&
+                    c.action!=Action::RequestUndock) || !pilot)
+                    throw std::runtime_error("SQLite: forged native flight identity");
+                const auto signed_body=std::to_string(id)+"|"+
+                    std::to_string(g)+"|"+command+"|"+
+                    std::to_string(pilot)+"|"+world_hash;
+                if(digest!=social_digest("original-npc-flight-v1",signed_body))
+                    throw std::runtime_error("SQLite: native flight immutable provenance altered");
+                Statement source(db_,"SELECT kind,state_hash FROM operation_log "
+                    "WHERE generation=?");
+                source.i64(1,g);
+                if(!source.row() || sqlite3_column_int(source.get(),0)!=2 ||
+                   sqlite_str(source.get(),1)!=world_hash || source.row())
+                    throw std::runtime_error("SQLite: native flight missing original writer step");
+                Statement rec(db_,"SELECT accepted_generation FROM receipts WHERE id=?");
+                rec.text(1,std::to_string(id));
+                if(!rec.row() || sqlite3_column_int64(rec.get(),0)!=g || rec.row())
+                    throw std::runtime_error("SQLite: native flight receipt generation mismatch");
+                const auto flight=restored.npc_flight_orders().find(flight_id);
+                if(flight==restored.npc_flight_orders().end() ||
+                   flight->second.owner!=c.issuer ||
+                   flight->second.ship!=c.actor ||
+                   flight->second.pilot_npc!=pilot ||
+                   (flight->second.mode!=NpcFlightMode::LocalDock &&
+                    flight->second.mode!=NpcFlightMode::LocalRendezvous) ||
+                   flight->second.local_commands<seq)
+                    throw std::runtime_error("SQLite: native flight absent from original crew lineage");
+                if(!journal_commands.emplace(id,c).second)
+                    throw std::runtime_error("SQLite: duplicate autonomous command history");
+            }
+        }
+        // Native NPC flight controls are submitted from within a committed
+        // original simulation STEP. Unlike external submits, they have no
+        // kind=1 operation_log row. Bind each one to its immutable SQLite
+        // origin, exact step hash/tick, original flight identity and acceptance
+        // receipt before using it as historical action provenance.
+        {
+            Statement exists(db_,"SELECT 1 FROM sqlite_master WHERE type='table' "
+                "AND name='sg_native_flight_controls'");
+            if(exists.row()){
+                Statement native(db_,"SELECT id,generation,flight_id,"
+                    "original_command,snapshot_hash,digest "
+                    "FROM sg_native_flight_controls ORDER BY generation,id");
+                constexpr std::uint64_t tag=std::uint64_t{1}<<61;
+                while(native.row()){
+                    const auto id=parse_u64(sqlite3_column_text(native.get(),0));
+                    const auto gen=sqlite3_column_int64(native.get(),1);
+                    const auto flight_id=parse_u64(sqlite3_column_text(native.get(),2));
+                    const auto record=sqlite_str(native.get(),3);
+                    const auto hash=sqlite_str(native.get(),4);
+                    const auto command=decode_command(record);
+                    const auto order=restored.npc_flight_orders().find(flight_id);
+                    if(gen<=1 || static_cast<std::uint64_t>(gen)>generation ||
+                       !(id&tag) || id!=command.id ||
+                       ((id&~tag)>>9)!=flight_id || !(id&511ULL) ||
+                       command.sequence!=id || command.amount ||
+                       command.transport_id || !command.passenger_ids.empty() ||
+                       command.secondary_receiver || command.secondary_transport ||
+                       (command.action!=Action::Thrust &&
+                        command.action!=Action::RequestDock &&
+                        command.action!=Action::RequestUndock) ||
+                       order==restored.npc_flight_orders().end() ||
+                       order->second.local_commands<(id&511ULL) ||
+                       order->second.owner!=command.issuer ||
+                       order->second.ship!=command.actor ||
+                       (order->second.mode!=NpcFlightMode::LocalDock &&
+                        order->second.mode!=NpcFlightMode::LocalRendezvous) ||
+                       !restored.has_command_id(id))
+                        throw std::runtime_error(
+                            "SQLite: native flight command lacks original authority");
+                    Statement source(db_,"SELECT kind,state_hash,tick FROM operation_log "
+                        "WHERE generation=?");
+                    source.i64(1,gen);
+                    if(!source.row() || sqlite3_column_int(source.get(),0)!=2 ||
+                       sqlite_str(source.get(),1)!=hash ||
+                       command.execute_tick!=
+                           static_cast<std::uint64_t>(
+                               sqlite3_column_int64(source.get(),2))+1 ||
+                       source.row())
+                        throw std::runtime_error(
+                            "SQLite: native command has no original STEP/hash");
+                    Statement accepted(db_,"SELECT accepted_generation FROM receipts WHERE id=?");
+                    accepted.text(1,std::to_string(id));
+                    if(!accepted.row() ||
+                       sqlite3_column_int64(accepted.get(),0)!=gen ||
+                       accepted.row())
+                        throw std::runtime_error(
+                            "SQLite: native flight acceptance receipt missing");
+                    const auto body=std::to_string(id)+"|"+std::to_string(gen)+"|"+
+                        std::to_string(flight_id)+"|"+record+"|"+hash;
+                    if(sqlite_str(native.get(),5)!=
+                           social_digest("native-flight-01",body) ||
+                       !journal_commands.emplace(id,command).second)
+                        throw std::runtime_error(
+                            "SQLite: forged or duplicate native flight command");
+                }
+            }
+        }
+        // WO2-I: original SQLite accepted-command history proves the exact
+        // shop, owner, worker and bounded window of every surviving shift.
+        // The shift may expire without an extra command, but its source
+        // admission must never be faked or reassigned in a snapshot.
+        for(const auto& [site,shop]:restored.workshops()){
+            // A pending shift cancellation is evidence of a real owner
+            // cancellation command, never an arbitrary skipped appointment.
+            for(const auto canceled:shop.cancelled_pending_shifts){
+                const auto original=journal_commands.find(canceled);
+                bool cancellation_proven=false;
+                if(original!=journal_commands.end() &&
+                   original->second.action==Action::StartWorkshopShift &&
+                   original->second.target==site &&
+                   original->second.actor==shop.source_ship){
+                    for(const auto& [id,command]:journal_commands){
+                        const auto receipt=event_by_id.find(id);
+                        if(command.action==Action::CancelWorkshopShift &&
+                           command.actor==shop.source_ship &&
+                           command.target==site &&
+                           command.thrust_x==original->second.thrust_x &&
+                           command.amount==static_cast<std::int64_t>(canceled) &&
+                           receipt!=event_by_id.end() &&
+                           receipt->second.result==Outcome::Applied &&
+                           receipt->second.tick<original->second.execute_tick){
+                            cancellation_proven=true;break;
+                        }
+                    }
+                }
+                if(!cancellation_proven)
+                    throw std::runtime_error("SQLite: workshop pending cancellation lacks original owner receipt");
+            }
+            for(unsigned slot=0;slot<2;++slot){
+                const auto& shift=shop.shifts[slot];
+                if(!shift.command_id)continue;
+                const auto it=journal_commands.find(shift.command_id);
+                const auto ev=event_by_id.find(shift.command_id);
+                const auto* ship=restored.find(shop.source_ship);
+                if(it==journal_commands.end() || ev==event_by_id.end() ||
+                   it->second.action!=Action::StartWorkshopShift ||
+                   !ship || it->second.issuer!=ship->owner_id ||
+                   it->second.actor!=shop.source_ship ||
+                   it->second.target!=site ||
+                   it->second.thrust_x!=static_cast<int>(slot+1) ||
+                   it->second.execute_tick!=shift.start_tick ||
+                   it->second.thrust_y<1 ||
+                   shift.end_tick-shift.start_tick!=
+                     static_cast<std::uint64_t>(it->second.thrust_y) ||
+                   ev->second.tick!=shift.start_tick ||
+                   ev->second.result!=Outcome::Applied ||
+                   ev->second.transferred!=0)
+                    throw std::runtime_error("SQLite: original workshop shift proof mismatch");
+                // A newly relieved shift retains its first worker in the
+                // original Start command. The current worker must instead
+                // match the *latest* real applied, same-owner relief receipt.
+                std::uint64_t last_relief=0,last_relief_tick=0;
+                std::set<std::uint64_t> seen_relief_ticks;
+                std::uint64_t current_worker=static_cast<std::uint64_t>(it->second.amount);
+                for(const auto& [id,change]:journal_commands){
+                    if(change.action!=Action::RelieveWorkshopShift ||
+                       change.amount!=static_cast<std::int64_t>(shift.command_id) ||
+                       change.target!=site ||
+                       change.thrust_x!=static_cast<int>(slot+1))continue;
+                    const auto applied=event_by_id.find(id);
+                    if(applied==event_by_id.end() ||
+                       applied->second.result!=Outcome::Applied)continue;
+                    if(change.issuer!=ship->owner_id ||
+                       change.actor!=shop.source_ship ||
+                       change.thrust_y<1 || change.thrust_y>1000000 ||
+                       change.execute_tick<=shift.start_tick ||
+                       change.execute_tick>=shift.end_tick ||
+                       applied->second.tick!=change.execute_tick ||
+                       applied->second.transferred!=0 ||
+                       !seen_relief_ticks.insert(change.execute_tick).second)
+                        throw std::runtime_error("SQLite: workshop relief contradicted original owner or chronology");
+                    // Command IDs need not increase with tick order.
+                    // The event's applied tick, not its arbitrary ID, orders
+                    // the latest authoritative replacement.
+                    if(change.execute_tick>last_relief_tick){
+                        last_relief=id;
+                        last_relief_tick=change.execute_tick;
+                        current_worker=static_cast<std::uint64_t>(change.thrust_y);
+                    }
+                }
+                if(last_relief!=shift.relief_command_id ||
+                   current_worker!=shift.worker)
+                    throw std::runtime_error("SQLite: workshop current worker lacks latest relief proof");
+            }
+        }
+        // Latest real appointed manager is derived from immutable ORIGINAL
+        // journal + Applied ticks. A superseded or revoked manager's older
+        // receipt cannot be reused to forge an active mentor or job policy.
+        const auto latest_workshop_appointment=[&](
+            EntityId site,std::uint64_t until_tick,bool inclusive){
+            std::uint64_t last_id=0,last_tick=0;
+            for(const auto& [id,order]:journal_commands){
+                if(order.action!=Action::AppointWorkshopSupervisor ||
+                   order.target!=site)continue;
+                const auto effect=event_by_id.find(id);
+                if(effect==event_by_id.end() ||
+                   effect->second.result!=Outcome::Applied)continue;
+                const auto tick=effect->second.tick;
+                if(tick>until_tick || (!inclusive && tick==until_tick))continue;
+                if(tick==last_tick && last_id)
+                    throw std::runtime_error("SQLite: ambiguous same-tick workshop manager");
+                if(tick>last_tick){last_tick=tick;last_id=id;}
+            }
+            return last_id;
+        };
+        // WO2-J: the installed shop supervisor and bounded owner-approved
+        // batch program must point to original applied owner commands.
+        for(const auto& [site,shop]:restored.workshops()){
+            const auto* ship=restored.find(shop.source_ship);
+            if(shop.supervisor_npc_id){
+                const auto app=journal_commands.find(shop.supervisor_appointment_id);
+                const auto ev=event_by_id.find(shop.supervisor_appointment_id);
+                if(!ship || app==journal_commands.end() ||
+                   ev==event_by_id.end() ||
+                   app->second.action!=Action::AppointWorkshopSupervisor ||
+                   app->second.amount!=static_cast<std::int64_t>(shop.supervisor_npc_id) ||
+                   app->second.actor!=shop.source_ship ||
+                   app->second.target!=site ||
+                   app->second.issuer!=ship->owner_id ||
+                   app->second.thrust_x!=static_cast<int>(shop.supervisor_trade) ||
+                   ev->second.result!=Outcome::Applied ||
+                   ev->second.tick!=app->second.execute_tick ||
+                   ev->second.transferred!=0 ||
+                   latest_workshop_appointment(site,restored.tick(),true)!=
+                       shop.supervisor_appointment_id)
+                    throw std::runtime_error("SQLite: supervisor missing current original owner appointment");
+            }
+            for(unsigned slot=0;slot<2;++slot){
+                const auto& job=shop.approved_jobs[slot];
+                if(!job.command_id)continue;
+                const auto order=journal_commands.find(job.command_id);
+                const auto ev=event_by_id.find(job.command_id);
+                if(!ship || order==journal_commands.end() ||
+                   ev==event_by_id.end() ||
+                   order->second.action!=Action::ApproveWorkshopJob ||
+                   order->second.actor!=shop.source_ship ||
+                   order->second.target!=site ||
+                   order->second.issuer!=ship->owner_id ||
+                   order->second.thrust_x!=static_cast<int>(slot+1) ||
+                   order->second.amount!=static_cast<std::int64_t>(job.target_batches) ||
+                   (shop.supervisor_npc_id &&
+                    (job.supervisor_appointment_id!=shop.supervisor_appointment_id ||
+                     job.supervisor_npc_id!=shop.supervisor_npc_id)) ||
+                   ev->second.tick!=order->second.execute_tick ||
+                   ev->second.tick!=job.approved_tick ||
+                   ev->second.result!=Outcome::Applied ||
+                   ev->second.transferred!=0)
+                    throw std::runtime_error("SQLite: job missing original owner approval");
+                // Supervisor withdrawal does not erase the owner's quota.
+                // Independently prove the original prior appointment even
+                // when the active manager slot is empty/suspended.
+                const auto app=journal_commands.find(job.supervisor_appointment_id);
+                const auto appointment=event_by_id.find(job.supervisor_appointment_id);
+                if(app==journal_commands.end() || appointment==event_by_id.end() ||
+                   app->second.action!=Action::AppointWorkshopSupervisor ||
+                   app->second.actor!=shop.source_ship ||
+                   app->second.issuer!=ship->owner_id ||
+                   app->second.target!=site ||
+                   app->second.amount!=static_cast<std::int64_t>(job.supervisor_npc_id) ||
+                   app->second.thrust_x!=static_cast<int>(slot+1) ||
+                   appointment->second.result!=Outcome::Applied ||
+                   appointment->second.tick!=app->second.execute_tick ||
+                   appointment->second.tick>=job.approved_tick ||
+                   latest_workshop_appointment(site,job.approved_tick,false)!=
+                       job.supervisor_appointment_id)
+                    throw std::runtime_error("SQLite: suspended job has no genuine supervisor provenance");
+            }
+        }
+        // WO2-H/J: original SQLite accepted-command history proves the exact
+        // worker, trade, supervisor and site of each qualification. Matching any generic
+        // Applied event is NOT enough to fabricate a credential for another NPC.
+        std::set<std::uint64_t> verified_training;
+        const auto verify_training=[&](const NpcRecord& npc) {
+            for(const auto& credit:npc.industrial_training){
+                const auto command=journal_commands.find(credit.command_id);
+                const auto applied=event_by_id.find(credit.command_id);
+                if(!verified_training.insert(credit.command_id).second ||
+                   command==journal_commands.end() ||
+                   (command->second.action!=Action::TrainWorkshopTrade &&
+                    command->second.action!=Action::MentorWorkshopTrade) ||
+                   command->second.issuer==Simulation::kServerAuthority ||
+                   command->second.amount!=static_cast<std::int64_t>(npc.id) ||
+                   command->second.target!=credit.workshop_site ||
+                   command->second.thrust_x!=static_cast<int>(credit.trade) ||
+                   applied==event_by_id.end() ||
+                   applied->second.result!=Outcome::Applied ||
+                   applied->second.tick!=credit.tick ||
+                   applied->second.transferred!=1)
+                    throw std::runtime_error("SQLite: industrial certification contradicts original NPC command");
+                const bool mentored=command->second.action==Action::MentorWorkshopTrade;
+                if(mentored!=(credit.mentor_id!=0))
+                    throw std::runtime_error("SQLite: industrial mentorship receipt type mismatch");
+                if(mentored){
+                    const auto app=journal_commands.find(credit.supervisor_appointment_id);
+                    const auto appointment=event_by_id.find(credit.supervisor_appointment_id);
+                    if(!credit.mentor_id || !credit.supervisor_appointment_id ||
+                       app==journal_commands.end() || appointment==event_by_id.end() ||
+                       app->second.action!=Action::AppointWorkshopSupervisor ||
+                       app->second.actor!=command->second.actor ||
+                       app->second.issuer!=command->second.issuer ||
+                       app->second.target!=credit.workshop_site ||
+                       app->second.amount!=static_cast<std::int64_t>(credit.mentor_id) ||
+                       app->second.thrust_x!=static_cast<int>(credit.trade) ||
+                       appointment->second.result!=Outcome::Applied ||
+                       appointment->second.tick>=credit.tick ||
+                       appointment->second.tick!=app->second.execute_tick ||
+                       latest_workshop_appointment(credit.workshop_site,credit.tick,false)!=
+                           credit.supervisor_appointment_id)
+                        throw std::runtime_error("SQLite: forged, revoked or superseded workshop mentor appointment");
+                }else if(credit.supervisor_appointment_id)
+                    throw std::runtime_error("SQLite: solitary practice forged mentor evidence");
+            }
+        };
+        for(const auto& [id,npc]:restored.npc_records()){
+            (void)id;verify_training(npc);
+        }
+        for(const auto& [id,dead]:restored.npc_casualties()){
+            (void)id;verify_training(dead.identity);
+        }
+        for(const auto& [id,command]:journal_commands){
+            if(command.action!=Action::TrainWorkshopTrade &&
+               command.action!=Action::MentorWorkshopTrade)continue;
+            const auto event=event_by_id.find(id);
+            if(event!=event_by_id.end() && event->second.result==Outcome::Applied &&
+               !verified_training.count(id) &&
+               (restored.npc_records().count(static_cast<std::uint64_t>(command.amount)) ||
+                restored.npc_casualties().count(static_cast<std::uint64_t>(command.amount))))
+                throw std::runtime_error("SQLite: live NPC industrial qualification receipt missing");
+        }
         // GRSM-01 facts must agree with the independent transaction journal,
         // executed receipts and snapshot. A missing record is a hard error,
         // not a story the world is allowed to silently forget.
@@ -1264,13 +4516,38 @@ public:
         }
         std::map<std::uint64_t, std::uint64_t> expected_event_generation;
         {
+            // A historical kind=2 row is not necessarily a clock STEP:
+            // older native host operations (shuttle load, housing rack,
+            // handover) commit a new SQLite snapshot without advancing the
+            // original simulation tick. Only a *strictly advancing* original
+            // tick can supply immutable GRSM event provenance.
+            // Honor existing journals unchanged: never rewrite or renumber
+            // their snapshots, authority, receipt IDs or hashes.
+            std::int64_t last_tick=0;
+            if(history_start){
+                Statement boundary(db_, "SELECT tick FROM operation_log WHERE generation=?");
+                boundary.i64(1,static_cast<std::int64_t>(history_start));
+                if(!boundary.row())
+                    throw std::runtime_error("SQLite: missing historical source tick");
+                last_tick=sqlite3_column_int64(boundary.get(),0);
+                if(last_tick<0 || boundary.row())
+                    throw std::runtime_error("SQLite: invalid historical source tick");
+            }
             Statement steps(db_, "SELECT generation,tick,kind,command FROM operation_log WHERE generation>? AND kind IN (1,2) ORDER BY generation");
             steps.i64(1, static_cast<std::int64_t>(history_start));
             std::map<std::uint64_t,std::uint64_t> tick_generation;
+            // A kind=2 original-world commit can be a schema/coordinate
+            // enablement at the *same* tick, rather than an advanced game
+            // tick. Only a new tick can own historical execution receipts.
+            std::int64_t last_step_tick = 0;
             while (steps.row()) {
                 const auto g = sqlite3_column_int64(steps.get(), 0);
                 const auto tick = sqlite3_column_int64(steps.get(), 1);
                 const auto kind = sqlite3_column_int(steps.get(), 2);
+                if(g<=0 || tick<0 || tick<last_tick)
+                    throw std::runtime_error("SQLite: regressive historical step chronology");
+                const bool advanced=tick>last_tick;
+                last_tick=tick;
                 // The v52 privileged warehouse action is one atomic submit+execute
                 // entry, stored as kind=1 for legacy operation_log compatibility.
                 // Its command is replayed through a tick in the same transaction.
@@ -1280,10 +4557,26 @@ public:
                     const auto type=decode_command(reinterpret_cast<const char*>(raw)).action;
                     if(type!=Action::HostEscrowConstructedStock &&
                        type!=Action::HostReturnConstructedStock)continue;
+                    if(!advanced)
+                        throw std::runtime_error("SQLite: privileged action has no original tick");
+                }else if(!advanced) {
+                    // This is a real original host snapshot/custody commit at
+                    // the *same* tick, not a second event-generating STEP.
+                    // It still retains its own original generation/hash and
+                    // every other existing native-side custody verifier.
+                    continue;
                 }
-                if (g <= 0 || tick <= 0 || !tick_generation.emplace(static_cast<std::uint64_t>(tick),
+                if (g <= 0 || tick < 0)
+                    throw std::runtime_error("SQLite: invalid historical step generation");
+                if (kind == 2) {
+                    if (tick < last_step_tick)
+                        throw std::runtime_error("SQLite: historical tick went backwards");
+                    if (tick == last_step_tick) continue; // no simulation tick advanced
+                    last_step_tick = tick;
+                }
+                if (tick == 0 || !tick_generation.emplace(static_cast<std::uint64_t>(tick),
                     static_cast<std::uint64_t>(g)).second)
-                    throw std::runtime_error("SQLite: duplicate historical step generation");
+                    throw std::runtime_error("SQLite: duplicate advancing historical step");
             }
             for (const auto& [id,ev] : event_by_id) {
                 const auto it=tick_generation.find(ev.tick);
@@ -1335,14 +4628,17 @@ public:
         Statement ledger(db_, "SELECT command_id,tick,amount,reason,source_id,destination_id FROM resource_ledger ORDER BY id");
         bool saw_genesis = false;
         std::size_t transfers = 0;
+        std::size_t salvage_transfers = 0;
         std::size_t hangar_transfers = 0;
+        std::size_t actual_station_install=0,actual_station_process=0;
         std::size_t load_transfers = 0;
         std::size_t sale_transfers = 0;
         std::size_t refine_transfers=0, fabricate_transfers=0, build_transfers=0;
         std::size_t mineral_refine_transfers=0,material_fabricate_transfers=0;
         std::size_t life_transfers=0, farm_builds=0, farm_stock_transfers=0, habitat_builds=0, habitat_transfers=0,utility_builds=0,utility_repairs=0,utility_spare_transfers=0,community_builds=0,community_transfers=0,clinic_builds=0,clinic_transfers=0,reclaimer_builds=0,waterworks_builds=0,waterworks_transfers=0;
-        std::size_t workshop_builds=0,workshop_feeds=0,workshop_outputs=0,workshop_finisher_builds=0,workshop_final_outputs=0,workshop_stacks=0,storage_builds=0,storage_stacks=0,extra_storage_builds=0,extra_storage_stacks=0;
+        std::size_t workshop_builds=0,workshop_feeds=0,workshop_outputs=0,workshop_finisher_builds=0,workshop_final_outputs=0,workshop_stacks=0,workshop_practice=0,storage_builds=0,storage_stacks=0,extra_storage_builds=0,extra_storage_stacks=0;
         std::size_t auto_transfers = 0, auto_storage_transfers=0, storage_link_builds=0, conveyor_cells=0, world_escrows=0, world_returns=0;
+        std::size_t probe_device_transfers=0, mining_tool_transfers=0;
         std::vector<ActivityEvent> recorded_auto, recorded_storage_auto;
         for (const auto& a : restored.activity_events()) {
             if (a.kind == ActivityKind::AutoMiningTransfer) recorded_auto.push_back(a);
@@ -1358,6 +4654,56 @@ public:
                     amount != origin || sqlite3_column_int64(ledger.get(), 1) != 0)
                     throw std::runtime_error("SQLite: malformed genesis ledger entry");
                 saw_genesis = true;
+            } else if (reason=="survey_probe_deployed" ||
+                       reason=="geological_drone_deployed" ||
+                       reason=="probe_device_recovered") {
+                ++probe_device_transfers;
+                const auto id=parse_u64(sqlite3_column_text(ledger.get(),0));
+                const auto ev=event_by_id.find(id);
+                const auto cmd=journal_commands.find(id);
+                if(ev==event_by_id.end() || cmd==journal_commands.end() ||
+                   ev->second.result!=Outcome::Applied || amount!=1 ||
+                   ev->second.transferred!=1 ||
+                   ev->second.tick!=static_cast<std::uint64_t>(
+                       sqlite3_column_int64(ledger.get(),1)))
+                    throw std::runtime_error("SQLite: invalid physical probe-device receipt");
+                const auto action=cmd->second.action;
+                const bool recovered=action==Action::RecoverSurveyProbe;
+                const bool drone=action==Action::LaunchGeologicalDrone;
+                if((!recovered && !drone && action!=Action::DeploySurveyProbe) ||
+                   (recovered?reason!="probe_device_recovered":
+                    drone?reason!="geological_drone_deployed":
+                          reason!="survey_probe_deployed"))
+                    throw std::runtime_error("SQLite: probe-device reason disagrees with command");
+                const auto identity=recovered?cmd->second.target:cmd->second.id;
+                const auto ship="ship:"+std::to_string(cmd->second.actor)+":survey_probe_devices";
+                const auto probe="probe:"+std::to_string(identity)+":device";
+                if(!identity || sqlite_str(ledger.get(),4)!=(recovered?probe:ship) ||
+                   sqlite_str(ledger.get(),5)!=(recovered?ship:probe))
+                    throw std::runtime_error("SQLite: probe-device custody endpoint mismatch");
+            } else if (reason=="mining_tool_install_t" ||
+                       reason=="mining_tool_removal_t") {
+                ++mining_tool_transfers;
+                const auto id=parse_u64(sqlite3_column_text(ledger.get(),0));
+                const auto ev=event_by_id.find(id);
+                const auto cmd=journal_commands.find(id);
+                const bool install=reason=="mining_tool_install_t";
+                if(ev==event_by_id.end() || cmd==journal_commands.end() ||
+                   cmd->second.action!=Action::ConfigureMiningTool ||
+                   cmd->second.amount!=(install?1:-1) ||
+                   cmd->second.target || cmd->second.thrust_x ||
+                   cmd->second.thrust_y ||
+                   ev->second.result!=Outcome::Applied || amount!=2 ||
+                   ev->second.transferred!=2 ||
+                   ev->second.tick!=static_cast<std::uint64_t>(
+                       sqlite3_column_int64(ledger.get(),1)))
+                    throw std::runtime_error("SQLite: mining-tool custody receipt mismatch");
+                const auto ship=std::to_string(cmd->second.actor);
+                const auto module="modules:"+ship;
+                const auto installed="hardpoint:"+ship+":mining_tool";
+                if(sqlite_str(ledger.get(),4)!=(install?module:installed) ||
+                   sqlite_str(ledger.get(),5)!=(install?installed:module))
+                    throw std::runtime_error("SQLite: mining-tool physical endpoints mismatch");
             } else if (reason == "mining_transfer") {
                 ++transfers;
                 const auto id = parse_u64(sqlite3_column_text(ledger.get(), 0));
@@ -1372,6 +4718,19 @@ public:
                      std::to_string(cmd->second.target) != reinterpret_cast<const char*>(sqlite3_column_text(ledger.get(), 4)) ||
                      std::to_string(cmd->second.actor) != reinterpret_cast<const char*>(sqlite3_column_text(ledger.get(), 5))))
                     throw std::runtime_error("SQLite: mining ledger source or destination mismatch");
+            } else if (reason == "wreck_salvage_transfer") {
+                ++salvage_transfers;
+                const auto id = parse_u64(sqlite3_column_text(ledger.get(),0));
+                const auto ev = event_by_id.find(id);
+                const auto cmd = journal_commands.find(id);
+                if(ev==event_by_id.end() || cmd==journal_commands.end() ||
+                   cmd->second.action!=Action::SalvageWreck ||
+                   ev->second.result!=Outcome::Applied ||
+                   ev->second.transferred<=0 || ev->second.transferred!=amount ||
+                   ev->second.tick!=static_cast<std::uint64_t>(sqlite3_column_int64(ledger.get(),1)) ||
+                   sqlite_str(ledger.get(),4)!=std::to_string(cmd->second.target) ||
+                   sqlite_str(ledger.get(),5)!=std::to_string(cmd->second.actor))
+                    throw std::runtime_error("SQLite: salvage ledger source, destination or receipt mismatch");
             } else if (reason == "hangar_transfer") {
                 ++hangar_transfers;
                 const auto id = parse_u64(sqlite3_column_text(ledger.get(), 0));
@@ -1431,6 +4790,27 @@ public:
                     reason=="fabrication_transfer" ? "modules:" : "outpost:")+std::to_string(cmd->second.actor)!=
                       reinterpret_cast<const char*>(sqlite3_column_text(ledger.get(),5)))
                     throw std::runtime_error("SQLite: colony transformation ledger mismatch");
+            } else if(reason=="station_refinery_install_t" || reason=="station_refinery_process_kg"){
+                const bool install=reason=="station_refinery_install_t";
+                if(install)++actual_station_install;else ++actual_station_process;
+                const auto id=parse_u64(sqlite3_column_text(ledger.get(),0));
+                const auto ev=event_by_id.find(id);const auto cmd=journal_commands.find(id);
+                if(ev==event_by_id.end() || cmd==journal_commands.end() ||
+                   cmd->second.action!=(install?Action::BuildStationRefinery:Action::RefineStationOre) ||
+                   ev->second.result!=Outcome::Applied || ev->second.transferred!=amount ||
+                   amount!=(install?4:1000) ||
+                   ev->second.tick!=static_cast<std::uint64_t>(sqlite3_column_int64(ledger.get(),1)) ||
+                   sqlite3_column_type(ledger.get(),4)!=SQLITE_TEXT ||
+                   sqlite3_column_type(ledger.get(),5)!=SQLITE_TEXT)
+                    throw std::runtime_error("SQLite: station refinery applied receipt mismatch");
+                const auto& c=cmd->second;
+                const auto src=install?"modules:"+std::to_string(c.actor):
+                    "hangar:"+std::to_string(c.target)+":owner:"+std::to_string(c.issuer);
+                const auto dst=install?"station-refinery:"+std::to_string(c.target):
+                    "station-minerals:"+std::to_string(c.target)+":owner:"+std::to_string(c.issuer);
+                if(src!=reinterpret_cast<const char*>(sqlite3_column_text(ledger.get(),4)) ||
+                   dst!=reinterpret_cast<const char*>(sqlite3_column_text(ledger.get(),5)))
+                    throw std::runtime_error("SQLite: refinery physical endpoints mismatch");
             } else if (reason=="mineral_refining_kg" || reason=="material_fabrication_t"){
                 const bool refine=reason=="mineral_refining_kg";
                 if(refine)++mineral_refine_transfers;else ++material_fabricate_transfers;
@@ -1601,6 +4981,27 @@ public:
                 if(source!=reinterpret_cast<const char*>(sqlite3_column_text(ledger.get(),4)) ||
                    dest!=reinterpret_cast<const char*>(sqlite3_column_text(ledger.get(),5)))
                     throw std::runtime_error("SQLite: waterworks receipt endpoints mismatch");
+            } else if(reason=="industrial_training_practice_kg"){
+                ++workshop_practice;
+                const auto id=parse_u64(sqlite3_column_text(ledger.get(),0));
+                const auto ev=event_by_id.find(id);
+                const auto cmd=journal_commands.find(id);
+                if(ev==event_by_id.end() || cmd==journal_commands.end() ||
+                   (cmd->second.action!=Action::TrainWorkshopTrade &&
+                     cmd->second.action!=Action::MentorWorkshopTrade) ||
+                   (cmd->second.thrust_x!=1 && cmd->second.thrust_x!=2) ||
+                   cmd->second.amount<1 || cmd->second.amount>1000000 ||
+                   cmd->second.issuer==Simulation::kServerAuthority ||
+                   ev->second.result!=Outcome::Applied || ev->second.transferred!=1 ||
+                   amount!=1 ||
+                   ev->second.tick!=static_cast<std::uint64_t>(sqlite3_column_int64(ledger.get(),1)) ||
+                   sqlite3_column_type(ledger.get(),4)!=SQLITE_TEXT ||
+                   sqlite3_column_type(ledger.get(),5)!=SQLITE_TEXT ||
+                   sqlite_str(ledger.get(),4)!="workshop:"+std::to_string(cmd->second.target)+
+                       (cmd->second.thrust_x==1?":aluminum":":aluminum_panels") ||
+                   sqlite_str(ledger.get(),5)!="workshop:"+std::to_string(cmd->second.target)+
+                       ":aluminum_scrap")
+                    throw std::runtime_error("SQLite: invalid original industrial training practice receipt");
             } else if(reason=="workshop_construction_t" ||
                       reason=="workshop_feed_transfer_kg" ||
                       reason=="workshop_output_transfer_kg"){
@@ -1851,15 +5252,19 @@ public:
             throw std::runtime_error("SQLite: missing automated logistics transfers");
         if (auto_transfers != recorded_auto.size())
             throw std::runtime_error("SQLite: missing auto mining resource ledger rows");
+        std::size_t expected_probe_device_transfers=0;
+        std::size_t expected_mining_tool_transfers=0;
         std::size_t expected_transfers = 0;
+        std::size_t expected_salvage_transfers = 0;
         std::size_t expected_hangar_transfers = 0;
         std::size_t expected_load_transfers = 0;
         std::size_t expected_sale_transfers = 0;
         std::size_t expected_refine=0,expected_fabricate=0,expected_build=0;
+        std::size_t expected_station_install=0,expected_station_process=0;
         std::size_t expected_mineral_refine=0,expected_material_fabricate=0;
         std::size_t expected_life_transfers=0,expected_farm_builds=0,expected_farm_stock_transfers=0;
         std::size_t expected_habitat_builds=0, expected_habitat_transfers=0;
-        std::size_t expected_utility_builds=0,expected_utility_repairs=0,expected_utility_spares=0,expected_community_builds=0,expected_community_transfers=0,expected_clinic_builds=0,expected_clinic_transfers=0,expected_reclaimer_builds=0,expected_waterworks_builds=0,expected_waterworks_transfers=0,expected_workshop_builds=0,expected_workshop_feeds=0,expected_workshop_outputs=0,expected_workshop_finisher_builds=0,expected_workshop_final_outputs=0,expected_workshop_stacks=0,expected_storage_builds=0,expected_storage_stacks=0,expected_extra_storage_builds=0,expected_extra_storage_stacks=0,expected_link_builds=0,expected_conveyor_cells=0, expected_world_escrows=0,expected_world_returns=0;
+        std::size_t expected_utility_builds=0,expected_utility_repairs=0,expected_utility_spares=0,expected_community_builds=0,expected_community_transfers=0,expected_clinic_builds=0,expected_clinic_transfers=0,expected_reclaimer_builds=0,expected_waterworks_builds=0,expected_waterworks_transfers=0,expected_workshop_builds=0,expected_workshop_feeds=0,expected_workshop_outputs=0,expected_workshop_finisher_builds=0,expected_workshop_final_outputs=0,expected_workshop_stacks=0,expected_workshop_practice=0,expected_storage_builds=0,expected_storage_stacks=0,expected_extra_storage_builds=0,expected_extra_storage_stacks=0,expected_link_builds=0,expected_conveyor_cells=0, expected_world_escrows=0,expected_world_returns=0;
 
         for (const auto& ev : restored.events()) {
             if (ev.result != Outcome::Applied || ev.transferred <= 0) continue;
@@ -1868,10 +5273,26 @@ public:
                 // Pre-v2 snapshots can have valid mining receipts predating the
                 // operation journal. No hangar transfer existed before B5.
                 ++expected_transfers;
-            } else if (cmd->second.action == Action::Mine) ++expected_transfers;
+            } else if (cmd->second.action==Action::SurveyLocal ||
+                       cmd->second.action==Action::ScanSurveyProbe ||
+                       cmd->second.action==Action::FireTrainingWeapon ||
+                       cmd->second.action==Action::FireShipWeapon) {
+                // Observation counts and weapon damage are not physical stock transfers.
+                // Their outcome remains journaled, never forged as ore creation.
+                continue;
+            } else if (cmd->second.action==Action::DeploySurveyProbe ||
+                       cmd->second.action==Action::LaunchGeologicalDrone ||
+                       cmd->second.action==Action::RecoverSurveyProbe)
+                ++expected_probe_device_transfers;
+            else if (cmd->second.action == Action::ConfigureMiningTool)
+                ++expected_mining_tool_transfers;
+            else if (cmd->second.action == Action::Mine) ++expected_transfers;
+            else if (cmd->second.action == Action::SalvageWreck) ++expected_salvage_transfers;
             else if (cmd->second.action == Action::UnloadOre) ++expected_hangar_transfers;
             else if (cmd->second.action == Action::LoadOre) ++expected_load_transfers;
             else if (cmd->second.action == Action::SellOre) ++expected_sale_transfers;
+            else if (cmd->second.action == Action::BuildStationRefinery) ++expected_station_install;
+            else if (cmd->second.action == Action::RefineStationOre) ++expected_station_process;
             else if (cmd->second.action == Action::RefineOre) ++expected_refine;
             else if (cmd->second.action == Action::FabricateModule) ++expected_fabricate;
             else if (cmd->second.action == Action::ConstructOutpost) ++expected_build;
@@ -1896,6 +5317,8 @@ public:
             else if (cmd->second.action==Action::ConstructWorkshopFinisher) ++expected_workshop_finisher_builds;
             else if (cmd->second.action==Action::TransferWorkshopFinalOutput) ++expected_workshop_final_outputs;
             else if (cmd->second.action==Action::TransferWorkshopStack) ++expected_workshop_stacks;
+            else if (cmd->second.action==Action::TrainWorkshopTrade ||
+                     cmd->second.action==Action::MentorWorkshopTrade) ++expected_workshop_practice;
             else if (cmd->second.action==Action::HostEscrowConstructedStock) ++expected_world_escrows;
             else if (cmd->second.action==Action::HostReturnConstructedStock) ++expected_world_returns;
             else if (cmd->second.action==Action::ConstructStorage) ++expected_storage_builds;
@@ -1918,10 +5341,16 @@ public:
                static_cast<sqlite3_int64>(expected_world_returns))
                 throw std::runtime_error("SQLite: returned stock lacks factory custody proof");
         }
-        if (!saw_genesis || transfers != expected_transfers || hangar_transfers != expected_hangar_transfers ||
+        if (!saw_genesis ||
+            probe_device_transfers!=expected_probe_device_transfers ||
+            mining_tool_transfers!=expected_mining_tool_transfers ||
+            transfers != expected_transfers || salvage_transfers != expected_salvage_transfers ||
+            hangar_transfers != expected_hangar_transfers ||
             load_transfers != expected_load_transfers || sale_transfers != expected_sale_transfers ||
             refine_transfers!=expected_refine || fabricate_transfers!=expected_fabricate ||
             build_transfers!=expected_build ||
+            actual_station_install!=expected_station_install ||
+            actual_station_process!=expected_station_process ||
             mineral_refine_transfers!=expected_mineral_refine ||
             material_fabricate_transfers!=expected_material_fabricate ||
             life_transfers!=expected_life_transfers ||
@@ -1942,6 +5371,7 @@ public:
             workshop_finisher_builds!=expected_workshop_finisher_builds ||
             workshop_final_outputs!=expected_workshop_final_outputs ||
             workshop_stacks!=expected_workshop_stacks ||
+             workshop_practice!=expected_workshop_practice ||
             storage_builds!=expected_storage_builds || storage_stacks!=expected_storage_stacks ||
             extra_storage_builds!=expected_extra_storage_builds ||
             extra_storage_stacks!=expected_extra_storage_stacks ||
@@ -3064,6 +6494,9 @@ public:
             Statement table(db_,"SELECT 1 FROM sqlite_master WHERE type='table' "
                                 "AND name='sg_society_migration'");
             const bool has_migration=table.row();
+            Statement planetary_household_table(db_,"SELECT 1 FROM sqlite_master "
+                "WHERE type='table' AND name='sg_planet_household_migration'");
+            const bool has_planetary_household=planetary_household_table.row();
             for(const auto& [id,c]:journal_commands){
                 if(c.action!=Action::HostSettleMigrant)continue;
                 const auto ev=event_by_id.find(id);
@@ -3081,10 +6514,35 @@ public:
                 Statement receipt(db_,"SELECT command_id FROM sg_regional_command_receipt "
                     "WHERE actor='society-migration-host'");
                 while(receipt.row()){
-                    if(!has_migration)throw std::runtime_error("SQLite: orphaned regional migration");
-                    Statement q(db_,"SELECT 1 FROM sg_society_migration WHERE command_id=?");
-                    q.text(1,sqlite_str(receipt.get(),0));
-                    if(!q.row() || q.row())throw std::runtime_error("SQLite: regional migration unlinked");
+                    // The v118 planetary family writer commits a distinct
+                    // receipt, but uses the same original regional authority.
+                    // Exactly one of the older migrant or new household
+                    // transactions must own each regional migration command.
+                    const auto id=sqlite_str(receipt.get(),0);
+                    bool linked=false;
+                    if(has_migration){
+                        Statement old(db_,"SELECT 1 FROM sg_society_migration "
+                                          "WHERE command_id=?");
+                        old.text(1,id);
+                        if(old.row()){
+                            if(old.row())throw std::runtime_error(
+                                "SQLite: duplicate society migration");
+                            linked=true;
+                        }
+                    }
+                    if(has_planetary_household){
+                        Statement household(db_,"SELECT 1 FROM sg_planet_household_migration "
+                                                 "WHERE request_id=?");
+                        household.text(1,id);
+                        if(household.row()){
+                            if(household.row() || linked)
+                                throw std::runtime_error(
+                                    "SQLite: colliding planetary and society migration");
+                            linked=true;
+                        }
+                    }
+                    if(!linked)
+                        throw std::runtime_error("SQLite: regional migration unlinked");
                 }
             }
             Statement family_table(db_,"SELECT 1 FROM sqlite_master WHERE type='table' "
@@ -3092,6 +6550,40 @@ public:
             if(family_table.row()){
                 Statement q(db_,"SELECT scope,event_id FROM npc_family_moves");
                 while(q.row()){
+                    Statement evacuation_table(db_,"SELECT 1 FROM sqlite_master "
+                        "WHERE type='table' AND name='sg_colony_family_evacuation'");
+                    if(evacuation_table.row()){
+                        Statement linked(db_,"SELECT 1 FROM sg_colony_family_evacuation_member m "
+                            "JOIN sg_colony_family_evacuation e ON e.command_id=m.command_id "
+                            "WHERE m.event_id=? AND e.family_scope=?");
+                        linked.text(1,sqlite_str(q.get(),1));
+                        linked.text(2,sqlite_str(q.get(),0));
+                        if(linked.row()){
+                            if(linked.row())throw std::runtime_error("duplicate evacuation family move");
+                            continue; // audited against the full world receipt below
+                        }
+                    }
+                    // The v118 household move writes THREE ART02 events
+                    // (guardian, co-parent and the existing registered child).
+                    // These are owned by the same atomic planetary receipt,
+                    // not by the older HostSettleMigrant command.
+                    if(has_planetary_household){
+                        Statement household(db_,"SELECT 1 FROM sg_planet_household_migration "
+                            "WHERE family_scope=? AND "
+                            "(request_id=? OR coparent_event=? OR child_event=?)");
+                        const auto scope=sqlite_str(q.get(),0);
+                        const auto event=sqlite_str(q.get(),1);
+                        household.text(1,scope);
+                        household.text(2,event);
+                        household.text(3,event);
+                        household.text(4,event);
+                        if(household.row()){
+                            if(household.row())
+                                throw std::runtime_error(
+                                    "SQLite: family event linked to multiple planetary households");
+                            continue; // validated against all three ART02 moves below
+                        }
+                    }
                     if(!has_migration)throw std::runtime_error("SQLite: family move without world effect");
                     Statement effect(db_,"SELECT 1 FROM sg_society_migration WHERE command_id=?");
                     effect.text(1,sqlite_str(q.get(),1));
@@ -3122,6 +6614,152 @@ public:
                             throw std::runtime_error("SQLite: household family move unlinked");
                     }else if(effect.row())
                         throw std::runtime_error("SQLite: duplicate family migration effect");
+                }
+            }
+            // WO3-E/v118: independently reconcile every legal household
+            // receipt against all three ART02 moves, the same regional
+            // transaction and the before/after original-world snapshots.
+            // A root, co-parent or child event cannot be accepted by merely
+            // existing in a table without its original family and site proof.
+            if(has_planetary_household){
+                Statement households(db_,"SELECT request_id,world_generation,tick,"
+                    "origin,destination,guardian,coparent,child,\"returning\","
+                    "family_scope,region_scope,region_revision,owner_generation,"
+                    "coparent_event,child_event FROM sg_planet_household_migration");
+                while(households.row()){
+                    const auto request=parse_u64(sqlite3_column_text(households.get(),0));
+                    const auto gen=sqlite3_column_int64(households.get(),1);
+                    const auto tick=sqlite3_column_int64(households.get(),2);
+                    const auto origin=parse_u64(sqlite3_column_text(households.get(),3));
+                    const auto destination=parse_u64(sqlite3_column_text(households.get(),4));
+                    const auto guardian=parse_u64(sqlite3_column_text(households.get(),5));
+                    const auto parent=parse_u64(sqlite3_column_text(households.get(),6));
+                    const auto child=parse_u64(sqlite3_column_text(households.get(),7));
+                    const auto returning=sqlite3_column_int64(households.get(),8);
+                    const auto scope=sqlite_str(households.get(),9);
+                    const auto region_scope=sqlite_str(households.get(),10);
+                    const auto region_revision=sqlite3_column_int64(households.get(),11);
+                    const auto owner_generation=sqlite3_column_int64(households.get(),12);
+                    const auto coparent_event=parse_u64(sqlite3_column_text(households.get(),13));
+                    const auto child_event=parse_u64(sqlite3_column_text(households.get(),14));
+                    if(!request || request%16 || request>
+                           std::numeric_limits<std::uint64_t>::max()-2 ||
+                       coparent_event!=request+1 || child_event!=request+2 ||
+                       gen<=1 || static_cast<std::uint64_t>(gen)>generation ||
+                       tick<=0 || !origin || !destination || origin==destination ||
+                       !guardian || !parent || guardian==parent ||
+                       child<(std::uint64_t{1}<<62) ||
+                       (returning!=0 && returning!=1) ||
+                       scope.empty() || region_scope.empty() ||
+                       region_revision<2 || owner_generation<1)
+                        throw std::runtime_error("SQLite: invalid planetary household receipt");
+                    const std::vector<std::pair<std::uint64_t,std::uint64_t>> members{
+                        {request,guardian},{coparent_event,parent},{child_event,child}};
+                    for(const auto& member:members){
+                        Statement move(db_,"SELECT npc_id,origin,destination,tick "
+                            "FROM npc_family_moves WHERE scope=? AND event_id=?");
+                        move.text(1,scope);
+                        move.text(2,std::to_string(member.first));
+                        if(!move.row() ||
+                           parse_u64(sqlite3_column_text(move.get(),0))!=member.second ||
+                           parse_u64(sqlite3_column_text(move.get(),1))!=origin ||
+                           parse_u64(sqlite3_column_text(move.get(),2))!=destination ||
+                           sqlite3_column_int64(move.get(),3)!=tick || move.row())
+                            throw std::runtime_error(
+                                "SQLite: planetary household ART02 move missing or forged");
+                    }
+                    Statement region(db_,"SELECT actor,request,revision,outcome "
+                        "FROM sg_regional_command_receipt WHERE scope=? AND command_id=?");
+                    region.text(1,region_scope);
+                    region.text(2,std::to_string(request));
+                    if(!region.row() ||
+                       sqlite_str(region.get(),0)!="society-migration-host" ||
+                       ![&](){
+                           const auto request_text=sqlite_str(region.get(),1);
+                           const auto prefix="society-migration-generation:"+
+                               std::to_string(tick)+":";
+                           const std::string suffix=":household:3";
+                           return request_text.size()>prefix.size()+suffix.size() &&
+                               request_text.compare(0,prefix.size(),prefix)==0 &&
+                               request_text.compare(request_text.size()-suffix.size(),
+                                                    suffix.size(),suffix)==0;
+                       }() ||
+                       sqlite3_column_int64(region.get(),2)!=region_revision ||
+                       sqlite3_column_int64(region.get(),3)!=1 || region.row())
+                        throw std::runtime_error(
+                            "SQLite: planetary household regional receipt missing");
+                    const auto read_state=[&](std::int64_t g){
+                        Statement snapshot(db_,"SELECT state FROM snapshots WHERE generation=?");
+                        snapshot.i64(1,g);
+                        if(!snapshot.row())throw std::runtime_error(
+                            "SQLite: planetary household world checkpoint missing");
+                        const auto* data=sqlite3_column_blob(snapshot.get(),0);
+                        const int n=sqlite3_column_bytes(snapshot.get(),0);
+                        if(!data || n<=0)throw std::runtime_error(
+                            "SQLite: empty planetary household world checkpoint");
+                        const std::string bytes(static_cast<const char*>(data),
+                                                static_cast<std::size_t>(n));
+                        if(snapshot.row())throw std::runtime_error(
+                            "SQLite: duplicate planetary household world checkpoint");
+                        return Simulation::from_snapshot(bytes);
+                    };
+                    const auto before=read_state(gen-1),after=read_state(gen);
+                    if(after.tick()!=static_cast<std::uint64_t>(tick) ||
+                       before.tick()!=after.tick() ||
+                       before.npc_records().size()!=after.npc_records().size() ||
+                       before.physical_dependents().size()!=
+                           after.physical_dependents().size())
+                        throw std::runtime_error(
+                            "SQLite: household migration changed world identities");
+                    bool matched=false;
+                    for(const auto& [key,site]:after.planetary_sites()){
+                        const auto entry=site.households.find(guardian);
+                        if(entry==site.households.end())continue;
+                        const auto& h=entry->second;
+                        if(h.co_parent_id!=parent || h.child_ids.size()!=1 ||
+                           h.child_ids.front()!=child ||
+                           (returning ? h.return_request!=request :
+                                        h.admission_request!=request))
+                            continue;
+                        const auto surface=site.surface_location;
+                        if((returning && (origin!=surface ||
+                                          destination!=site.source_ship)) ||
+                           (!returning && (origin!=site.source_ship ||
+                                           destination!=surface)) ||
+                           matched)
+                            throw std::runtime_error(
+                                "SQLite: planetary household endpoint mismatch");
+                        const auto earlier=before.planetary_sites().find(key);
+                        if(earlier==before.planetary_sites().end())
+                            throw std::runtime_error(
+                                "SQLite: household site missing before admission");
+                        const auto prev=earlier->second.households.find(guardian);
+                        if((!returning && prev!=earlier->second.households.end()) ||
+                           (returning && (prev==earlier->second.households.end() ||
+                                           prev->second.return_request ||
+                                           prev->second.admission_request!=h.admission_request)))
+                            throw std::runtime_error(
+                                "SQLite: household did not make one legal transition");
+                        for(const auto adult:{guardian,parent}){
+                            const auto b=before.npc_records().find(adult);
+                            const auto a=after.npc_records().find(adult);
+                            if(b==before.npc_records().end() ||
+                               a==after.npc_records().end() ||
+                               b->second.legal_residence().id!=origin ||
+                               a->second.legal_residence().id!=destination)
+                                throw std::runtime_error(
+                                    "SQLite: household adult legal residence mismatch");
+                        }
+                        const auto dependent=after.physical_dependents().find(child);
+                        if(dependent==after.physical_dependents().end() ||
+                           dependent->second.location!=
+                               (returning?site.source_ship:surface))
+                            throw std::runtime_error(
+                                "SQLite: household child custody mismatch");
+                        matched=true;
+                    }
+                    if(!matched)throw std::runtime_error(
+                        "SQLite: planetary household receipt has no world transition");
                 }
             }
             if(has_migration){
@@ -3367,6 +7005,238 @@ public:
                        sqlite_str(child.get(),0)!=sqlite_str(children.get(),2) ||
                        child.row())
                         throw std::runtime_error("SQLite: orphaned dependent family move");
+                }
+            }
+        }
+        // AUTO-04D.4D2B2: each v60 family departure has one independently
+        // reconstructable ART02/ECON03 side effect with its same world step.
+        {
+            Statement heads(db_,"SELECT 1 FROM sqlite_master WHERE type='table' "
+                "AND name='sg_colony_family_evacuation'");
+            const bool exists=heads.row();
+            for(const auto& [source,departure]:restored.colony_departures()){
+                if(departure.relocated_dependents.empty())continue;
+                if(!exists)throw std::runtime_error("SQLite: child evacuated without family ledger");
+                Statement found(db_,"SELECT 1 FROM sg_colony_family_evacuation "
+                    "WHERE command_id=? AND source=?");
+                found.text(1,std::to_string(departure.command_id));
+                found.text(2,std::to_string(source));
+                if(!found.row() || found.row())
+                    throw std::runtime_error("SQLite: missing completed family evacuation receipt");
+            }
+            if(exists){
+                for(const auto* table:{"sg_colony_family_evacuation",
+                                     "sg_colony_family_evacuation_member"}){
+                    Statement present(db_,"SELECT 1 FROM sqlite_master WHERE type='table' "
+                        "AND name=?");
+                    present.text(1,table);
+                    if(!present.row())throw std::runtime_error("SQLite: missing evacuation ledger");
+                    for(const auto* suffix:{"_immutable_update","_immutable_delete"}){
+                        Statement trigger(db_,"SELECT 1 FROM sqlite_master "
+                            "WHERE type='trigger' AND name=?");
+                        trigger.text(1,std::string(table)+suffix);
+                        if(!trigger.row())
+                            throw std::runtime_error("SQLite: removed evacuation immutable trigger");
+                    }
+                }
+                Statement all(db_,"SELECT command_id,intent_id,world_generation,tick,"
+                    "family_scope,family_seed,region_scope,region_revision,owner_generation,"
+                    "source,receiver,origin_colony,receiver_colony,member_count,"
+                    "adult_count,child_count FROM sg_colony_family_evacuation");
+                while(all.row()){
+                    const auto id=parse_u64(sqlite3_column_text(all.get(),0));
+                    const auto intent=parse_u64(sqlite3_column_text(all.get(),1));
+                    const auto gen=sqlite3_column_int64(all.get(),2);
+                    const auto at=sqlite3_column_int64(all.get(),3);
+                    const auto scope=sqlite_str(all.get(),4);
+                    const auto seed=parse_u64(sqlite3_column_text(all.get(),5));
+                    const auto regional_scope=sqlite_str(all.get(),6);
+                    const auto revision=sqlite3_column_int64(all.get(),7);
+                    const auto owner=sqlite3_column_int64(all.get(),8);
+                    const auto source=parse_u64(sqlite3_column_text(all.get(),9));
+                    const auto target=parse_u64(sqlite3_column_text(all.get(),10));
+                    const auto from_colony=sqlite_str(all.get(),11);
+                    const auto to_colony=sqlite_str(all.get(),12);
+                    const auto count=sqlite3_column_int64(all.get(),13);
+                    const auto adults=sqlite3_column_int64(all.get(),14);
+                    const auto children=sqlite3_column_int64(all.get(),15);
+                    const auto cmd=journal_commands.find(id);
+                    const auto ev=event_by_id.find(id);
+                    const auto departure=restored.colony_departures().find(source);
+                    if(!id || !intent || id==intent || gen<3 ||
+                       static_cast<std::uint64_t>(gen)>generation || at<1 ||
+                       scope.empty() || !seed || regional_scope.empty() || revision<2 ||
+                       owner<1 || !source || !target || source==target ||
+                       from_colony.empty() || to_colony.empty() ||
+                       from_colony==to_colony || count<3 || count>16 ||
+                       adults<2 || children<1 || adults+children!=count ||
+                       cmd==journal_commands.end() || ev==event_by_id.end() ||
+                       cmd->second.action!=Action::HostColonyDeparture ||
+                       cmd->second.actor!=source || cmd->second.target!=target ||
+                       ev->second.result!=Outcome::Applied ||
+                       ev->second.tick!=static_cast<std::uint64_t>(at) ||
+                       departure==restored.colony_departures().end() ||
+                       departure->second.command_id!=id ||
+                       departure->second.receiver!=target ||
+                       static_cast<sqlite3_int64>(departure->second.relocated_npcs.size())!=adults ||
+                       static_cast<sqlite3_int64>(departure->second.relocated_dependents.size())!=children ||
+                       cmd->second.passenger_ids!=departure->second.relocated_npcs)
+                        throw std::runtime_error("SQLite: incomplete or mismatched family evacuation");
+                    Statement op(db_,"SELECT kind,tick FROM operation_log WHERE generation=?");
+                    op.i64(1,gen);
+                    if(!op.row() || sqlite3_column_int(op.get(),0)!=2 ||
+                       sqlite3_column_int64(op.get(),1)!=at || op.row())
+                        throw std::runtime_error("SQLite: family effect not joined to applied world step");
+                    Statement prepared(db_,"SELECT generation,world_hash,source,receiver,"
+                        "family_scope,family_seed,adult_roster,child_guardians,status "
+                        "FROM sg_colony_family_departure_prepare WHERE intent_id=?");
+                    prepared.text(1,std::to_string(intent));
+                    if(!prepared.row() || sqlite3_column_int64(prepared.get(),0)!=gen-2 ||
+                       sqlite_str(prepared.get(),2)!=std::to_string(source) ||
+                       sqlite_str(prepared.get(),3)!=std::to_string(target) ||
+                       sqlite_str(prepared.get(),4)!=scope ||
+                       sqlite_str(prepared.get(),5)!=std::to_string(seed) ||
+                       sqlite3_column_int(prepared.get(),8)!=1)
+                        throw std::runtime_error("SQLite: family prepared evidence missing");
+                    const auto original_hash=sqlite_str(prepared.get(),1);
+                    const auto prepared_adults=sqlite_str(prepared.get(),6);
+                    const auto prepared_children=sqlite_str(prepared.get(),7);
+                    if(prepared.row())throw std::runtime_error("SQLite: duplicate family preparation");
+                    Statement old_op(db_,"SELECT state_hash FROM operation_log WHERE generation=?");
+                    old_op.i64(1,gen-2);
+                    if(!old_op.row() || sqlite_str(old_op.get(),0)!=original_hash ||
+                       old_op.row())
+                        throw std::runtime_error("SQLite: family preparation has no original world");
+                    Statement regional(db_,"SELECT actor,request,revision,outcome "
+                        "FROM sg_regional_command_receipt WHERE scope=? AND command_id=?");
+                    regional.text(1,regional_scope);regional.text(2,std::to_string(id));
+                    if(!regional.row() ||
+                       sqlite_str(regional.get(),0)!="colony-family-evacuation-host" ||
+                       sqlite_str(regional.get(),1)!="society-migration-generation:"+
+                         std::to_string(at)+":"+from_colony+":"+to_colony+
+                         ":household:"+std::to_string(count) ||
+                       sqlite3_column_int64(regional.get(),2)!=revision ||
+                       sqlite3_column_int64(regional.get(),3)!=1 || regional.row())
+                        throw std::runtime_error("SQLite: missing independent ECON03 family receipt");
+                    const auto snapshot=[&](sqlite3_int64 g)->Simulation{
+                        Statement row(db_,"SELECT state,checksum FROM snapshots WHERE generation=?");
+                        row.i64(1,g);
+                        if(!row.row())throw std::runtime_error("SQLite: family proof checkpoint missing");
+                        const auto* raw=sqlite3_column_blob(row.get(),0);
+                        const auto n=sqlite3_column_bytes(row.get(),0);
+                        if(!raw || n<1 || n>16*1024*1024)
+                            throw std::runtime_error("SQLite: invalid family checkpoint");
+                        Simulation state=Simulation::from_snapshot(
+                            std::string(static_cast<const char*>(raw),static_cast<std::size_t>(n)));
+                        if(state.state_hash()!=parse_u64(sqlite3_column_text(row.get(),1)) ||
+                           row.row())
+                            throw std::runtime_error("SQLite: family checkpoint hash mismatch");
+                        return state;
+                    };
+                    const auto before=snapshot(gen-1),after=snapshot(gen);
+                    const auto world_receipt=after.colony_departures().find(source);
+                    if(world_receipt==after.colony_departures().end() ||
+                       world_receipt->second.command_id!=id ||
+                       world_receipt->second.receiver!=target ||
+                       world_receipt->second.relocated_npcs!=departure->second.relocated_npcs ||
+                       world_receipt->second.relocated_dependents!=departure->second.relocated_dependents ||
+                       before.tick()+1!=static_cast<std::uint64_t>(at) ||
+                       after.tick()!=static_cast<std::uint64_t>(at) ||
+                       after.people_physically_aboard(source)!=0 ||
+                       after.children_physically_aboard(source)!=0 ||
+                       before.npc_records().size()!=after.npc_records().size() ||
+                       before.physical_dependents().size()!=after.physical_dependents().size())
+                        throw std::runtime_error("SQLite: family relocation does not match native before/after");
+                    std::string adult_roster,child_roster;
+                    sqlite3_int64 previous_from=-1,previous_to=-1;
+                    sqlite3_int64 members=0,seen_adults=0,seen_children=0;
+                    Statement rows(db_,"SELECT event_id,person_id,guardian_id,kind,"
+                        "origin_revision,destination_revision FROM sg_colony_family_evacuation_member "
+                        "WHERE command_id=? ORDER BY kind,LENGTH(person_id),person_id");
+                    rows.text(1,std::to_string(id));
+                    while(rows.row()){
+                        const auto event=sqlite_str(rows.get(),0);
+                        const auto person=parse_u64(sqlite3_column_text(rows.get(),1));
+                        const auto guardian=parse_u64(sqlite3_column_text(rows.get(),2));
+                        const auto kind=sqlite3_column_int(rows.get(),3);
+                        const auto from_rev=sqlite3_column_int64(rows.get(),4);
+                        const auto to_rev=sqlite3_column_int64(rows.get(),5);
+                        if(from_rev<1 || to_rev<1 ||
+                           (previous_from>=0 && (from_rev!=previous_from+1 ||
+                            to_rev!=previous_to+1)))
+                            throw std::runtime_error("SQLite: family census revisions not contiguous");
+                        previous_from=from_rev;previous_to=to_rev;
+                        Statement movement(db_,"SELECT npc_id,origin,destination,tick,"
+                            "origin_revision,destination_revision FROM npc_family_moves "
+                            "WHERE scope=? AND event_id=?");
+                        movement.text(1,scope);movement.text(2,event);
+                        if(!movement.row() ||
+                           parse_u64(sqlite3_column_text(movement.get(),0))!=person ||
+                           parse_u64(sqlite3_column_text(movement.get(),1))!=source ||
+                           parse_u64(sqlite3_column_text(movement.get(),2))!=target ||
+                           sqlite3_column_int64(movement.get(),3)!=at ||
+                           sqlite3_column_int64(movement.get(),4)!=from_rev ||
+                           sqlite3_column_int64(movement.get(),5)!=to_rev ||
+                           movement.row())
+                            throw std::runtime_error("SQLite: family member missing ART02 movement");
+                        if(kind==0){
+                            if(guardian || seen_adults>=adults ||
+                               departure->second.relocated_npcs[static_cast<std::size_t>(seen_adults)]!=person)
+                                throw std::runtime_error("SQLite: missing or forged adult roster");
+                            const auto b=before.npc_records().find(person);
+                            const auto a=after.npc_records().find(person);
+                            if(b==before.npc_records().end() || a==after.npc_records().end() ||
+                               b->second.home_ship!=source || a->second.home_ship!=target ||
+                               a->second.location!=target || a->second.transport_id)
+                                throw std::runtime_error("SQLite: adult did not actually arrive");
+                            if(!adult_roster.empty())adult_roster.push_back(',');
+                            adult_roster+=std::to_string(person);
+                            ++seen_adults;
+                        }else if(kind==1){
+                            if(person<(1ULL<<62) || !guardian || seen_children>=children ||
+                               departure->second.relocated_dependents[
+                                   static_cast<std::size_t>(seen_children)]!=person)
+                                throw std::runtime_error("SQLite: missing or forged dependent roster");
+                            const auto b=before.physical_dependents().find(person);
+                            const auto a=after.physical_dependents().find(person);
+                            if(b==before.physical_dependents().end() ||
+                               a==after.physical_dependents().end() ||
+                               b->second.guardian_id!=guardian ||
+                               a->second.guardian_id!=guardian ||
+                               b->second.home_ship!=source || b->second.location!=source ||
+                               a->second.home_ship!=target || a->second.location!=target ||
+                               !std::binary_search(departure->second.relocated_npcs.begin(),
+                                                   departure->second.relocated_npcs.end(),guardian))
+                                throw std::runtime_error("SQLite: dependent separated from legal guardian");
+                            Statement authority(db_,"SELECT home_ship,guardian_id,family_scope "
+                                "FROM sg_colony_physical_child_authority WHERE child_id=?");
+                            authority.text(1,std::to_string(person));
+                            if(!authority.row() ||
+                               parse_u64(sqlite3_column_text(authority.get(),0))!=source ||
+                               parse_u64(sqlite3_column_text(authority.get(),1))!=guardian ||
+                               sqlite_str(authority.get(),2)!=scope || authority.row())
+                                throw std::runtime_error("SQLite: moved dependent lacks original custody");
+                            if(!child_roster.empty())child_roster.push_back(',');
+                            child_roster+=std::to_string(person)+":"+std::to_string(guardian);
+                            ++seen_children;
+                        }else throw std::runtime_error("SQLite: invalid family member kind");
+                        ++members;
+                    }
+                    if(members!=count || seen_adults!=adults || seen_children!=children ||
+                       prepared_adults!=adult_roster || prepared_children!=child_roster)
+                        throw std::runtime_error("SQLite: incomplete family, birth or guardian list");
+                }
+                Statement orphan(db_,"SELECT 1 FROM sg_colony_family_evacuation_member m "
+                    "LEFT JOIN sg_colony_family_evacuation e ON e.command_id=m.command_id "
+                    "WHERE e.command_id IS NULL LIMIT 1");
+                if(orphan.row())throw std::runtime_error("SQLite: orphaned family evacuation member");
+                Statement regional_rows(db_,"SELECT command_id FROM sg_regional_command_receipt "
+                    "WHERE actor='colony-family-evacuation-host'");
+                while(regional_rows.row()){
+                    Statement root(db_,"SELECT 1 FROM sg_colony_family_evacuation WHERE command_id=?");
+                    root.text(1,sqlite_str(regional_rows.get(),0));
+                    if(!root.row() || root.row())
+                        throw std::runtime_error("SQLite: regional family movement without world effect");
                 }
             }
         }
@@ -3645,6 +7515,74 @@ public:
             if(actual!=declared)
                 throw std::runtime_error("orphaned child berth/arrival records");
         }
+        // DOCK-04: a ship-role NPC temporarily stationed at a physical
+        // docking berth MUST be explained by its own unique original-world
+        // shore-transfer journal, not merely a plausible snapshot location.
+        // Original ferry voyagers have transport IDs and are checked above.
+        {
+            Statement table(db_,"SELECT 1 FROM sqlite_master WHERE type='table' "
+                                 "AND name='sg_dock_worker_moves'");
+            const bool has_moves=table.row();
+            for(const auto& [id,n]:restored.npc_records()){
+                if(n.role!=NpcRole::Ship || n.transport_id ||
+                   n.assigned_site!=n.home_ship ||
+                   n.location==n.home_ship)continue;
+                const auto* berth=restored.find(n.location);
+                if(!berth || berth->type!=EntityType::Station)continue;
+                const auto* home=restored.find(n.home_ship);
+                const bool home_shore=home &&
+                    home->dock_state==DockState::Docked &&
+                    home->dock_station==n.location;
+                if(home_shore) {
+                    if(!has_moves)
+                        throw std::runtime_error("shore worker lacks original movement provenance");
+                    Statement proof(db_,"SELECT station,ship,direction,generation "
+                                        "FROM sg_dock_worker_moves WHERE npc_id=? "
+                                        "ORDER BY generation DESC LIMIT 1");
+                    proof.i64(1,static_cast<sqlite3_int64>(id));
+                    if(!proof.row() ||
+                       sqlite3_column_int64(proof.get(),0)!=
+                          static_cast<sqlite3_int64>(n.location) ||
+                       sqlite3_column_int64(proof.get(),1)!=
+                          static_cast<sqlite3_int64>(n.home_ship) ||
+                       sqlite3_column_int(proof.get(),2)!=1 ||
+                       sqlite3_column_int64(proof.get(),3)<1 ||
+                       static_cast<std::uint64_t>(sqlite3_column_int64(proof.get(),3))>generation ||
+                       proof.row())
+                        throw std::runtime_error("original shore duty lacks physical custody proof");
+                } else {
+                    // A visiting passenger may reach this station only via an
+                    // independently APPLIED original ferry disembark to its
+                    // REAL receiving hull, then an atomically journaled walk.
+                    Statement table(db_,"SELECT 1 FROM sqlite_master WHERE type='table' "
+                                         "AND name='sg_dock05_visitor_moves'");
+                    if(!table.row())
+                        throw std::runtime_error("unrecorded intercolony visitor");
+                    Statement proof(db_,"SELECT receiving_ship,station,voyage,"
+                                        "direction,generation FROM sg_dock05_visitor_moves "
+                                        "WHERE npc_id=? ORDER BY generation DESC LIMIT 1");
+                    proof.i64(1,static_cast<sqlite3_int64>(id));
+                    if(!proof.row())
+                        throw std::runtime_error("visitor lacks original station movement");
+                    const auto receiver=static_cast<EntityId>(
+                        sqlite3_column_int64(proof.get(),0));
+                    const auto station=static_cast<EntityId>(
+                        sqlite3_column_int64(proof.get(),1));
+                    const auto voyage=static_cast<std::uint64_t>(
+                        sqlite3_column_int64(proof.get(),2));
+                    const auto direction=sqlite3_column_int(proof.get(),3);
+                    const auto when=sqlite3_column_int64(proof.get(),4);
+                    const auto* receiving_ship=restored.find(receiver);
+                    if(station!=n.location || direction!=1 ||
+                       when<1 || static_cast<std::uint64_t>(when)>generation ||
+                       !receiving_ship ||
+                       receiving_ship->owner_id!=(home?home->owner_id:0) ||
+                       !restored.original_completed_ferry_guest(id,receiver,voyage) ||
+                       proof.row())
+                        throw std::runtime_error("visitor arrival lacks original applied voyage");
+                }
+            }
+        }
         out.swap(restored);
         return true;
     }
@@ -3655,7 +7593,9 @@ public:
                 const std::vector<ActivityEvent>& activity_delta, FailPoint fail,
                 const NpcMiningAssignment* npc_mining_assignment=nullptr,
                 const NpcFabricationAssignment* npc_fabrication_assignment=nullptr,
-                const std::function<void(sqlite3*,std::uint64_t)>& society_effect={}) {
+                const std::function<void(sqlite3*,std::uint64_t)>& society_effect={},
+                const NativeCellWorkerTick* cell_worker_token=nullptr,
+                const std::vector<Command>& generated_native_commands={}) {
         if (state.total_ore() != origin || state.total_credits() != credit_origin)
             throw std::runtime_error("resource or credit conservation violation");
         const auto bytes = state.canonical_state();
@@ -3674,6 +7614,19 @@ public:
                    !shipping::third_party_transfer_authorized(db_,c))
                     throw std::runtime_error("shipment: unreserved due cargo command");
             }
+            // POP-05: BOTH acceptance and genuinely APPLIED execution read
+            // the same original dock-shift table under this BEGIN IMMEDIATE.
+            // A later dock shift cannot supersede an already accepted future
+            // workshop or medical duty. Failed native commands do not acquire
+            // imaginary work or block ordinary world advancement.
+            if(accepted)
+                stage7::enforce_original_dock_exclusivity(db_,*accepted);
+            for(const auto& event:new_events){
+                if(event.result!=Outcome::Applied)continue;
+                const auto pending=due_commands.find(event.command_id);
+                if(pending!=due_commands.end())
+                    stage7::enforce_original_dock_exclusivity(db_,pending->second);
+            }
             if (expected_generation >= static_cast<std::uint64_t>(std::numeric_limits<sqlite3_int64>::max()))
                 throw std::runtime_error("generation exhausted");
             const auto next = expected_generation + 1;
@@ -3689,6 +7642,51 @@ public:
                 receipt.text(1, std::to_string(accepted->id));
                 receipt.i64(2, static_cast<std::int64_t>(next));
                 receipt.execute();
+            }
+            // An NPC autopilot command is generated only by the trusted
+            // original Simulation step. Accept it in that very SAME SQLite
+            // transaction; execution remains a later verified world tick.
+            constexpr std::uint64_t kNativeFlightTag=std::uint64_t{1}<<61;
+            for(const auto& c:generated_native_commands){
+                const auto flight_id=(c.id & ~kNativeFlightTag)>>9;
+                const auto seq=c.id & 511;
+                const auto flight=state.npc_flight_orders().find(flight_id);
+                if(!(c.id & kNativeFlightTag) || (c.id & (std::uint64_t{1}<<62)) ||
+                   !flight_id || flight_id>=(std::uint64_t{1}<<40) ||
+                   !seq || c.id!=(kNativeFlightTag | (flight_id<<9) | seq) ||
+                   c.sequence!=c.id || c.execute_tick!=state.tick()+1 ||
+                   (c.action!=Action::Thrust &&
+                    c.action!=Action::RequestDock &&
+                    c.action!=Action::RequestUndock) ||
+                   flight==state.npc_flight_orders().end() ||
+                   flight->second.last_local_command!=c.id ||
+                   flight->second.local_commands!=seq ||
+                   flight->second.ship!=c.actor ||
+                   flight->second.owner!=c.issuer ||
+                   (flight->second.mode!=NpcFlightMode::LocalDock &&
+                    flight->second.mode!=NpcFlightMode::LocalRendezvous))
+                    throw std::runtime_error("unauthorized native NPC command receipt");
+                Statement receipt(db_,"INSERT INTO receipts(id,accepted_generation) VALUES(?,?)");
+                receipt.text(1,std::to_string(c.id));
+                receipt.i64(2,static_cast<std::int64_t>(next));
+                receipt.execute();
+                if(sqlite3_changes(db_)!=1)
+                    throw std::runtime_error("native NPC command acceptance not unique");
+                const auto signed_body=std::to_string(c.id)+"|"+
+                    std::to_string(next)+"|"+command_record(c)+"|"+
+                    std::to_string(flight->second.pilot_npc)+"|"+
+                    std::to_string(state.state_hash());
+                Statement provenance(db_,"INSERT INTO sg_native_npc_commands("
+                    "id,generation,command,pilot,world_hash,digest) VALUES(?,?,?,?,?,?)");
+                provenance.text(1,std::to_string(c.id));
+                provenance.i64(2,static_cast<std::int64_t>(next));
+                provenance.text(3,command_record(c));
+                provenance.text(4,std::to_string(flight->second.pilot_npc));
+                provenance.text(5,std::to_string(state.state_hash()));
+                provenance.text(6,social_digest("original-npc-flight-v1",signed_body));
+                provenance.execute();
+                if(sqlite3_changes(db_)!=1)
+                    throw std::runtime_error("native NPC provenance not unique");
             }
             if(npc_mining_assignment){
                 const auto& e=*npc_mining_assignment;
@@ -3745,7 +7743,7 @@ public:
                 update.text(4, std::to_string(ev.command_id));
                 update.execute();
                 if (sqlite3_changes(db_) != 1)
-                    throw std::runtime_error("missing/double execution receipt");
+                    throw std::runtime_error("missing/double execution receipt for original command "+std::to_string(ev.command_id)+" at tick "+std::to_string(ev.tick));
                 // Same transaction as receipts, physical resource ledgers and
                 // snapshot. A rejected action is recorded as rejected, never
                 // inferred to have harmed people, ships or cargo.
@@ -3769,11 +7767,26 @@ public:
                 history.text(10,record);
                 history.text(11,historical_digest(historical_id,next,ev,record));
                 history.execute();
-                if (ev.result == Outcome::Applied && ev.transferred > 0) {
+                // SurveyLocal and ScanSurveyProbe return observed contact
+                // counts, not ore/kg or probe devices transferred. Still
+                // journal the original historical command receipt, but do
+                // NOT synthesize a material ledger movement from telemetry.
+                if (ev.result == Outcome::Applied && ev.transferred > 0 &&
+                    due->second.action != Action::SurveyLocal &&
+                    due->second.action != Action::ScanSurveyProbe &&
+                    due->second.action != Action::FireTrainingWeapon &&
+                    due->second.action != Action::FireShipWeapon) {
                     const auto cmd = due_commands.find(ev.command_id);
                     if (cmd == due_commands.end() ||
-                        (cmd->second.action != Action::Mine && cmd->second.action != Action::UnloadOre &&
+                        (cmd->second.action != Action::DeploySurveyProbe &&
+                         cmd->second.action != Action::ConfigureMiningTool &&
+                         cmd->second.action != Action::LaunchGeologicalDrone &&
+                         cmd->second.action != Action::RecoverSurveyProbe &&
+                         cmd->second.action != Action::Mine && cmd->second.action != Action::SalvageWreck &&
+                         cmd->second.action != Action::UnloadOre &&
                          cmd->second.action != Action::LoadOre && cmd->second.action != Action::SellOre &&
+                         cmd->second.action != Action::BuildStationRefinery &&
+                         cmd->second.action != Action::RefineStationOre &&
                          cmd->second.action != Action::RefineOre &&
                          cmd->second.action != Action::FabricateModule &&
                          cmd->second.action != Action::ConstructOutpost &&
@@ -3795,6 +7808,8 @@ public:
                          cmd->second.action!=Action::ConstructClinic &&
                          cmd->second.action!=Action::TransferClinicStock &&
                          cmd->second.action!=Action::ConstructWorkshop &&
+                         cmd->second.action!=Action::TrainWorkshopTrade &&
+                         cmd->second.action!=Action::MentorWorkshopTrade &&
                          cmd->second.action!=Action::TransferWorkshopFeed &&
                          cmd->second.action!=Action::TransferWorkshopOutput &&
                          cmd->second.action!=Action::ConstructWorkshopFinisher &&
@@ -3810,15 +7825,51 @@ public:
                          cmd->second.action!=Action::ConstructStorageLink &&
                          cmd->second.action!=Action::ConstructWorkshopLink &&
                          cmd->second.action!=Action::PlaceConveyorCell))
-                        throw std::runtime_error("unmatched resource transfer event");
+                        throw std::runtime_error("unmatched resource transfer event: command="+std::to_string(ev.command_id)+" action="+(cmd==due_commands.end()?std::string("missing"):std::to_string(static_cast<unsigned>(cmd->second.action)))+" amount="+std::to_string(ev.transferred));
                     Statement ledger(db_, "INSERT INTO resource_ledger(generation,tick,command_id,source_id,destination_id,amount,reason) VALUES(?,?,?,?,?,?,?)");
                     ledger.i64(1, static_cast<std::int64_t>(next));
                     ledger.i64(2, static_cast<std::int64_t>(ev.tick));
                     ledger.text(3, std::to_string(ev.command_id));
-                    if (cmd->second.action == Action::Mine) {
+                    if (cmd->second.action == Action::DeploySurveyProbe ||
+                        cmd->second.action == Action::LaunchGeologicalDrone ||
+                        cmd->second.action == Action::RecoverSurveyProbe) {
+                        if(ev.transferred!=1 ||
+                           (cmd->second.action != Action::RecoverSurveyProbe && cmd->second.target))
+                            throw std::runtime_error("invalid probe-device custody transfer");
+                        const bool recovered=cmd->second.action==Action::RecoverSurveyProbe;
+                        const auto identity=recovered?cmd->second.target:cmd->second.id;
+                        if(!identity)throw std::runtime_error("missing durable probe identity");
+                        const auto ship="ship:"+std::to_string(cmd->second.actor)+":survey_probe_devices";
+                        const auto probe="probe:"+std::to_string(identity)+":device";
+                        ledger.text(4,recovered?probe:ship);
+                        ledger.text(5,recovered?ship:probe);
+                        ledger.i64(6,1);
+                        ledger.text(7,recovered?"probe_device_recovered":
+                            cmd->second.action==Action::LaunchGeologicalDrone?
+                            "geological_drone_deployed":"survey_probe_deployed");
+                    } else if (cmd->second.action == Action::ConfigureMiningTool) {
+                        // Original two-tonne module moves between the finite
+                        // ship cargo hold and the physical mining hardpoint.
+                        // Both directions need one verified durable ledger row.
+                        const auto& c=cmd->second;
+                        if(c.target || c.thrust_x || c.thrust_y ||
+                           (c.amount!=1 && c.amount!=-1) || ev.transferred!=2)
+                            throw std::runtime_error("invalid mining tool material custody event");
+                        const auto ship=std::to_string(c.actor);
+                        const auto module="modules:"+ship;
+                        const auto installed="hardpoint:"+ship+":mining_tool";
+                        ledger.text(4,c.amount==1?module:installed);
+                        ledger.text(5,c.amount==1?installed:module);
+                        ledger.i64(6,2);
+                        ledger.text(7,c.amount==1?"mining_tool_install_t":
+                                                    "mining_tool_removal_t");
+                    } else if (cmd->second.action == Action::Mine ||
+                               cmd->second.action == Action::SalvageWreck) {
                         ledger.text(4, std::to_string(cmd->second.target));
                         ledger.text(5, std::to_string(cmd->second.actor));
-                        ledger.i64(6, ev.transferred); ledger.text(7, "mining_transfer");
+                        ledger.i64(6, ev.transferred);
+                        ledger.text(7,cmd->second.action==Action::SalvageWreck?
+                            "wreck_salvage_transfer":"mining_transfer");
                     } else if(cmd->second.action==Action::RefineMineral ||
                               cmd->second.action==Action::FabricateMaterialModule){
                         const auto refine=cmd->second.action==Action::RefineMineral;
@@ -3913,6 +7964,18 @@ public:
                             std::to_string(c.amount>0?c.target:c.actor)+":"+kind[c.thrust_x]);
                         ledger.i64(6,ev.transferred);
                         ledger.text(7,"workshop_stack_transfer_kg");
+                    } else if(cmd->second.action==Action::TrainWorkshopTrade ||
+                              cmd->second.action==Action::MentorWorkshopTrade){
+                        const auto& c=cmd->second;
+                        if(ev.transferred!=1 || c.amount<1 || c.amount>1000000 ||
+                           (c.thrust_x!=1 && c.thrust_x!=2) ||
+                           c.issuer==Simulation::kServerAuthority)
+                            throw std::runtime_error("invalid industrial training practice material");
+                        ledger.text(4,"workshop:"+std::to_string(c.target)+
+                            (c.thrust_x==1?":aluminum":":aluminum_panels"));
+                        ledger.text(5,"workshop:"+std::to_string(c.target)+":aluminum_scrap");
+                        ledger.i64(6,1);
+                        ledger.text(7,"industrial_training_practice_kg");
                     } else if(cmd->second.action==Action::ConstructWorkshop ||
                               cmd->second.action==Action::TransferWorkshopFeed ||
                               cmd->second.action==Action::TransferWorkshopOutput){
@@ -4036,6 +8099,22 @@ public:
                         ledger.text(5,life_ledger_destination(cmd->second));
                         ledger.i64(6,ev.transferred);
                         ledger.text(7,"life_support_transform_kg");
+                    } else if(cmd->second.action==Action::BuildStationRefinery ||
+                              cmd->second.action==Action::RefineStationOre){
+                        // These are original STEP receipts, committed under
+                        // the same BEGIN IMMEDIATE as material and snapshot.
+                        const auto& c=cmd->second;
+                        if(ev.transferred!=(c.action==Action::BuildStationRefinery?4:1000))
+                            throw std::runtime_error("station refinery amount mismatch");
+                        ledger.text(4,c.action==Action::BuildStationRefinery?
+                            "modules:"+std::to_string(c.actor):
+                            "hangar:"+std::to_string(c.target)+":owner:"+std::to_string(c.issuer));
+                        ledger.text(5,c.action==Action::BuildStationRefinery?
+                            "station-refinery:"+std::to_string(c.target):
+                            "station-minerals:"+std::to_string(c.target)+":owner:"+std::to_string(c.issuer));
+                        ledger.i64(6,ev.transferred);
+                        ledger.text(7,c.action==Action::BuildStationRefinery?
+                            "station_refinery_install_t":"station_refinery_process_kg");
                     } else if(cmd->second.action==Action::RefineOre ||
                               cmd->second.action==Action::FabricateModule ||
                               cmd->second.action==Action::ConstructOutpost){
@@ -4334,7 +8413,112 @@ public:
             op.text(4, std::to_string(state.state_hash()));
             op.i64(5, static_cast<std::int64_t>(state.tick()));
             op.execute();
+            // SPACE-01: update derived 3D computational cell custody inside
+            // the SAME SQLite world snapshot/journal transaction. Ship ID,
+            // finite NPC roster, carrier cargo and physical position remain
+            // solely in original Simulation. A fault rolls both back.
+            spatial::record_native_world_commit(
+                db_,state,expected_generation,next);
+            // SPACE-05: one authoritative admission point for EVERY native
+            // world-changing PersistentWorld API. Previously only step()
+            // checked leases, so submit/host operations could bypass them.
+            // This executes after the original spatial-index update but
+            // before COMMIT, inside the same BEGIN IMMEDIATE lock.
+            Statement lease_table(db_,"SELECT COUNT(*) FROM sqlite_master "
+               "WHERE type='table' AND name='sg_spatial_worker_lease'");
+            if(!lease_table.row())
+                throw std::runtime_error("spatial worker registry unreadable");
+            if(sqlite3_column_int64(lease_table.get(),0)==0){
+                if(cell_worker_token)
+                    throw std::runtime_error("no worker registry for leased commit");
+            }else{
+                Statement lease_count(db_,"SELECT COUNT(*) FROM sg_spatial_worker_lease");
+                if(!lease_count.row())
+                    throw std::runtime_error("spatial lease count unreadable");
+                const auto count=sqlite3_column_int64(lease_count.get(),0);
+                if(count==0){
+                    if(cell_worker_token)
+                        throw std::runtime_error("no active lease for worker commit");
+                }else{
+                    // Multiple physically occupied cells may have active
+                    // workers, but exactly ONE host-selected dispatch holds
+                    // the journal writer for this world generation.
+                    if(!cell_worker_token || count<1 ||
+                       (count>1 && cell_worker_token->dispatch_id.empty()))
+                        throw std::runtime_error(
+                            "multi-cell writer requires a durable fenced dispatch");
+                    const auto& token=*cell_worker_token;
+                    if(!spatial::parse_scope(token.canonical_cell_scope) ||
+                       token.trusted_worker.empty() ||
+                       token.trusted_worker.size()>128 ||
+                       !token.worker_epoch || !token.region_generation ||
+                       !token.checkpoint_revision)
+                        throw std::runtime_error("invalid worker commit token");
+                    Statement lease(db_,"SELECT a.worker,a.epoch,a.region_generation,"
+                      "a.checkpoint_revision,r.generation,r.checkpoint_revision,r.phase "
+                      "FROM sg_spatial_worker_lease a "
+                      "JOIN sg_regional_mode_authority r ON r.scope=a.scope "
+                      "WHERE a.scope=?");
+                    lease.text(1,token.canonical_cell_scope);
+                    if(!lease.row())
+                        throw std::runtime_error("worker lacks regional authority");
+                    const auto worker=sqlite3_column_text(lease.get(),0);
+                    if(!worker ||
+                       reinterpret_cast<const char*>(worker)!=token.trusted_worker ||
+                       sqlite3_column_int64(lease.get(),1)!=
+                           static_cast<sqlite3_int64>(token.worker_epoch) ||
+                       sqlite3_column_int64(lease.get(),2)!=
+                           static_cast<sqlite3_int64>(token.region_generation) ||
+                       sqlite3_column_int64(lease.get(),3)!=
+                           static_cast<sqlite3_int64>(token.checkpoint_revision) ||
+                       sqlite3_column_int64(lease.get(),4)!=
+                           static_cast<sqlite3_int64>(token.region_generation) ||
+                       sqlite3_column_int64(lease.get(),5)!=
+                           static_cast<sqlite3_int64>(token.checkpoint_revision) ||
+                       sqlite3_column_int(lease.get(),6)!=0 ||
+                       !spatial::verify_native_index(db_,state,next))
+                        throw std::runtime_error(
+                            "stale, forged or conflicting worker world commit");
+                    if(count>1 || !token.dispatch_id.empty()){
+                        if(token.dispatch_id.empty() ||
+                           token.dispatch_id.size()>128)
+                            throw std::runtime_error("missing global dispatch identity");
+                        Statement selected(db_,"SELECT scope,worker,epoch,"
+                            "region_generation,checkpoint_revision,status "
+                            "FROM sg_spatial_tick_dispatch "
+                            "WHERE world_generation=? AND claim_id=?");
+                        selected.i64(1,static_cast<std::int64_t>(
+                            expected_generation));
+                        selected.text(2,token.dispatch_id);
+                        if(!selected.row() ||
+                           sqlite_str(selected.get(),0)!=token.canonical_cell_scope ||
+                           sqlite_str(selected.get(),1)!=token.trusted_worker ||
+                           sqlite3_column_int64(selected.get(),2)!=
+                               static_cast<sqlite3_int64>(token.worker_epoch) ||
+                           sqlite3_column_int64(selected.get(),3)!=
+                               static_cast<sqlite3_int64>(token.region_generation) ||
+                           sqlite3_column_int64(selected.get(),4)!=
+                               static_cast<sqlite3_int64>(token.checkpoint_revision) ||
+                           sqlite3_column_int(selected.get(),5)!=0)
+                            throw std::runtime_error(
+                                "stale, unselected or already consumed global writer");
+                        Statement complete(db_,"UPDATE sg_spatial_tick_dispatch "
+                            "SET status=1,completed_generation=? "
+                            "WHERE world_generation=? AND claim_id=? AND status=0");
+                        complete.i64(1,static_cast<std::int64_t>(next));
+                        complete.i64(2,static_cast<std::int64_t>(
+                            expected_generation));
+                        complete.text(3,token.dispatch_id);
+                        complete.execute();
+                        if(sqlite3_changes(db_)!=1)
+                            throw std::runtime_error("global dispatch completion race");
+                    }
+                }
+            }
             if(society_effect)society_effect(db_,next);
+            // AUTO-04D.2: same exclusive world transaction; no second writer.
+            colony_safety::journal::record_world_commit(db_,state,expected_generation,next);
+            colony_safety::notice::publish(db_,state,next);
             enforce_physical_guardianship_at_commit(db_,next);
             // Retain genesis (generation 1) plus three latest immutable checkpoints.
             // Genesis permits independent replay of the complete operation journal; never silently recover
@@ -4363,6 +8547,52 @@ public:
             Statement has_split_execution(db_,"SELECT 1 FROM sqlite_master "
                 "WHERE type='table' AND name='sg_split_rescue_execution'");
             const bool split_execution_exists=has_split_execution.row();
+            Statement family_evacuation(db_,"SELECT 1 FROM sqlite_master WHERE type='table' "
+                "AND name='sg_colony_family_evacuation'");
+            const bool has_family_evacuation=family_evacuation.row();
+            Statement npc_dispatch(db_,"SELECT 1 FROM sqlite_master WHERE type='table' "
+                "AND name='sg_colony_npc_autonomous_dispatch'");
+            const bool has_npc_dispatch=npc_dispatch.row();
+            Statement npc_supply(db_,"SELECT 1 FROM sqlite_master WHERE type='table' "
+                "AND name='sg_colony_npc_emergency_supply'");
+            const bool has_npc_supply=npc_supply.row();
+            Statement contact_events(db_,"SELECT 1 FROM sqlite_master WHERE type='table' "
+                "AND name='sg_colony_watch_contacts'");
+            const bool has_colony_contacts=contact_events.row();
+            Statement conflict_agendas(db_,"SELECT 1 FROM sqlite_master "
+                "WHERE type='table' AND name='sg_colony_conflict_agenda'");
+            Statement conflict_intents(db_,"SELECT 1 FROM sqlite_master "
+                "WHERE type='table' AND name='sg_colony_conflict_intent'");
+            const bool has_conflict_agendas=conflict_agendas.row();
+            const bool has_conflict_intents=conflict_intents.row();
+            Statement colony_relations(db_,"SELECT 1 FROM sqlite_master "
+                "WHERE type='table' AND name='sg_colony_relationship_revisions'");
+            const bool has_colony_relations=colony_relations.row();
+            Statement dated_intents(db_,"SELECT 1 FROM sqlite_master "
+                "WHERE type='table' AND name='sg_colony_diplomatic_intent'");
+            const bool has_dated_intents=dated_intents.row();
+            Statement governance_epochs(db_,"SELECT 1 FROM sqlite_master "
+                "WHERE type='table' AND name='sg_colony_governance_epochs'");
+            const bool has_governance_epochs=governance_epochs.row();
+            Statement npc_exit_pressure(db_,"SELECT 1 FROM sqlite_master "
+                "WHERE type='table' AND name='sg_colony_npc_exit_pressure'");
+            const bool has_npc_exit_pressure=npc_exit_pressure.row();
+            Statement personal_outlooks(db_,"SELECT 1 FROM sqlite_master "
+                "WHERE type='table' AND name='sg_colony_npc_personal_outlook'");
+            const bool has_personal_outlooks=personal_outlooks.row();
+            Statement immigration_admissions(db_,"SELECT 1 FROM sqlite_master "
+                "WHERE type='table' AND name='sg_colony_voluntary_immigration'");
+            const bool has_immigration_admissions=immigration_admissions.row();
+            Statement immigration_settled(db_,"SELECT 1 FROM sqlite_master "
+                "WHERE type='table' AND name='sg_colony_voluntary_immigration_settled'");
+            const bool has_immigration_settled=immigration_settled.row();
+            // A WO3 legal household receipt is accepted only if restore can
+            // independently inspect the exact original before/after world
+            // snapshots. Pin both generations for each immutable receipt.
+            Statement household_provenance(db_,
+                "SELECT 1 FROM sqlite_master WHERE type='table' "
+                "AND name='sg_planet_household_migration'");
+            const bool has_household_provenance=household_provenance.row();
             const std::string prune_sql=std::string(
                 "DELETE FROM snapshots WHERE generation > 1 AND generation < ?")+
                 (incident_cases_exist ? " AND generation NOT IN "
@@ -4378,7 +8608,63 @@ public:
                 (split_exists ? " AND generation NOT IN "
                     "(SELECT world_generation FROM sg_split_rescue_intent)" : "")+
                 (split_execution_exists ? " AND generation NOT IN "
-                    "(SELECT world_generation FROM sg_split_rescue_execution)" : "");
+                    "(SELECT world_generation FROM sg_split_rescue_execution)" : "")+
+                (has_family_evacuation ? " AND generation NOT IN "
+                    "(SELECT world_generation FROM sg_colony_family_evacuation)"
+                    " AND generation NOT IN "
+                    "(SELECT world_generation-1 FROM sg_colony_family_evacuation)" : "")+
+                // The v78 NPC admission verifier independently reads this
+                // exact original accepted world snapshot at every restart.
+                (has_npc_dispatch ? " AND generation NOT IN "
+                    "(SELECT admission_generation FROM sg_colony_npc_autonomous_dispatch)"
+                    : "")+
+                // Native delivery may occur many generations after admission.
+                // Retain the two exact proof snapshots needed for replay.
+                (has_npc_supply ? " AND generation NOT IN "
+                    "(SELECT generation FROM sg_colony_npc_emergency_supply)"
+                    " AND generation NOT IN "
+                    "(SELECT e.generation FROM historical_events e "
+                    "JOIN sg_colony_npc_emergency_supply s ON s.command_id=e.command_id)"
+                    : "")+
+                (has_colony_contacts ? " AND generation NOT IN "
+                    "(SELECT world_generation FROM sg_colony_watch_contacts)"
+                    : "")+
+                (has_conflict_agendas ? " AND generation NOT IN "
+                    "(SELECT world_generation FROM sg_colony_conflict_agenda)"
+                    : "")+
+                (has_conflict_intents ? " AND generation NOT IN "
+                    "(SELECT world_generation FROM sg_colony_conflict_intent)"
+                    : "")+
+                (has_dated_intents ? " AND generation NOT IN "
+                    "(SELECT world_generation FROM sg_colony_diplomatic_intent)"
+                    : "")+
+                (has_governance_epochs ? " AND generation NOT IN "
+                    "(SELECT world_generation FROM sg_colony_governance_epochs)"
+                    : "")+
+                (has_npc_exit_pressure ? " AND generation NOT IN "
+                    "(SELECT world_generation FROM sg_colony_npc_exit_pressure)"
+                    : "")+
+                (has_personal_outlooks ? " AND generation NOT IN "
+                    "(SELECT world_generation FROM sg_colony_npc_personal_outlook)"
+                    : "")+
+                (has_immigration_admissions ? " AND generation NOT IN "
+                    "(SELECT world_generation FROM sg_colony_voluntary_immigration)"
+                    : "")+
+                (has_immigration_settled ? " AND generation NOT IN "
+                    "(SELECT world_generation FROM sg_colony_voluntary_immigration_settled)"
+                    : "")+
+                (has_household_provenance ? " AND generation NOT IN "
+                    "(SELECT world_generation FROM sg_planet_household_migration)"
+                    " AND generation NOT IN "
+                    "(SELECT world_generation-1 FROM sg_planet_household_migration)"
+                    : "")+
+                // Bind subjective diplomacy to BOTH the original physical
+                // incident and the later real NPC belief/decision generation.
+                (has_colony_relations ? " AND generation NOT IN "
+                    "(SELECT generation FROM sg_colony_relationship_revisions)"
+                    " AND generation NOT IN "
+                    "(SELECT incident_generation FROM sg_colony_relationship_revisions)"
+                    : "");
             Statement prune(db_,prune_sql.c_str());
             prune.i64(1, static_cast<std::int64_t>(next > 2 ? next - 2 : 1));
             prune.execute();
@@ -5408,6 +9694,7 @@ public:
         std::string reconstructed;
         std::int64_t ore = -1;
         bool found = false;
+        std::string last_checkpoint_rejection;
         while (cp.row()) {
             const auto gen = static_cast<std::uint64_t>(sqlite3_column_int64(cp.get(), 0));
             const auto size = sqlite3_column_bytes(cp.get(), 1);
@@ -5439,7 +9726,48 @@ public:
                         if (command.action == Action::HostEscrowConstructedStock ||
                             command.action == Action::HostReturnConstructedStock) sim.step();
                     } else if (kind == 2) {
-                        sim.step();
+                        const auto recorded_tick=static_cast<std::uint64_t>(
+                            sqlite3_column_int64(journal.get(),4));
+                        if(recorded_tick==sim.tick()+1) {
+                            // Only an advancing original clock row is a STEP.
+                            sim.step();
+                        } else if(recorded_tick==sim.tick()) {
+                            // Historical host custody transactions also use
+                            // kind=2, but do not advance simulation time.
+                            // They cannot be reconstructed by fabricating a
+                            // STEP. Require the original retained snapshot
+                            // and independent journal checksum/tick/resource
+                            // witnesses before proceeding to later operations.
+                            Statement witness(db_,
+                                "SELECT state,checksum,ore_total,credit_total "
+                                "FROM snapshots WHERE generation=?");
+                            witness.i64(1,static_cast<std::int64_t>(g));
+                            if(!witness.row())
+                                throw std::runtime_error(
+                                    "recovery: missing same-tick custody checkpoint");
+                            const auto size=sqlite3_column_bytes(witness.get(),0);
+                            const auto* raw=static_cast<const char*>(
+                                sqlite3_column_blob(witness.get(),0));
+                            if(size<=0 || size>16*1024*1024 || !raw)
+                                throw std::runtime_error(
+                                    "recovery: invalid same-tick custody snapshot");
+                            auto recorded=Simulation::from_snapshot(
+                                std::string(raw,static_cast<std::size_t>(size)));
+                            const auto expected_hash=parse_u64(
+                                sqlite3_column_text(journal.get(),3));
+                            if(recorded.tick()!=recorded_tick ||
+                               recorded.state_hash()!=expected_hash ||
+                               recorded.state_hash()!=parse_u64(
+                                   sqlite3_column_text(witness.get(),1)) ||
+                               recorded.total_ore()!=ore ||
+                               recorded.total_ore()!=sqlite3_column_int64(witness.get(),2) ||
+                               recorded.total_credits()!=credit_total ||
+                               recorded.total_credits()!=sqlite3_column_int64(witness.get(),3))
+                                throw std::runtime_error(
+                                    "recovery: same-tick custody witness mismatch");
+                            sim=std::move(recorded);
+                        } else throw std::runtime_error(
+                            "recovery: regressive or missing native step");
                     } else throw std::runtime_error("recovery: invalid journal kind");
                     if (sim.state_hash() != parse_u64(sqlite3_column_text(journal.get(), 3)) ||
                         sim.tick() != static_cast<std::uint64_t>(sqlite3_column_int64(journal.get(), 4)) ||
@@ -5455,11 +9783,16 @@ public:
                 reconstructed = sim.canonical_state();
                 found = true;
                 break;
-            } catch (const std::exception&) {
-                // Try another retained checkpoint. Never guess around missing operations.
+            } catch (const std::exception& e) {
+                // Record why a candidate failed but never substitute a guessed
+                // checkpoint or bypass original command and receipt validation.
+                last_checkpoint_rejection = e.what();
             }
         }
-        if (!found) throw std::runtime_error("recovery: cannot verify latest state; refusing repair");
+        if (!found) throw std::runtime_error(
+            "recovery: cannot verify latest state; refusing repair" +
+            (last_checkpoint_rejection.empty() ? std::string{} :
+             " (last checkpoint: " + last_checkpoint_rejection + ")"));
         run(db_, "BEGIN IMMEDIATE");
         try {
             if (latest_generation(db_) != newest) throw std::runtime_error("recovery: source changed");
@@ -5521,6 +9854,18 @@ void PersistentWorld::recover_copy(const std::string& source, const std::string&
         Simulation checked(1);std::uint64_t gen=0;std::int64_t ore=0,credit=0;
         if(!copy.restore(checked,gen,ore,credit))
             throw std::runtime_error("recovery: missing world checkpoint");
+        copy.verify_physical_dependent_authority(checked);
+        copy.verify_autonomous_dispatch(gen);
+        copy.verify_supervisor_plans(gen);
+        copy.verify_npc_habitat_supplies(gen);
+        copy.verify_colony_watch_contacts(gen);
+        copy.verify_colony_conflicts(gen);
+        copy.verify_colony_governance(gen);
+        copy.verify_colony_exit_pressure(gen);
+        copy.verify_personal_outlooks(gen);
+        copy.verify_colony_voluntary_immigration(gen);
+        copy.verify_colony_relationships(gen);
+        copy.verify_colony_diplomatic_intents(gen);
         verify_dependent_stranding_cases(destination,gen);
         verify_split_rescue_intents(destination,gen);
     } catch (...) {
@@ -5540,6 +9885,12 @@ PersistentWorld::PersistentWorld(const std::string& path, Simulation initial_wor
     if (!store_->restore(world_, generation_, resource_origin_, credit_origin_)) {
         if (world_.tick() != 0 || !world_.events().empty() || world_.accepted_command_count() != 0)
             throw std::invalid_argument("initial world must be at tick zero without commands");
+        // Some original genesis worlds receive scanner/probe equipment
+        // (and hence snapshot v64+) before named crew enrollment. Convert
+        // only the already-existing finite crew at first SQLite genesis.
+        if(world_.snapshot_version_>=64 && !world_.npc_next_seen_ &&
+           world_.npcs_.empty() && !world_.colony_ships_.empty())
+            world_.enable_individual_workforce();
         resource_origin_ = world_.total_ore();
         credit_origin_ = world_.total_credits();
         store_->commit(world_, 0, resource_origin_, credit_origin_, nullptr, {}, {}, {}, FailPoint::None);
@@ -5551,8 +9902,1827 @@ PersistentWorld::PersistentWorld(const std::string& path, Simulation initial_wor
     shipping::verify_manifest_registry(db_path_);
     shipping::verify_third_party_registry(db_path_);
     store_->verify_colony_safety_evidence();
+    store_->verify_colony_response(world_,generation_);
+    store_->verify_colony_notifications(world_,generation_);
+    store_->verify_physical_dependent_authority(world_);
+    store_->verify_autonomous_dispatch(generation_);
+    store_->verify_supervisor_plans(generation_);
+    store_->verify_npc_habitat_supplies(generation_);
+    store_->verify_colony_watch_contacts(generation_);
+    store_->verify_colony_conflicts(generation_);
+    store_->verify_colony_governance(generation_);
+    store_->verify_colony_exit_pressure(generation_);
+    store_->verify_personal_outlooks(generation_);
+    store_->verify_colony_voluntary_immigration(generation_);
+    store_->verify_colony_relationships(generation_);
+    store_->verify_colony_diplomatic_intents(generation_);
 }
 PersistentWorld::~PersistentWorld() = default;
+// Shared native transition: manual host travel and all NPC-operated
+// navigation now use identical Simulation physical guards and effects.
+bool PersistentWorld::begin_celestial_transit(
+    PlayerId owner,EntityId ship,std::uint64_t body,std::uint64_t id,FailPoint fail) {
+    // No ship may abandon its original player inside a planetary shuttle,
+    // descending, or on the surface. This is not a client navigation hint.
+    for(const auto& [principal,p]:world_.player_people()){
+        (void)principal;
+        if(p.home_ship==ship &&
+           (p.state==PlayerPersonState::InPlanetaryShuttle ||
+            p.state==PlayerPersonState::PlanetaryTransit ||
+            p.state==PlayerPersonState::AtPlanetarySurface))
+            return false;
+    }
+    // Do not commandeer an active, owner-authorized NPC navigation ship or
+    // adopt its durable planned receipt as a different host command.
+    for(const auto& [flight_id,order]:world_.npc_flight_orders_){
+        (void)flight_id;
+        if((order.phase==NpcFlightPhase::Planned ||
+            order.phase==NpcFlightPhase::InTransit) &&
+           (order.ship==ship || order.transit_request==id))return false;
+    }
+    auto next=world_;
+    if(!next.begin_native_celestial_transit(owner,ship,body,id))return false;
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);++generation_;
+    return true;
+}
+bool PersistentWorld::complete_celestial_transit(std::uint64_t id,FailPoint fail) {
+    auto next=world_;
+    if(!next.complete_native_celestial_transit(id))return false;
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);++generation_;
+    return true;
+}
+bool PersistentWorld::assign_planetary_shuttle_visitor_duty(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,std::uint64_t npc,bool assign,FailPoint fail) {
+    for(const auto& [id,p]:world_.pending_celestial_transits_) {
+        (void)id;
+        if(p.ship==ship)return false;
+    }
+    auto next=world_;
+    if(!next.assign_planetary_shuttle_visitor_duty(owner,ship,key,npc,assign))
+        return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("visitor duty assignment changed conserved matter");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);
+    ++generation_;
+    return true;
+}
+bool PersistentWorld::transfer_planetary_shuttle_visitor(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,std::uint64_t npc,bool reboard,FailPoint fail) {
+    for(const auto& [id,p]:world_.pending_celestial_transits_) {
+        (void)id;
+        if(p.ship==ship)return false;
+    }
+    // ART02 secondary parentage is not present on PhysicalDependent.
+    if(reboard && store_->has_art02_child_parent(npc))return false;
+    auto next=world_;
+    if(!next.transfer_planetary_shuttle_visitor(owner,ship,key,npc,reboard))
+        return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("planetary visitor transfer changed conserved matter");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);
+    ++generation_;
+    return true;
+}
+bool PersistentWorld::book_planetary_shuttle_family(PlayerId owner,
+        EntityId ship,const PlanetarySiteKey& key,std::uint64_t guardian,
+        std::uint64_t co_parent,const std::vector<std::uint64_t>& children,
+        std::uint64_t request_id,FailPoint fail) {
+    for(const auto& [id,p]:world_.pending_celestial_transits_) {
+        (void)id;
+        if(p.ship==ship)return false;
+    }
+    if(!store_->valid_planetary_family_births(
+        world_,ship,guardian,co_parent,children))return false;
+    auto next=world_;
+    if(!next.book_planetary_shuttle_family(
+        Simulation::kServerAuthority,owner,ship,key,guardian,co_parent,
+        children,request_id))return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("family booking fabricated physical matter");
+    const auto verify=[&](sqlite3*,std::uint64_t) {
+        if(!store_->valid_planetary_family_births(
+            world_,ship,guardian,co_parent,children))
+            throw std::runtime_error("ART02 birth changed during family booking");
+    };
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail,nullptr,nullptr,verify);
+    world_.swap(next);
+    ++generation_;
+    return true;
+}
+bool PersistentWorld::release_planetary_shuttle_family(PlayerId owner,
+        EntityId ship,const PlanetarySiteKey& key,FailPoint fail) {
+    auto next=world_;
+    if(!next.release_planetary_shuttle_family(
+        Simulation::kServerAuthority,owner,ship,key))return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("family return clearance altered matter");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);
+    ++generation_;
+    return true;
+}
+bool PersistentWorld::book_planetary_shuttle_passenger(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,std::uint64_t npc,bool board,FailPoint fail) {
+    for(const auto& [id,p]:world_.pending_celestial_transits_) {
+        (void)id;
+        if(p.ship==ship)return false;
+    }
+    if(board && store_->has_art02_child_parent(npc))return false;
+    auto next=world_;
+    if(!next.book_planetary_shuttle_passenger(owner,ship,key,npc,board))
+        return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("shuttle passenger booking changed conserved matter");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);
+    ++generation_;
+    return true;
+}
+// S6-F5: only the original SQLite generation/writer can authorize a real
+// player or named NPC footstep. Failed writes leave receipts and poses intact.
+// v135 source-only inventory and medical actions in the SAME verified
+// SQLite writer. Neither Godot commands nor staff credentials can alter
+// state without original Simulation admission and successful atomic commit.
+bool PersistentWorld::planetary_surface_suit_action(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,Simulation::OriginalSuitAction action,
+        std::uint64_t receipt,FailPoint fail){
+    if(!receipt || receipt>=(std::uint64_t{1}<<60) ||
+       store_->station_receipt_used(receipt))return false;
+    for(const auto& [id,t]:world_.pending_celestial_transits_){
+        (void)id;if(t.ship==ship)return false;
+    }
+    auto next=world_;
+    if(!next.planetary_surface_suit_action(owner,ship,key,action,receipt))
+        return false;
+    if(next.total_ore()!=resource_origin_ ||
+       next.total_credits()!=credit_origin_ ||
+       next.total_material_kg()!=world_.total_material_kg())
+        throw std::logic_error("manufactured suit changed original world matter");
+    if(Simulation::from_snapshot(next.canonical_state()).state_hash()!=
+       next.state_hash())
+        throw std::logic_error("manufactured equipment cannot recover");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);++generation_;
+    return true;
+}
+bool PersistentWorld::planetary_surface_treatment(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,std::uint64_t receipt,FailPoint fail){
+    if(!receipt || receipt>=(std::uint64_t{1}<<60) ||
+       store_->station_receipt_used(receipt))return false;
+    for(const auto& [id,t]:world_.pending_celestial_transits_){
+        (void)id;if(t.ship==ship)return false;
+    }
+    auto next=world_;
+    if(!next.planetary_surface_treatment(owner,ship,key,receipt))return false;
+    if(next.total_ore()!=resource_origin_ ||
+       next.total_credits()!=credit_origin_ ||
+       next.total_material_kg()!=world_.total_material_kg())
+        throw std::logic_error("medical care changed original conserved material");
+    if(Simulation::from_snapshot(next.canonical_state()).state_hash()!=
+       next.state_hash())
+        throw std::logic_error("original medical care cannot recover");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);++generation_;
+    return true;
+}
+
+// S6-F5-C: one v134 source-verified game tick and a one-use jump/wait
+// decision are committed together in the ORIGINAL SQLite journal. A failed
+// authority or snapshot attempt cannot publish a partial radial motion.
+bool PersistentWorld::planetary_surface_vertical_action(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,bool jump,std::uint64_t receipt,
+        FailPoint fail) {
+    if(!receipt || receipt>=(std::uint64_t{1}<<60) ||
+       store_->station_receipt_used(receipt))return false;
+    for(const auto& [id,transit]:world_.pending_celestial_transits_){
+        (void)id;if(transit.ship==ship)return false;
+    }
+    auto next=world_;
+    // The original supervised world ticker, not a keypress, owns time.
+    // This command records an impulse at its already-committed current tick.
+    if(!next.planetary_surface_vertical_action(owner,ship,key,jump,receipt))
+        return false;
+    if(next.total_ore()!=resource_origin_ ||
+       next.total_credits()!=credit_origin_ ||
+       next.total_material_kg()!=world_.total_material_kg())
+        throw std::logic_error("vertical action changed original source material");
+    if(Simulation::from_snapshot(next.canonical_state()).state_hash()!=
+       next.state_hash())
+        throw std::logic_error("original v134 vertical state cannot recover");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);++generation_;
+    return true;
+}
+
+// S6-F5-C: exactly one source site's originally recorded oxygen mass is
+// transferred between that site and its physically present owner-person.
+// Spent gas stays with the person until it is returned at the SAME hatch.
+bool PersistentWorld::planetary_surface_oxygen_action(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,bool return_to_site,std::uint64_t receipt,
+        FailPoint fail) {
+    if(!receipt || receipt>=(std::uint64_t{1}<<60) ||
+       store_->station_receipt_used(receipt))return false;
+    for(const auto& [id,transit]:world_.pending_celestial_transits_){
+        (void)id;if(transit.ship==ship)return false;
+    }
+    auto next=world_;
+    if(!next.planetary_surface_oxygen_action(owner,ship,key,return_to_site,receipt))
+        return false;
+    if(next.total_ore()!=resource_origin_ ||
+       next.total_credits()!=credit_origin_ ||
+       next.total_material_kg()!=world_.total_material_kg())
+        throw std::logic_error("personal oxygen allocation changed conserved ore");
+    const auto& old_site=world_.planetary_sites().at(key);
+    const auto& new_site=next.planetary_sites().at(key);
+    const auto& old_person=world_.player_people().at(owner).surface_survival;
+    const auto& new_person=next.player_people().at(owner).surface_survival;
+    const auto old_mass=old_site.oxygen_kg+old_site.co2_kg+
+                       old_person.oxygen_kg+old_person.exhaled_co2_kg;
+    const auto new_mass=new_site.oxygen_kg+new_site.co2_kg+
+                       new_person.oxygen_kg+new_person.exhaled_co2_kg;
+    if(old_mass!=new_mass)
+        throw std::logic_error("original person oxygen source mass not conserved");
+    if(Simulation::from_snapshot(next.canonical_state()).state_hash()!=
+       next.state_hash())
+        throw std::logic_error("original oxygen custody cannot recover");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);++generation_;
+    return true;
+}
+
+bool PersistentWorld::planetary_surface_move(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,std::uint64_t npc_id,
+        std::int64_t dx_mm,std::int64_t dz_mm,std::uint64_t receipt,
+        FailPoint fail) {
+    if(!receipt || receipt>=(std::uint64_t{1}<<60) ||
+       store_->station_receipt_used(receipt))return false;
+    for(const auto& [request,transit]:world_.pending_celestial_transits_) {
+        (void)request;
+        if(transit.ship==ship)return false;
+    }
+    auto next=world_;
+    if(!next.planetary_surface_move(owner,ship,key,npc_id,
+                                   dx_mm,dz_mm,receipt))
+        return false;
+    if(next.total_ore()!=resource_origin_ ||
+       next.total_credits()!=credit_origin_ ||
+       next.total_material_kg()!=world_.total_material_kg())
+        throw std::logic_error("surface movement altered original conserved resources");
+    if(Simulation::from_snapshot(next.canonical_state()).state_hash()!=
+       next.state_hash())
+        throw std::logic_error("original surface pose cannot recover");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);++generation_;
+    return true;
+}
+
+// S6-F4: one original SQLite writer transaction for an explicitly approved
+// player shuttle boarding, surface release, reboard or original ship return.
+// This is not the visual inspector, NPC transport manifest or a new world.
+bool PersistentWorld::planetary_player_shuttle_action(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,PlanetaryPlayerAction action,
+        std::uint64_t receipt,FailPoint fail) {
+    if(!receipt || receipt>=(std::uint64_t{1}<<60) ||
+       store_->station_receipt_used(receipt))return false;
+    for(const auto& [id,p]:world_.pending_celestial_transits_) {
+        (void)id;
+        if(p.ship==ship)return false;
+    }
+    auto next=world_;
+    if(!next.planetary_player_shuttle_action(owner,ship,key,action,receipt))
+        return false;
+    if(next.total_ore()!=resource_origin_ ||
+       next.total_credits()!=credit_origin_)
+        throw std::logic_error("player planetary transport changed conserved resources");
+    if(Simulation::from_snapshot(next.canonical_state()).state_hash()!=
+       next.state_hash())
+        throw std::logic_error("player planetary custody cannot restore");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);++generation_;
+    return true;
+}
+
+bool PersistentWorld::launch_planetary_shuttle(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,std::uint64_t request_id,bool ascend,FailPoint fail) {
+    for(const auto& [id,p]:world_.pending_celestial_transits_) {
+        (void)id;
+        if(p.ship==ship)return false;
+    }
+    // Recheck actual ART02 parentage at takeoff, not only booking time.
+    // A birth recorded after an earlier booking must not strand a child.
+    if(const auto it=world_.planetary_shuttles().find(key);
+       it!=world_.planetary_shuttles().end()) {
+        if(store_->has_art02_child_parent(it->second.pilot_npc))
+            return false;
+        const auto& family=it->second.family;
+        if(family.stage && !store_->valid_planetary_family_births(
+            world_,ship,family.guardian_id,family.co_parent_id,
+            family.child_ids,(family.stage>=5 &&
+                world_.planetary_sites().count(key))?
+                world_.planetary_sites().at(key).surface_location:ship))
+            return false;
+        for(const auto adult:it->second.passenger_ids)
+            if(store_->has_art02_child_parent(adult) &&
+               (!family.stage ||
+                (adult!=family.guardian_id &&
+                 adult!=family.co_parent_id)))return false;
+    }
+    auto next=world_;
+    if(!next.launch_planetary_shuttle(owner,ship,key,request_id,ascend))
+        return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("shuttle takeoff altered conserved resources");
+    // Retry the ART02 query INSIDE the original SQLite world commit lock:
+    // no new child may appear between preflight and actual takeoff.
+    const auto source=world_.planetary_shuttles().find(key);
+    const auto verify=[&](sqlite3*,std::uint64_t) {
+        if(source==world_.planetary_shuttles().end())return;
+        const auto& original=source->second;
+        if(store_->has_art02_child_parent(original.pilot_npc))
+            throw std::runtime_error("pilot acquired an unmanifested child");
+        const auto& family=original.family;
+        if(family.stage && !store_->valid_planetary_family_births(
+            world_,ship,family.guardian_id,family.co_parent_id,
+            family.child_ids,(family.stage>=5 &&
+                world_.planetary_sites().count(key))?
+                world_.planetary_sites().at(key).surface_location:ship))
+            throw std::runtime_error("family changed during shuttle takeoff");
+        for(const auto adult:original.passenger_ids)
+            if(store_->has_art02_child_parent(adult) &&
+               (!family.stage ||
+                (adult!=family.guardian_id &&
+                 adult!=family.co_parent_id)))
+                throw std::runtime_error("unmanifested adult parent at takeoff");
+    };
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail,nullptr,nullptr,verify);
+    world_.swap(next);
+    ++generation_;
+    return true;
+}
+
+bool PersistentWorld::assign_shipyard_builders(PlayerId owner,std::uint64_t id,
+        std::array<std::uint64_t,2> replacement,FailPoint fail) {
+    auto next=world_;
+    if(!next.assign_shipyard_builders(owner,id,replacement))return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("shipyard worker reassignment changed matter");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);
+    ++generation_;
+    return true;
+}
+bool PersistentWorld::queue_shipyard_freighter(
+        PlayerId owner,std::uint64_t yard_id,std::uint64_t build_id,
+        FailPoint fail) {
+    auto next=world_;
+    if(!next.queue_shipyard_freighter(owner,yard_id,build_id))return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("freighter build material escrow altered total matter");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);
+    ++generation_;
+    return true;
+}
+bool PersistentWorld::commission_shipyard_freighter(
+        PlayerId owner,std::uint64_t build_id,
+        std::array<std::uint64_t,2> crew,std::int64_t provisions_kg_each,
+        FailPoint fail) {
+    auto next=world_;
+    if(!next.commission_shipyard_freighter(owner,build_id,crew,provisions_kg_each))
+        return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("commissioning changed conserved world matter");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);
+    ++generation_;
+    return true;
+}
+// SHIP-01F all four contract transitions are copied-state SQLite commits;
+// failure injection never publishes an unfunded/fabricated vessel or moves
+// one seller module without its matched buyer debit.
+// WORK-01A: durable intent and revocation use the same SQLite publication
+// boundary as native material actions. The coordinator runs only within
+// PersistentWorld::step and calls existing native effects on that copy.
+bool PersistentWorld::delegate_customer_ship_order(
+        PlayerId owner,EntityId ship,std::uint64_t id,std::uint64_t contract,
+        std::array<std::uint64_t,2> crew,std::int64_t provisions,
+        std::uint64_t dependency,FailPoint fail) {
+    auto next=world_;
+    if(!next.delegate_customer_ship_order(owner,ship,id,contract,crew,
+                                          provisions,dependency))return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("delegating NPC work altered conserved matter");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);++generation_;
+    return true;
+}
+// WORK-01C: retain v94 original-world transaction, failpoints, conservation
+// and recovery. The delegation is not a new shipment/stock/manifest writer.
+// FLIGHT-01 is mission-neutral and journaled exactly like all other
+// original world actions: no parallel flight database or unsupervised thread.
+// DOCK-03: an original named NPC stationed ashore remains attached to its
+// finite home crew. Do not let any ordinary player or supervised cockpit
+// command depart while one of that vessel's own crew is physically at dock.
+// Native internal NPC launch paths not routed through PersistentWorld remain
+// a separate integration gate.
+static bool has_named_crew_on_station(const Simulation& world,EntityId ship_id){
+    const auto* ship=world.find(ship_id);
+    if(!ship || ship->dock_state!=DockState::Docked || !ship->dock_station)
+        return false;
+    std::uint64_t inspected=0;
+    for(const auto& [id,npc]:world.npc_records()){
+        (void)id;
+        if(++inspected>4096)return true; // fail closed on huge rosters
+        if(npc.home_ship==ship_id && npc.location==ship->dock_station &&
+           npc.role==NpcRole::Ship && !npc.transport_id)
+            return true;
+    }
+    return false;
+}
+
+bool PersistentWorld::queue_npc_flight(
+    PlayerId owner,EntityId ship,std::uint64_t pilot,
+    std::uint64_t destination,std::uint64_t order_id,
+    std::uint64_t transit_request,NpcFlightPurpose purpose,FailPoint fail){
+    if(has_named_crew_on_station(world_,ship))return false;
+    auto next=world_;
+    if(!next.queue_npc_flight(owner,ship,pilot,destination,order_id,
+                              transit_request,purpose))return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("navigation authorization created material");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);++generation_;
+    return true;
+}
+bool PersistentWorld::queue_npc_station_docking(
+    PlayerId owner,EntityId ship,std::uint64_t pilot,
+    EntityId station,std::uint64_t order_id,
+    NpcFlightPurpose purpose,FailPoint fail){
+    if(has_named_crew_on_station(world_,ship) ||
+       world_.has_original_station_guest_ashore(ship))return false;
+    auto next=world_;
+    if(!next.queue_npc_station_docking(
+        owner,ship,pilot,station,order_id,purpose))return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("local navigation created material");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);++generation_;
+    return true;
+}
+bool PersistentWorld::register_player_person(PlayerId owner,EntityId aboard,
+    FailPoint fail){
+    auto next=world_;
+    if(!next.register_player_person(owner,aboard))return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("player registration created material");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);++generation_;
+    return true;
+}
+bool PersistentWorld::register_player_at_station(PlayerId owner,EntityId station,FailPoint fail){
+    auto next=world_;
+    if(!next.register_player_at_station(owner,station))return false;
+    if(next.total_ore()!=resource_origin_||next.total_credits()!=credit_origin_)
+        throw std::logic_error("player station registration changed world resources");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);++generation_;
+    return true;
+}
+bool PersistentWorld::station_player_action(PlayerId owner,EntityId station,
+        EntityId ship,StationPlayerAction action,std::int64_t dx,std::int64_t dz,
+        std::uint64_t receipt,FailPoint fail){
+    if(!receipt || receipt>=static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max()) ||
+       store_->station_receipt_used(receipt))return false;
+    // Prevalidate on a copy. The original trusted world STEP remains the only
+    // source of tick advancement; full admission is reevaluated after STEP.
+    auto preview=world_;
+    if(!preview.station_player_action(owner,station,ship,action,dx,dz,receipt))
+        return false;
+    const auto expected_generation=generation_;
+    step_with_cell_worker(nullptr,fail,
+        [&](sqlite3* db,std::uint64_t committed){
+            // Record one action receipt under the SAME canonical SQLite writer
+            // as original world STEP, snapshot and generation, never in Godot.
+            if(committed!=expected_generation+1)
+                throw std::runtime_error("station transfer generation race");
+            run(db,"CREATE TABLE IF NOT EXISTS sg_station_player_action("
+                "receipt INTEGER PRIMARY KEY CHECK(receipt>0),"
+                "owner INTEGER NOT NULL,station INTEGER NOT NULL,"
+                "ship INTEGER NOT NULL,action INTEGER NOT NULL CHECK(action BETWEEN 1 AND 3),"
+                "tick INTEGER NOT NULL,generation INTEGER NOT NULL)");
+            Statement check(db,"SELECT kind,tick FROM operation_log WHERE generation=?");
+            check.i64(1,static_cast<std::int64_t>(committed));
+            if(!check.row() || sqlite3_column_int(check.get(),0)!=2 ||
+               sqlite3_column_int64(check.get(),1)!=
+                    static_cast<std::int64_t>(world_.tick()+1) || check.row())
+                throw std::runtime_error("station transfer lacks original world STEP");
+            Statement put(db,"INSERT INTO sg_station_player_action VALUES(?,?,?,?,?,?,?)");
+            put.i64(1,static_cast<std::int64_t>(receipt));
+            put.i64(2,static_cast<std::int64_t>(owner));
+            put.i64(3,static_cast<std::int64_t>(station));
+            put.i64(4,static_cast<std::int64_t>(ship));
+            put.i64(5,static_cast<int>(action));
+            put.i64(6,static_cast<std::int64_t>(world_.tick()+1));
+            put.i64(7,static_cast<std::int64_t>(committed));
+            put.execute();
+            if(sqlite3_changes(db)!=1)
+                throw std::runtime_error("station transfer receipt not unique");
+        },
+        [&](Simulation& next){
+            if(!next.station_player_action(owner,station,ship,action,dx,dz,receipt))
+                throw std::runtime_error("station custody changed during STEP");
+        });
+    return true;
+}
+bool PersistentWorld::station_dock_worker_transfer(
+        PlayerId owner,EntityId ship,EntityId station,std::uint64_t npc,
+        bool disembark,std::uint64_t receipt,FailPoint fail){
+    if(!receipt ||
+       receipt>=static_cast<std::uint64_t>(std::numeric_limits<sqlite3_int64>::max()))
+        return false;
+    // Preview guarantees that no invalid crew member receives a reserved
+    // event or tick. The real mutation is rechecked after the STEP.
+    auto preview=world_;
+    if(!preview.station_dock_worker_transfer(owner,ship,station,npc,disembark))
+        return false;
+    // A family/dependent ledger may bind a named adult as a guardian.
+    // Do not send a guardian ashore independently of child custody.
+    if(store_->named_worker_has_dependent_link(npc))return false;
+    const auto expected_generation=generation_;
+    step_with_cell_worker(nullptr,fail,
+        [&](sqlite3* db,std::uint64_t generation){
+            if(generation!=expected_generation+1 ||
+               store_->named_worker_has_dependent_link(npc))
+                throw std::runtime_error("dock worker custody or guardian changed");
+            run(db,"CREATE TABLE IF NOT EXISTS sg_dock_worker_moves("
+                "receipt INTEGER PRIMARY KEY CHECK(receipt>0),"
+                "owner INTEGER NOT NULL,ship INTEGER NOT NULL,"
+                "station INTEGER NOT NULL,npc_id INTEGER NOT NULL,"
+                "direction INTEGER NOT NULL CHECK(direction IN(1,2)),"
+                "tick INTEGER NOT NULL,generation INTEGER NOT NULL)");
+            run(db,"CREATE INDEX IF NOT EXISTS sg_dock_moves_identity_v1 "
+                   "ON sg_dock_worker_moves(npc_id,generation DESC)");
+            Statement record(db,"INSERT INTO sg_dock_worker_moves "
+                "(receipt,owner,ship,station,npc_id,direction,tick,generation) "
+                "VALUES(?,?,?,?,?,?,?,?)");
+            record.i64(1,static_cast<sqlite3_int64>(receipt));
+            record.i64(2,static_cast<sqlite3_int64>(owner));
+            record.i64(3,static_cast<sqlite3_int64>(ship));
+            record.i64(4,static_cast<sqlite3_int64>(station));
+            record.i64(5,static_cast<sqlite3_int64>(npc));
+            record.i64(6,disembark?1:2);
+            record.i64(7,static_cast<sqlite3_int64>(world_.tick()+1));
+            record.i64(8,static_cast<sqlite3_int64>(generation));
+            record.execute();
+            if(sqlite3_changes(db)!=1)
+                throw std::runtime_error("dock worker move receipt not unique");
+        },
+        [&](Simulation& next){
+            if(!next.station_dock_worker_transfer(
+                owner,ship,station,npc,disembark))
+                throw std::runtime_error("dock NPC custody changed during STEP");
+        });
+    return true;
+}
+
+bool PersistentWorld::station_visitor_transfer(
+    PlayerId owner,EntityId receiver,EntityId station,std::uint64_t npc,
+    std::uint64_t voyage,bool ashore,std::uint64_t receipt,FailPoint fail){
+    if(!receipt || receipt>=static_cast<std::uint64_t>(
+           std::numeric_limits<sqlite3_int64>::max()))return false;
+    // Original voyage is independently completed BEFORE a visitor can be
+    // entered into the destination physical station. Never infer arrival
+    // from a ticket, AI intention or flight's predicted ETA.
+    auto preview=world_;
+    if(!preview.station_visitor_transfer(owner,receiver,station,npc,voyage,ashore) ||
+       store_->named_worker_has_dependent_link(npc))return false;
+    const auto expected=generation_;
+    step_with_cell_worker(nullptr,fail,
+        [&](sqlite3* db,std::uint64_t generation){
+            if(generation!=expected+1 ||
+               store_->named_worker_has_dependent_link(npc))
+                throw std::runtime_error("visitor custody or family authority changed");
+            run(db,"CREATE TABLE IF NOT EXISTS sg_dock05_visitor_moves("
+                   "receipt INTEGER PRIMARY KEY CHECK(receipt>0),"
+                   "owner INTEGER NOT NULL,receiving_ship INTEGER NOT NULL,"
+                   "station INTEGER NOT NULL,npc_id INTEGER NOT NULL,"
+                   "voyage INTEGER NOT NULL,direction INTEGER NOT NULL "
+                   "CHECK(direction IN(1,2)),"
+                   "tick INTEGER NOT NULL,generation INTEGER NOT NULL)");
+            run(db,"CREATE INDEX IF NOT EXISTS sg_dock05_visitor_identity "
+                   "ON sg_dock05_visitor_moves(npc_id,generation DESC)");
+            Statement proof(db,"INSERT INTO sg_dock05_visitor_moves "
+                "(receipt,owner,receiving_ship,station,npc_id,voyage,"
+                "direction,tick,generation) VALUES(?,?,?,?,?,?,?,?,?)");
+            proof.i64(1,static_cast<sqlite3_int64>(receipt));
+            proof.i64(2,static_cast<sqlite3_int64>(owner));
+            proof.i64(3,static_cast<sqlite3_int64>(receiver));
+            proof.i64(4,static_cast<sqlite3_int64>(station));
+            proof.i64(5,static_cast<sqlite3_int64>(npc));
+            proof.i64(6,static_cast<sqlite3_int64>(voyage));
+            proof.i64(7,ashore?1:2);
+            proof.i64(8,static_cast<sqlite3_int64>(world_.tick()+1));
+            proof.i64(9,static_cast<sqlite3_int64>(generation));
+            proof.execute();
+            if(sqlite3_changes(db)!=1)
+                throw std::runtime_error("original visitor movement duplicate");
+        },
+        [&](Simulation& next){
+            if(!next.station_visitor_transfer(
+                owner,receiver,station,npc,voyage,ashore))
+                throw std::runtime_error("original guest destination changed");
+        });
+    return true;
+}
+
+bool PersistentWorld::grant_player_rescue_consent(
+    PlayerId owner,EntityId receiver,std::uint64_t consent_id,FailPoint fail){
+    auto next=world_;
+    if(!next.grant_player_rescue_consent(owner,receiver,consent_id))return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("player consent changed world matter");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);++generation_;
+    return true;
+}
+bool PersistentWorld::revoke_player_rescue_consent(
+    PlayerId owner,std::uint64_t consent_id,FailPoint fail){
+    auto next=world_;
+    if(!next.revoke_player_rescue_consent(owner,consent_id))return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("player rescue revocation changed world matter");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);++generation_;
+    return true;
+}
+bool PersistentWorld::complete_player_rescue(
+    PlayerId owner,EntityId receiver,std::uint64_t flight_id,
+    std::uint64_t receipt,FailPoint fail){
+    auto next=world_;
+    if(!next.complete_player_rescue(owner,receiver,flight_id,receipt))return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("player rescue changed world matter");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);++generation_;
+    return true;
+}
+bool PersistentWorld::queue_npc_ship_rendezvous(
+    PlayerId owner,EntityId ship,std::uint64_t pilot,
+    EntityId target_ship,std::uint64_t order_id,
+    NpcFlightPurpose purpose,FailPoint fail){
+    if(has_named_crew_on_station(world_,ship))return false;
+    auto next=world_;
+    if(!next.queue_npc_ship_rendezvous(
+        owner,ship,pilot,target_ship,order_id,purpose))return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("rendezvous navigation created material");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);++generation_;
+    return true;
+}
+bool PersistentWorld::cancel_npc_flight(
+    PlayerId owner,std::uint64_t order_id,FailPoint fail){
+    auto next=world_;
+    if(!next.cancel_npc_flight(owner,order_id))return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("navigation cancellation altered matter");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);++generation_;
+    return true;
+}
+bool PersistentWorld::delegate_transport_work_order(
+        PlayerId owner,EntityId origin,std::uint64_t id,WorkTaskKind kind,
+        std::uint64_t source,std::uint64_t dependency,FailPoint fail) {
+    auto next=world_;
+    if(!next.delegate_transport_work_order(owner,origin,id,kind,source,
+                                           dependency))return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("transport delegation changed conserved matter");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);++generation_;
+    return true;
+}
+bool PersistentWorld::cancel_work_directive(
+        PlayerId owner,std::uint64_t directive,FailPoint fail) {
+    auto next=world_;
+    if(!next.cancel_work_directive(owner,directive))return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("work revocation altered conserved matter");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);++generation_;
+    return true;
+}
+bool PersistentWorld::post_shipyard_customer_order(
+        PlayerId customer,EntityId buyer_ship,std::uint64_t yard,
+        std::uint64_t build,std::uint64_t id,FailPoint fail) {
+    auto next=world_;
+    if(!next.post_shipyard_customer_order(customer,buyer_ship,yard,build,id))
+        return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("shipyard request changed conserved resources");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);++generation_;
+    return true;
+}
+bool PersistentWorld::accept_shipyard_customer_order(
+        PlayerId supplier,std::uint64_t id,FailPoint fail) {
+    auto next=world_;
+    if(!next.accept_shipyard_customer_order(supplier,id))return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("shipyard acceptance changed conserved resources");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);++generation_;
+    return true;
+}
+bool PersistentWorld::fund_shipyard_customer_order(
+        PlayerId customer,std::uint64_t id,FailPoint fail) {
+    auto next=world_;
+    if(!next.fund_shipyard_customer_order(customer,id))return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("shipyard material funding altered conserved resources");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);++generation_;
+    return true;
+}
+bool PersistentWorld::deliver_shipyard_customer_order(
+        PlayerId customer,std::uint64_t id,FailPoint fail) {
+    auto next=world_;
+    if(!next.deliver_shipyard_customer_order(customer,id))return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("shipyard handover altered conserved resources");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);++generation_;
+    return true;
+}
+bool PersistentWorld::start_shipyard_construction(
+        PlayerId owner,EntityId colony,std::uint64_t order,
+        std::array<std::uint64_t,2> workers,FailPoint fail) {
+    auto next=world_;
+    if(!next.start_shipyard_construction(owner,colony,order,workers))
+        return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("shipyard construction changed conserved matter");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);
+    ++generation_;
+    return true;
+}
+bool PersistentWorld::post_local_delivery_order(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& site,ShuttleCargo cargo,
+        std::int64_t kilograms,std::uint64_t order_id,FailPoint fail) {
+    auto next=world_;
+    if(!next.post_local_delivery_order(owner,ship,site,cargo,kilograms,order_id))
+        return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("local contract posting changed conserved mass");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);
+    ++generation_;
+    return true;
+}
+bool PersistentWorld::cancel_local_delivery_order(
+        PlayerId owner,std::uint64_t order_id,FailPoint fail) {
+    auto next=world_;
+    if(!next.cancel_local_delivery_order(owner,order_id))return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("local contract cancellation changed conserved mass");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);
+    ++generation_;
+    return true;
+}
+
+bool PersistentWorld::post_intercolony_work_order(PlayerId owner,EntityId origin,
+        const PlanetarySiteKey& site,ShuttleCargo cargo,std::int64_t kg,
+        std::uint64_t id,EntityId carrier,EntityId destination,FailPoint fail) {
+    auto next=world_;
+    if(!next.post_local_delivery_order(owner,origin,site,cargo,kg,id) ||
+       !next.plan_intercolony_freight(owner,id,carrier,destination))
+        return false; // neither plan nor local instruction is published
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("intercolony plan allocated non-existent goods");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);
+    ++generation_;
+    return true;
+}
+bool PersistentWorld::load_intercolony_freight(PlayerId owner,
+        std::uint64_t id,EntityId carrier,EntityId destination,FailPoint fail) {
+    for(const auto& [request,p]:world_.pending_celestial_transits_) {
+        (void)request;
+        if(p.ship==carrier || p.ship==destination)return false;
+    }
+    auto next=world_;
+    if(!next.load_intercolony_freight(owner,id,carrier,destination))return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("sealed intercolony load changed world matter");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);
+    ++generation_;
+    return true;
+}
+bool PersistentWorld::deliver_intercolony_freight(PlayerId owner,
+        std::uint64_t id,FailPoint fail) {
+    auto next=world_;
+    if(!next.deliver_intercolony_freight(owner,id))return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("intercolony delivery changed conserved world matter");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);
+    ++generation_;
+    return true;
+}
+bool PersistentWorld::build_planetary_shuttle(PlayerId owner,EntityId ship,const PlanetarySiteKey& key,FailPoint fail) {
+    for(const auto& [id,p]:world_.pending_celestial_transits_) {
+        (void)id;
+        if(p.ship==ship)return false;
+    }
+    auto next=world_;
+    if(!next.build_planetary_shuttle(owner,ship,key))return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("shuttle operation changed conserved material");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);
+    ++generation_;
+    return true;
+}
+
+bool PersistentWorld::transfer_planetary_housing_module(PlayerId owner,
+        EntityId ship,const PlanetarySiteKey& key,bool load,FailPoint fail) {
+    for(const auto& [id,p]:world_.pending_celestial_transits_) {
+        (void)id;
+        if(p.ship==ship)return false;
+    }
+    auto next=world_;
+    if(!next.transfer_planetary_housing_module(owner,ship,key,load))return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("WO3 housing module transfer changed world mass");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);
+    ++generation_;
+    return true;
+}
+bool PersistentWorld::start_planetary_housing(PlayerId owner,
+        EntityId ship,const PlanetarySiteKey& key,std::uint64_t id,FailPoint fail) {
+    auto next=world_;
+    if(!next.start_planetary_housing(owner,ship,key,id))return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("WO3 original housing construction created matter");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);
+    ++generation_;
+    return true;
+}
+
+bool PersistentWorld::set_planetary_housing_pause(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,bool pause,FailPoint fail) {
+    auto next=world_;
+    if(!next.set_planetary_housing_pause(owner,ship,key,pause))return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("WO3 construction pause changed world mass");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);
+    ++generation_;
+    return true;
+}
+
+bool PersistentWorld::start_planetary_surface_utility(PlayerId owner,
+        EntityId ship,const PlanetarySiteKey& key,std::uint64_t id,
+        std::uint64_t supervisor,FailPoint fail) {
+    auto next=world_;
+    if(!next.start_planetary_surface_utility(owner,ship,key,id,supervisor))
+        return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("WO3 surface utility fabricated physical matter");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);
+    ++generation_;
+    return true;
+}
+
+bool PersistentWorld::pause_planetary_surface_utility(PlayerId owner,
+        EntityId ship,const PlanetarySiteKey& key,bool pause,FailPoint fail) {
+    auto next=world_;
+    if(!next.pause_planetary_surface_utility(owner,ship,key,pause))
+        return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("WO3 surface utility pause changed physical matter");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);
+    ++generation_;
+    return true;
+}
+
+// The original PersistentWorld clone/SQLite commit is the only authority
+// for supervisor changes; failed copies never expose partial handovers.
+bool PersistentWorld::handover_planetary_surface_utility(PlayerId owner,
+        EntityId ship,const PlanetarySiteKey& key,std::uint64_t previous,
+        std::uint64_t replacement,std::uint64_t request_id,FailPoint fail) {
+    auto next=world_;
+    if(!next.handover_planetary_surface_utility(
+         owner,ship,key,previous,replacement,request_id))return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("WO3 utility relief altered physical matter");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);
+    ++generation_;
+    return true;
+}
+
+// v113 original SQLite commit/copy/swap; failed commit preserves live site
+// modules, project progress and named workers.
+bool PersistentWorld::start_planetary_service_build(PlayerId owner,
+        EntityId ship,const PlanetarySiteKey& key,bool annex,
+        std::uint64_t order_id,std::uint64_t supervisor,FailPoint fail) {
+    auto next=world_;
+    if(!next.start_planetary_service_build(
+        owner,ship,key,annex,order_id,supervisor))return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("WO3 service build created physical matter");
+    if(Simulation::from_snapshot(next.canonical_state()).state_hash()!=
+       next.state_hash())
+        throw std::logic_error("WO3 service project cannot restore");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);
+    ++generation_;
+    return true;
+}
+bool PersistentWorld::pause_planetary_service_build(PlayerId owner,
+        EntityId ship,const PlanetarySiteKey& key,bool annex,
+        bool paused,FailPoint fail) {
+    auto next=world_;
+    if(!next.pause_planetary_service_build(owner,ship,key,annex,paused))
+        return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("WO3 service pause altered physical matter");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);
+    ++generation_;
+    return true;
+}
+bool PersistentWorld::handover_planetary_service_build(PlayerId owner,
+        EntityId ship,const PlanetarySiteKey& key,bool annex,
+        std::uint64_t previous,std::uint64_t replacement,
+        std::uint64_t request_id,FailPoint fail) {
+    auto next=world_;
+    if(!next.handover_planetary_service_build(
+        owner,ship,key,annex,previous,replacement,request_id))
+        return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("WO3 supervisor relief altered physical matter");
+    if(Simulation::from_snapshot(next.canonical_state()).state_hash()!=
+       next.state_hash())
+        throw std::logic_error("WO3 supervisor history cannot restore");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);
+    ++generation_;
+    return true;
+}
+bool PersistentWorld::start_planetary_production_build(PlayerId owner,
+        EntityId ship,const PlanetarySiteKey& key,bool farm,
+        std::uint64_t order_id,std::uint64_t qualified_supervisor,
+        FailPoint fail) {
+    auto next=world_;
+    if(!next.start_planetary_production_build(
+        owner,ship,key,farm,order_id,qualified_supervisor))return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("WO3 production build fabricated material");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);
+    ++generation_;
+    return true;
+}
+bool PersistentWorld::pause_planetary_production_build(PlayerId owner,
+        EntityId ship,const PlanetarySiteKey& key,bool farm,bool pause,
+        FailPoint fail) {
+    auto next=world_;
+    if(!next.pause_planetary_production_build(
+        owner,ship,key,farm,pause))return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("WO3 production pause fabricated material");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);
+    ++generation_;
+    return true;
+}
+bool PersistentWorld::handover_planetary_production_build(PlayerId owner,
+        EntityId ship,const PlanetarySiteKey& key,bool farm,
+        std::uint64_t previous,std::uint64_t replacement,
+        std::uint64_t request_id,FailPoint fail) {
+    auto next=world_;
+    if(!next.handover_planetary_production_build(
+        owner,ship,key,farm,previous,replacement,request_id))return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("WO3 production supervisor relief altered matter");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);
+    ++generation_;
+    return true;
+}
+
+// Trusted single-writer import of historical legal-only planetary addresses.
+// A failed copy/SQLite commit never changes the live world.
+bool PersistentWorld::host_import_legacy_planetary_residences(
+        PlayerId host_principal,std::uint64_t request_id,FailPoint fail) {
+    if(host_principal!=Simulation::kServerAuthority)return false;
+    auto next=world_;
+    if(!next.host_import_legacy_planetary_residences(
+        host_principal,request_id))return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("WO3 historical residence import altered matter");
+    // The new canonical v115 record must already be independently readable
+    // before attempting to persist it. No fall-through old-address rewrite.
+    if(Simulation::from_snapshot(next.canonical_state()).state_hash()!=
+       next.state_hash())
+        throw std::logic_error("WO3 historical residence import cannot restore");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);
+    ++generation_;
+    return true;
+}
+
+// WO3-E/v118: the only legal household route between a physically built
+// planet and its original ship. The world snapshot, original ART02 people
+// and original ECON03 regional population all commit under ONE SQLite writer.
+bool PersistentWorld::commit_planetary_household_settlement(
+        const PlanetaryHouseholdSettlementPlan& p,FailPoint fail) {
+    if(p.expected_world_generation!=generation_ || !p.request_id ||
+       p.request_id%16 || p.request_id>
+           std::numeric_limits<std::uint64_t>::max()-3 ||
+       p.coparent_move_id!=p.request_id+1 ||
+       p.child_move_id!=p.request_id+2 ||
+       !p.owner || p.owner==Simulation::kServerAuthority ||
+       !p.ship || !p.guardian_id || !p.family_seed ||
+       p.family_scope.empty() || p.region_scope.empty() ||
+       p.origin_colony.empty() || p.destination_colony.empty() ||
+       p.origin_colony==p.destination_colony ||
+       !p.expected_region_revision || !p.expected_owner_generation ||
+       !p.guardian_consented || !p.coparent_consented)
+        return false;
+    const auto site=world_.planetary_sites().find(p.site);
+    const auto shuttle=world_.planetary_shuttles().find(p.site);
+    if(site==world_.planetary_sites().end() ||
+       shuttle==world_.planetary_shuttles().end() ||
+       site->second.owner!=p.owner || site->second.source_ship!=p.ship ||
+       shuttle->second.owner!=p.owner ||
+       shuttle->second.source_ship!=p.ship)return false;
+    const auto address=site->second.surface_location;
+    const auto& flight=shuttle->second.family;
+    std::uint64_t parent=0,child=0;
+    if(p.returning) {
+        const auto household=site->second.households.find(p.guardian_id);
+        if(household==site->second.households.end() ||
+           household->second.return_request ||
+           household->second.child_ids.size()!=1 ||
+           flight.stage!=7 ||
+           flight.guardian_id!=p.guardian_id ||
+           flight.co_parent_id!=household->second.co_parent_id ||
+           flight.child_ids!=household->second.child_ids)return false;
+        parent=household->second.co_parent_id;
+        child=household->second.child_ids.front();
+    }else {
+        if(flight.stage!=2 || flight.guardian_id!=p.guardian_id ||
+           !flight.co_parent_id || flight.child_ids.size()!=1)return false;
+        parent=flight.co_parent_id;child=flight.child_ids.front();
+    }
+    const auto origin=p.returning?address:p.ship;
+    const auto destination=p.returning?p.ship:address;
+    if(!store_->valid_planetary_family_births(
+        world_,p.ship,p.guardian_id,parent,{child},origin))
+        return false;
+    for(const auto person_id:{p.guardian_id,parent}) {
+        const auto n=world_.npc_records().find(person_id);
+        if(n==world_.npc_records().end() ||
+           n->second.home_ship!=p.ship ||
+           n->second.legal_residence()!=transport::Endpoint{
+               p.returning?transport::LocationKind::PlanetarySite:
+                           transport::LocationKind::ColonyShip,origin})
+            return false;
+    }
+    const auto dependent=world_.physical_dependents().find(child);
+    if(dependent==world_.physical_dependents().end() ||
+       dependent->second.home_ship!=p.ship ||
+       dependent->second.location!=(p.returning?p.ship:address))
+        return false;
+    // All three actual people must have the same original legal address.
+    const auto file=store_->sqlite_path();
+    NpcAppearanceStore family(file,p.family_scope,p.family_seed,
+        [&](std::uint64_t id){return world_.npc_records().count(id)!=0;});
+    const auto source=family.family_census(origin);
+    std::uint64_t dest_count=0,dest_revision=0;
+    bool destination_registered=false;
+    try {
+        const auto target=family.family_census(destination);
+        destination_registered=true;
+        dest_count=target.current_population;dest_revision=target.revision;
+    }catch(const std::out_of_range&) {
+        if(p.returning)return false; // original ship must already exist
+        // The first real planetary family may register a genuine ZERO census
+        // only WITH its first atomic inbound move, never ahead of the world.
+    }
+    if(source.revision!=p.expected_origin_family_revision ||
+       dest_revision!=p.expected_destination_family_revision ||
+       source.current_population<3 ||
+       family.current_residence(p.guardian_id)!=origin ||
+       family.current_residence(parent)!=origin ||
+       family.current_residence(child)!=origin)return false;
+    regional_events::CheckpointStore region(file,p.region_scope);
+    const auto projection=region.load();
+    if(!projection || projection->revision!=p.expected_region_revision)
+        return false;
+    regional_events::RegionalModeAuthority owner(region);
+    const auto custody=owner.state();
+    if(custody.owner!=regional_events::SimulationOwner::Cold ||
+       custody.phase!=regional_events::TransitionPhase::Stable ||
+       custody.generation!=p.expected_owner_generation ||
+       custody.checkpoint_revision!=projection->revision ||
+       projection->scheduler.colony(p.origin_colony).population!=
+           source.current_population ||
+       projection->scheduler.colony(p.destination_colony).population!=
+           dest_count)
+        return false;
+    auto next=world_;
+    const bool changed=p.returning?
+        next.finalize_planetary_household_return(
+            Simulation::kServerAuthority,p.owner,p.ship,p.site,
+            p.guardian_id,p.request_id):
+        next.settle_planetary_household(
+            Simulation::kServerAuthority,p.owner,p.ship,p.site,
+            p.request_id,p.guardian_consented,p.coparent_consented);
+    if(!changed)return false;
+    if(p.returning && !next.release_planetary_shuttle_family(
+            Simulation::kServerAuthority,p.owner,p.ship,p.site))
+        throw std::logic_error("committed return cannot release real shuttle");
+    if(next.total_ore()!=resource_origin_ ||
+       next.total_credits()!=credit_origin_ ||
+       next.npc_records().size()!=world_.npc_records().size() ||
+       next.physical_dependents().size()!=world_.physical_dependents().size())
+        throw std::logic_error("household settlement changed material or people");
+    if(Simulation::from_snapshot(next.canonical_state()).state_hash()!=
+       next.state_hash())
+        throw std::logic_error("household settlement cannot canonically restore");
+    const auto effect=[&](sqlite3* db,std::uint64_t new_generation) {
+        // The original world owns the only ART02 connection and transaction.
+        if(!store_->valid_planetary_family_births(
+            world_,p.ship,p.guardian_id,parent,{child},origin))
+            throw std::runtime_error("household birth or custody changed");
+        NpcAppearanceStore joined(db,p.family_scope,p.family_seed,
+            [&](std::uint64_t id){return next.npc_records().count(id)!=0;});
+        if(!p.returning && !destination_registered)
+            joined.register_settlement(destination,0);
+        const auto actual_src=joined.family_census(origin);
+        const auto actual_dst=joined.family_census(destination);
+        if(actual_src.revision!=p.expected_origin_family_revision ||
+           actual_dst.revision!=p.expected_destination_family_revision ||
+           actual_src.current_population!=source.current_population ||
+           actual_dst.current_population!=dest_count ||
+           joined.current_residence(p.guardian_id)!=origin ||
+           joined.current_residence(parent)!=origin ||
+           joined.current_residence(child)!=origin)
+            throw std::runtime_error("ART02 household CAS changed");
+        const auto authorize=[&](std::uint64_t adult,std::uint64_t from,
+                                 std::uint64_t to) {
+            if(from!=origin || to!=destination ||
+               (adult!=p.guardian_id && adult!=parent))return false;
+            const auto old=world_.npc_records().find(adult);
+            const auto now=next.npc_records().find(adult);
+            return old!=world_.npc_records().end() &&
+                now!=next.npc_records().end() &&
+                old->second.legal_residence().id==origin &&
+                now->second.legal_residence().id==destination;
+        };
+        const auto moves=joined.record_guardian_household_moves(
+            p.request_id,p.guardian_id,{{child,p.child_move_id}},
+            origin,destination,next.tick(),
+            p.expected_origin_family_revision,
+            p.expected_destination_family_revision,authorize,
+            parent,p.coparent_move_id);
+        if(moves.size()!=3)
+            throw std::runtime_error("incomplete original family census move");
+        const auto region_revision=
+            region.commit_migration_in_world_transaction(db,
+                p.expected_region_revision,p.expected_owner_generation,
+                next.tick(),p.origin_colony,p.destination_colony,
+                source.current_population,dest_count,
+                std::to_string(p.request_id),3,"society-migration-host");
+        run(db,"CREATE TABLE IF NOT EXISTS sg_planet_household_migration("
+            "request_id TEXT PRIMARY KEY,world_generation INTEGER NOT NULL,"
+            "tick INTEGER NOT NULL,origin TEXT NOT NULL,destination TEXT NOT NULL,"
+            "guardian TEXT NOT NULL,coparent TEXT NOT NULL,child TEXT NOT NULL,"
+            "\"returning\" INTEGER NOT NULL CHECK(\"returning\" IN (0,1)),"
+            "family_scope TEXT NOT NULL,region_scope TEXT NOT NULL,"
+            "region_revision INTEGER NOT NULL,owner_generation INTEGER NOT NULL,"
+            "coparent_event TEXT NOT NULL UNIQUE,child_event TEXT NOT NULL UNIQUE)");
+        Statement receipt(db,"INSERT INTO sg_planet_household_migration "
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)");
+        receipt.text(1,std::to_string(p.request_id));
+        receipt.i64(2,static_cast<std::int64_t>(new_generation));
+        receipt.i64(3,static_cast<std::int64_t>(next.tick()));
+        receipt.text(4,std::to_string(origin));
+        receipt.text(5,std::to_string(destination));
+        receipt.text(6,std::to_string(p.guardian_id));
+        receipt.text(7,std::to_string(parent));
+        receipt.text(8,std::to_string(child));
+        receipt.i64(9,p.returning?1:0);
+        receipt.text(10,p.family_scope);
+        receipt.text(11,p.region_scope);
+        receipt.i64(12,static_cast<std::int64_t>(region_revision));
+        receipt.i64(13,static_cast<std::int64_t>(p.expected_owner_generation));
+        receipt.text(14,std::to_string(p.coparent_move_id));
+        receipt.text(15,std::to_string(p.child_move_id));
+        receipt.execute();
+    };
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail,nullptr,nullptr,effect);
+    world_.swap(next);
+    ++generation_;
+    return true;
+}
+
+bool PersistentWorld::book_planetary_household_return(PlayerId owner,
+        EntityId ship,const PlanetarySiteKey& key,std::uint64_t guardian,
+        std::uint64_t request_id,FailPoint fail) {
+    const auto current=world_.planetary_sites().find(key);
+    if(current==world_.planetary_sites().end())return false;
+    const auto registered=current->second.households.find(guardian);
+    if(registered==current->second.households.end() ||
+       !registered->second.co_parent_id ||
+       registered->second.child_ids.size()!=1 ||
+       !store_->valid_planetary_family_births(
+           world_,ship,guardian,registered->second.co_parent_id,
+           registered->second.child_ids,
+           current->second.surface_location))
+        return false;
+    auto next=world_;
+    if(!next.book_planetary_household_return(
+        Simulation::kServerAuthority,owner,ship,key,guardian,request_id))
+        return false;
+    if(next.total_ore()!=resource_origin_)return false;
+    const auto verify=[&](sqlite3*,std::uint64_t) {
+        if(!store_->valid_planetary_family_births(
+            world_,ship,guardian,registered->second.co_parent_id,
+            registered->second.child_ids,
+            current->second.surface_location))
+            throw std::runtime_error("ART02 family changed at return booking");
+    };
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail,nullptr,nullptr,verify);
+    world_.swap(next);
+    ++generation_;
+    return true;
+}
+
+bool PersistentWorld::settle_planetary_founder(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,std::uint64_t npc_id,std::uint64_t request_id,
+        bool voluntary_consent_attested,FailPoint fail) {
+    if(store_->has_art02_child_parent(npc_id))return false;
+    auto next=world_;
+    if(!next.settle_planetary_founder(owner,ship,key,npc_id,request_id,
+                                      voluntary_consent_attested))return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("WO3 permanent residence fabricated stock");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);
+    ++generation_;
+    return true;
+}
+
+bool PersistentWorld::settle_planetary_visitor(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,std::uint64_t npc_id,std::uint64_t request_id,
+        bool consent,FailPoint fail) {
+    if(store_->has_art02_child_parent(npc_id))return false;
+    auto next=world_;
+    if(!next.settle_planetary_visitor(owner,ship,key,npc_id,request_id,consent))
+        return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("WO3 visitor immigration fabricated physical matter");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);
+    ++generation_;
+    return true;
+}
+bool PersistentWorld::depart_planetary_visitor(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,std::uint64_t npc_id,std::uint64_t request_id,
+        bool consent,FailPoint fail) {
+    if(store_->has_art02_child_parent(npc_id))return false;
+    auto next=world_;
+    if(!next.depart_planetary_visitor(owner,ship,key,npc_id,request_id,consent))
+        return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("WO3 visitor departure changed physical matter");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);
+    ++generation_;
+    return true;
+}
+
+bool PersistentWorld::load_planetary_shuttle(PlayerId owner,EntityId ship,const PlanetarySiteKey& key,bool water,std::int64_t kg,FailPoint fail) {
+    return load_planetary_shuttle(owner,ship,key,
+        water?ShuttleCargo::Water:ShuttleCargo::Food,kg,fail);
+}
+bool PersistentWorld::load_planetary_shuttle(PlayerId owner,EntityId ship,const PlanetarySiteKey& key,ShuttleCargo cargo,std::int64_t kg,FailPoint fail) {
+    for(const auto& [id,p]:world_.pending_celestial_transits_) {
+        (void)id;
+        if(p.ship==ship)return false;
+    }
+    auto next=world_;
+    if(!next.load_planetary_shuttle(owner,ship,key,cargo,kg))return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("shuttle operation changed conserved material");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);
+    ++generation_;
+    return true;
+}
+
+bool PersistentWorld::unload_planetary_shuttle(PlayerId owner,EntityId ship,const PlanetarySiteKey& key,bool water,std::int64_t kg,FailPoint fail) {
+    return unload_planetary_shuttle(owner,ship,key,
+        water?ShuttleCargo::Water:ShuttleCargo::Food,kg,fail);
+}
+bool PersistentWorld::unload_planetary_shuttle(PlayerId owner,EntityId ship,const PlanetarySiteKey& key,ShuttleCargo cargo,std::int64_t kg,FailPoint fail) {
+    for(const auto& [id,p]:world_.pending_celestial_transits_) {
+        (void)id;
+        if(p.ship==ship)return false;
+    }
+    auto next=world_;
+    if(!next.unload_planetary_shuttle(owner,ship,key,cargo,kg))return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("shuttle operation changed conserved material");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);
+    ++generation_;
+    return true;
+}
+
+// S6-D7: each original physical cargo leg is transactionally committed
+// with the same one-writer SQLite CAS, resource origin and rollback fence.
+bool PersistentWorld::load_planetary_geology_shuttle(
+    PlayerId owner,EntityId ship,const PlanetarySiteKey& key,
+    PlanetaryResource resource,std::int64_t kg,std::uint64_t request_id,
+    FailPoint fail) {
+    for(const auto& [id,p]:world_.pending_celestial_transits_){
+        (void)id;
+        if(p.ship==ship)return false;
+    }
+    auto next=world_;
+    if(!next.load_planetary_geology_shuttle(owner,ship,key,resource,kg,request_id))
+        return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("geological shuttle loading altered original mass");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);
+    ++generation_;
+    return true;
+}
+bool PersistentWorld::unload_planetary_geology_shuttle(
+    PlayerId owner,EntityId ship,const PlanetarySiteKey& key,
+    PlanetaryResource resource,std::int64_t kg,std::uint64_t request_id,
+    FailPoint fail) {
+    for(const auto& [id,p]:world_.pending_celestial_transits_){
+        (void)id;
+        if(p.ship==ship)return false;
+    }
+    auto next=world_;
+    if(!next.unload_planetary_geology_shuttle(owner,ship,key,resource,kg,request_id))
+        return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("geological shuttle unloading altered original mass");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);
+    ++generation_;
+    return true;
+}
+
+bool PersistentWorld::assign_planetary_shuttle_pilot(PlayerId owner,EntityId ship,const PlanetarySiteKey& key,std::uint64_t npc,FailPoint fail) {
+    for(const auto& [id,p]:world_.pending_celestial_transits_) {
+        (void)id;
+        if(p.ship==ship)return false;
+    }
+    if(store_->has_art02_child_parent(npc))return false;
+    auto next=world_;
+    if(!next.assign_planetary_shuttle_pilot(owner,ship,key,npc))return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("shuttle operation changed conserved material");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);
+    ++generation_;
+    return true;
+}
+bool PersistentWorld::build_planetary_site(PlayerId owner,EntityId ship,
+    std::uint64_t body,std::uint16_t latitude,std::uint16_t longitude,FailPoint fail) {
+    // Every mutation happens on an isolated candidate. Commit succeeds before
+    // world publication; injected SQLite failures preserve the old world.
+    for(const auto& [id,p]:world_.pending_celestial_transits_) {
+        (void)id;
+        if(p.ship==ship)return false;
+    }
+    auto next=world_;
+    if(!next.build_planetary_site(owner,ship,body,latitude,longitude))return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("planetary regional operation changed world material origin");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);
+    ++generation_;
+    return true;
+}
+
+bool PersistentWorld::build_planetary_site(PlayerId owner,EntityId ship,
+    std::uint64_t body,std::uint16_t latitude,std::uint16_t longitude,
+    std::uint64_t first_npc,std::uint64_t second_npc,FailPoint fail) {
+    for(const auto& [id,p]:world_.pending_celestial_transits_) {
+        (void)id;
+        if(p.ship==ship)return false;
+    }
+    auto next=world_;
+    if(!next.build_planetary_site(owner,ship,body,latitude,longitude,
+                                 first_npc,second_npc))return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("surface delegation changed world resource origin");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);
+    ++generation_;
+    return true;
+}
+bool PersistentWorld::equip_planetary_site(PlayerId owner,EntityId ship,
+    std::uint64_t body,std::uint16_t latitude,std::uint16_t longitude,bool farm,FailPoint fail) {
+    // Every mutation happens on an isolated candidate. Commit succeeds before
+    // world publication; injected SQLite failures preserve the old world.
+    for(const auto& [id,p]:world_.pending_celestial_transits_) {
+        (void)id;
+        if(p.ship==ship)return false;
+    }
+    auto next=world_;
+    if(!next.equip_planetary_site(owner,ship,body,latitude,longitude,farm))return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("planetary regional operation changed world material origin");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);
+    ++generation_;
+    return true;
+}
+
+bool PersistentWorld::supply_planetary_site(PlayerId owner,EntityId ship,
+    std::uint64_t body,std::uint16_t latitude,std::uint16_t longitude,bool water,std::int64_t kg,FailPoint fail) {
+    // Every mutation happens on an isolated candidate. Commit succeeds before
+    // world publication; injected SQLite failures preserve the old world.
+    for(const auto& [id,p]:world_.pending_celestial_transits_) {
+        (void)id;
+        if(p.ship==ship)return false;
+    }
+    auto next=world_;
+    if(!next.supply_planetary_site(owner,ship,body,latitude,longitude,water,kg))return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("planetary regional operation changed world material origin");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);
+    ++generation_;
+    return true;
+}
+
+bool PersistentWorld::set_planetary_workforce_policy(PlayerId owner,
+    std::uint64_t body,std::uint16_t latitude,std::uint16_t longitude,
+    std::uint8_t policy,FailPoint fail) {
+    // A command changes supervisory policy only. All inventory movements
+    // remain tied to source-backed simulation ticks and SQLite generations.
+    auto next=world_;
+    if(!next.set_planetary_workforce_policy(owner,body,latitude,longitude,
+                                            policy))return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("planetary workforce policy created material");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);
+    ++generation_;
+    return true;
+}
+
+bool PersistentWorld::support_planetary_crew(PlayerId owner,EntityId ship,
+    std::uint64_t body,std::uint16_t latitude,std::uint16_t longitude,
+    bool oxygen,std::int64_t kg,FailPoint fail) {
+    for(const auto& [id,p]:world_.pending_celestial_transits_) {
+        (void)id;
+        if(p.ship==ship)return false;
+    }
+    auto next=world_;
+    if(!next.support_planetary_crew(owner,ship,body,latitude,longitude,oxygen,kg))
+        return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("surface crew resupply changed matter origin");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);
+    ++generation_;
+    return true;
+}
+bool PersistentWorld::cultivate_planetary_site(PlayerId owner,EntityId ship,
+    std::uint64_t body,std::uint16_t latitude,std::uint16_t longitude,std::int64_t batches,FailPoint fail) {
+    // Every mutation happens on an isolated candidate. Commit succeeds before
+    // world publication; injected SQLite failures preserve the old world.
+    for(const auto& [id,p]:world_.pending_celestial_transits_) {
+        (void)id;
+        if(p.ship==ship)return false;
+    }
+    auto next=world_;
+    if(!next.cultivate_planetary_site(owner,ship,body,latitude,longitude,batches))return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("planetary regional operation changed world material origin");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);
+    ++generation_;
+    return true;
+}
+
+bool PersistentWorld::extract_planetary_site(PlayerId owner,EntityId ship,
+    std::uint64_t body,std::uint16_t latitude,std::uint16_t longitude,bool water,std::int64_t kg,FailPoint fail) {
+    // Every mutation happens on an isolated candidate. Commit succeeds before
+    // world publication; injected SQLite failures preserve the old world.
+    for(const auto& [id,p]:world_.pending_celestial_transits_) {
+        (void)id;
+        if(p.ship==ship)return false;
+    }
+    auto next=world_;
+    if(!next.extract_planetary_site(owner,ship,body,latitude,longitude,water,kg))return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("planetary regional operation changed world material origin");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);
+    ++generation_;
+    return true;
+}
+
+bool PersistentWorld::extract_planetary_regional_source(
+    PlayerId owner,EntityId ship,std::uint64_t body,
+    std::uint16_t latitude,std::uint16_t longitude,
+    PlanetaryResource resource,std::uint8_t phase,
+    std::int64_t kg,std::uint64_t worker,std::uint64_t request_id,FailPoint fail) {
+    // The actual original world retains admission/physical effects. This
+    // wrapper owns only transactionality, origin and rollback.
+    for(const auto& [id,p]:world_.pending_celestial_transits_) {
+        (void)id;
+        if(p.ship==ship)return false;
+    }
+    auto next=world_;
+    if(!next.extract_planetary_regional_source(
+        owner,ship,body,latitude,longitude,resource,phase,kg,worker,request_id))
+        return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("S6-D5 extraction changed original material origin");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);
+    ++generation_;
+    return true;
+}
+bool PersistentWorld::retrieve_planetary_site(PlayerId owner,EntityId ship,
+    std::uint64_t body,std::uint16_t latitude,std::uint16_t longitude,bool food,std::int64_t kg,FailPoint fail) {
+    // Every mutation happens on an isolated candidate. Commit succeeds before
+    // world publication; injected SQLite failures preserve the old world.
+    for(const auto& [id,p]:world_.pending_celestial_transits_) {
+        (void)id;
+        if(p.ship==ship)return false;
+    }
+    auto next=world_;
+    if(!next.retrieve_planetary_site(owner,ship,body,latitude,longitude,food,kg))return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("planetary regional operation changed world material origin");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);
+    ++generation_;
+    return true;
+}
+bool PersistentWorld::install_oasis_extractor(PlayerId owner,EntityId ship,
+    std::uint64_t body,FailPoint fail) {
+    for(const auto& [id,p]:world_.pending_celestial_transits_) {
+        (void)id;
+        if(p.ship==ship)return false;
+    }
+    auto next=world_;
+    if(!next.install_oasis_extractor(owner,ship,body))return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("oasis extractor construction changed material origin");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);
+    ++generation_;
+    return true;
+}
+bool PersistentWorld::collect_oasis_resource(PlayerId owner,EntityId ship,
+    std::uint64_t body,bool water,std::int64_t kilograms,FailPoint fail) {
+    // Authenticated host-only. Immutable old world on all failures.
+    // No collection during an unfinished inter-frame transit.
+    for(const auto& [id,p]:world_.pending_celestial_transits_) {
+        (void)id;
+        if(p.ship==ship)return false;
+    }
+    auto next=world_;
+    if(!next.collect_oasis_resource(owner,ship,body,water,kilograms))return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("oasis extraction changed material origin");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);
+    ++generation_;
+    return true;
+}
+void PersistentWorld::ensure_local_environment_profiles() {
+    if(world_.generated_local_regions_.empty())return;
+    auto next=world_;
+    next.ensure_local_environment_profiles();
+    if(next.canonical_state()==world_.canonical_state())return;
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},FailPoint::None);
+    world_.swap(next);
+    ++generation_;
+}
+void PersistentWorld::ensure_visited_local_regions() {
+    if(world_.ship_frames_.empty())return;
+    auto next=world_;
+    for(const auto& [ship,frame]:next.ship_frames_) {
+        (void)ship;
+        if(frame.anchor_body &&
+           !next.generated_local_regions_.count(frame.anchor_body))
+            next.seed_celestial_local_region(frame.anchor_body);
+    }
+    if(next.canonical_state()==world_.canonical_state())return;
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},FailPoint::None);
+    world_.swap(next);
+    ++generation_;
+}
+void PersistentWorld::ensure_ship_frame_registry() {
+    auto next=world_;
+    next.ensure_ship_frame_registry();
+    if(next.canonical_state()==world_.canonical_state())return;
+    // The existing journal commits the complete v71 snapshot before memory
+    // publication. On failure both the previous world and cargo remain intact.
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},FailPoint::None);
+    world_.swap(next);
+    ++generation_;
+}
+void PersistentWorld::ensure_planetary_genesis_manifest(FailPoint fail) {
+    // Never provision missing matter while upgrading an existing save.
+    // The original SQLite world generation and complete canonical hash are
+    // committed before publishing the new v127 immutable source manifest.
+    auto next=world_;
+    const auto prior_mass=world_.total_ore();
+    next.ensure_planetary_genesis_manifest();
+    if(next.total_ore()!=prior_mass ||
+       next.total_ore()!=resource_origin_)
+        throw std::logic_error("planetary migration changed original physical resources");
+    if(next.canonical_state()==world_.canonical_state())return;
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);
+    ++generation_;
+}
+void PersistentWorld::ensure_physical_planetary_environment(FailPoint fail) {
+    auto next=world_;
+    const auto initial=world_.total_ore();
+    next.enable_physical_planetary_environment();
+    if(next.total_ore()!=initial || next.total_ore()!=resource_origin_)
+        throw std::logic_error("planet physical migration altered conserved original matter");
+    if(next.canonical_state()==world_.canonical_state())return;
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);
+    ++generation_;
+}
+// S6-F5-C v135: a single original SQLite writer seals pressure, oxygen
+// fraction and toxicity only after matching every existing astronomical
+// body against its original deterministic source. No tank is filled.
+void PersistentWorld::ensure_planetary_atmosphere_manifest(FailPoint fail) {
+    if(world_.original_surface_atmosphere_enabled())return;
+    auto next=world_;
+    if(!next.establish_original_surface_atmosphere())
+        throw std::runtime_error("original planetary atmosphere migration refused");
+    if(next.total_ore()!=resource_origin_ ||
+       next.total_credits()!=credit_origin_ ||
+       next.total_material_kg()!=world_.total_material_kg())
+        throw std::logic_error("original atmospheric source changed finite matter");
+    if(Simulation::from_snapshot(next.canonical_state()).state_hash()!=
+       next.state_hash())
+        throw std::logic_error("original planetary atmosphere cannot recover");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);++generation_;
+}
+void PersistentWorld::ensure_planetary_ecology(FailPoint fail) {
+    auto next=world_;
+    next.enable_planetary_ecology();
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("S6-E migration changed original matter origin");
+    if(next.canonical_state()==world_.canonical_state())return;
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);
+    ++generation_;
+}
+void PersistentWorld::ensure_planetary_source_custody(FailPoint fail) {
+    auto next=world_;
+    const auto before=world_.total_ore();
+    next.enable_planetary_source_custody();
+    if(next.total_ore()!=before || next.total_ore()!=resource_origin_)
+        throw std::logic_error("S6-D5 migration added original matter");
+    if(next.canonical_state()==world_.canonical_state())return;
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);
+    ++generation_;
+}
+void PersistentWorld::ensure_physical_celestial_systems() {
+    auto next=world_;
+    next.ensure_physical_celestial_systems();
+    if(next.canonical_state()==world_.canonical_state())return;
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},FailPoint::None);
+    world_.swap(next);
+    ++generation_;
+}
+void PersistentWorld::configure_probe_report_tick_ms(std::uint64_t tick_ms) {
+    // Commit policy through the existing durable single-writer journal.
+    // No private mutation of world_ that could disappear at restart.
+    auto next=world_;
+    next.configure_probe_report_tick_ms(tick_ms);
+    if(next.canonical_state()==world_.canonical_state())return;
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},FailPoint::None);
+    world_.swap(next);
+    ++generation_;
+}
+
 
 colony_safety::Decision PersistentWorld::record_colony_safety_preflight(
         EntityId home_ship,EntityId site,PlayerId issuer,colony_safety::Order order){
@@ -5563,6 +11733,23 @@ colony_safety::Decision PersistentWorld::record_colony_safety_preflight(
 std::uint64_t PersistentWorld::colony_safety_evidence_count() const{
     return store_->colony_safety_evidence_count();
 }
+std::uint64_t PersistentWorld::colony_response_event_count() const{
+    return store_->colony_response_event_count();
+}
+std::vector<colony_safety::notice::Pending> PersistentWorld::pending_colony_notifications(
+        std::uint64_t limit) const {
+    return store_->pending_colony_notifications(limit);
+}
+bool PersistentWorld::acknowledge_colony_notification(std::uint64_t event,std::uint64_t npc){
+    return store_->acknowledge_colony_notification(world_,generation_,event,npc);
+}
+std::uint64_t PersistentWorld::colony_notification_opportunity_count() const{
+    return store_->colony_notification_opportunity_count();
+}
+std::uint64_t PersistentWorld::colony_notification_acknowledgement_count() const{
+    return store_->colony_notification_acknowledgement_count();
+}
+
 
 std::vector<DependentTravelRecord> PersistentWorld::dependent_travel(
     const std::string& family_scope) const {
@@ -5593,6 +11780,1603 @@ bool PersistentWorld::submit_host_medical_action(const Command& command, FailPoi
     return submit_host_passenger_action(command,fail);
 }
 
+// Dedicated fail-closed witness for a PREPARED manifest. Preparation and
+// queueing do not move anyone; only the execution transaction can do that.
+static void verify_atomic_colony_family_preparation(
+    sqlite3* db,const Simulation& before,
+    const PersistentWorld::AtomicColonyFamilyPlan& p){
+    if(!p.command_id || !p.family.intent_id || p.command_id==p.family.intent_id ||
+       !p.family.expected_world_generation || p.family.family_scope.empty() ||
+       !p.family.family_seed || p.region_scope.empty() ||
+       p.origin_colony.empty() || p.receiver_colony.empty() ||
+       p.origin_colony==p.receiver_colony ||
+       !p.expected_region_revision || !p.expected_owner_generation ||
+       p.family.adult_ids.empty() || p.family.children.empty() ||
+       p.member_event_ids.size()!=p.family.adult_ids.size()+p.family.children.size() ||
+       p.member_event_ids.size()>16)
+        throw std::runtime_error("incomplete whole-family evacuation admission");
+    std::set<std::uint64_t> events{p.command_id,p.family.intent_id};
+    for(auto event:p.member_event_ids)if(!event || !events.insert(event).second)
+        throw std::runtime_error("duplicate or zero household event identifier");
+    const auto audited=colony_family::assess(before,db,p.family);
+    if(!audited.ready_for_transaction)
+        throw std::runtime_error("whole-family authoritative audit refused: "+audited.refusal);
+    std::string adults,children;
+    for(const auto id:p.family.adult_ids){
+        if(!adults.empty())adults.push_back(',');
+        adults+=std::to_string(id);
+    }
+    for(const auto& child:p.family.children){
+        if(!children.empty())children.push_back(',');
+        children+=std::to_string(child.child_id)+":"+std::to_string(child.guardian_id);
+        const auto it=before.physical_dependents().find(child.child_id);
+        if(it==before.physical_dependents().end() ||
+           it->second.guardian_id!=child.guardian_id ||
+           it->second.home_ship!=p.family.source ||
+           it->second.location!=p.family.source)
+            throw std::runtime_error("unregistered, wrong-guardian or nonresident physical dependent");
+        Statement auth(db,"SELECT guardian_id,home_ship,family_scope,family_seed "
+            "FROM sg_colony_physical_child_authority WHERE child_id=?");
+        auth.text(1,std::to_string(child.child_id));
+        if(!auth.row() || sqlite_str(auth.get(),0)!=std::to_string(child.guardian_id) ||
+           sqlite_str(auth.get(),1)!=std::to_string(p.family.source) ||
+           sqlite_str(auth.get(),2)!=p.family.family_scope ||
+           sqlite_str(auth.get(),3)!=std::to_string(p.family.family_seed) || auth.row())
+            throw std::runtime_error("physical dependent lacks immutable ART02 registration authority");
+    }
+    std::size_t physical_at_source=0;
+    for(const auto& [id,child]:before.physical_dependents()){
+        (void)id;
+        if(child.location==p.family.source || child.home_ship==p.family.source)
+            ++physical_at_source;
+    }
+    if(physical_at_source!=p.family.children.size())
+        throw std::runtime_error("unlisted physical dependent at evacuation source");
+    Statement prepared(db,"SELECT generation,world_hash,source,receiver,family_scope,"
+        "family_seed,adult_roster,child_guardians,status "
+        "FROM sg_colony_family_departure_prepare WHERE intent_id=?");
+    prepared.text(1,std::to_string(p.family.intent_id));
+    if(!prepared.row())
+        throw std::runtime_error("family evacuation has no durable prepared manifest");
+    const bool matched=
+        sqlite3_column_int64(prepared.get(),0)==
+            static_cast<sqlite3_int64>(p.family.expected_world_generation) &&
+        sqlite_str(prepared.get(),2)==std::to_string(p.family.source) &&
+        sqlite_str(prepared.get(),3)==std::to_string(p.family.receiver) &&
+        sqlite_str(prepared.get(),4)==p.family.family_scope &&
+        sqlite_str(prepared.get(),5)==std::to_string(p.family.family_seed) &&
+        sqlite_str(prepared.get(),6)==adults &&
+        sqlite_str(prepared.get(),7)==children &&
+        sqlite3_column_int(prepared.get(),8)==1;
+    const auto prep_hash=sqlite_str(prepared.get(),1);
+    if(!matched || prepared.row())
+        throw std::runtime_error("prepared manifest is stale or mismatched");
+    Statement original(db,"SELECT state_hash FROM operation_log WHERE generation=?");
+    original.i64(1,static_cast<sqlite3_int64>(p.family.expected_world_generation));
+    if(!original.row() || sqlite_str(original.get(),0)!=prep_hash || original.row())
+        throw std::runtime_error("prepared world hash does not match committed generation");
+}
+
+// COLONY-AUTO-04D.4C: one canonical world writer; no secondary population
+// table, orphaned station crew, or player-facing shortcut. This operation is
+// adult-only until independent ART02 dependent-custody settlement is available.
+colony_family::Audit PersistentWorld::audit_colony_family_departure(
+        const colony_family::DeparturePlan& plan) const{
+    return store_->audit_colony_family_departure(world_,plan);
+}
+bool PersistentWorld::prepare_host_colony_family_departure(
+        const colony_family::DeparturePlan& plan,FailPoint fail){
+    return store_->prepare_colony_family_departure(world_,generation_,plan,fail);
+}
+// AUTO-04D.4D2A: physically register an ALREADY-BORN ART02 child.
+// Two durable stages (admission and execution) use the existing single world
+// writer and immutable operation journal; no new NPC/workforce identity.
+bool PersistentWorld::submit_host_dependent_registration(
+        const Command& command,const std::string& scope,std::uint64_t seed,
+        FailPoint fail){
+    if(command.action!=Action::HostRegisterDependent ||
+       command.issuer!=Simulation::kServerAuthority ||
+       command.execute_tick!=world_.tick()+1 ||
+       !command.transport_id || !command.actor || scope.empty() || !seed)return false;
+    auto next=world_;
+    if(!next.submit(command))return false;
+    const auto effect=[&](sqlite3* db,std::uint64_t){
+        store_->verify_physical_dependent_birth(world_,command,scope,seed);
+        run(db,"CREATE TABLE IF NOT EXISTS sg_colony_physical_child_authority("
+            "child_id TEXT PRIMARY KEY,command_id TEXT NOT NULL UNIQUE,"
+            "guardian_id TEXT NOT NULL,home_ship TEXT NOT NULL,"
+            "family_scope TEXT NOT NULL,family_seed TEXT NOT NULL)");
+        run(db,"CREATE TRIGGER IF NOT EXISTS sg_colony_child_authority_no_update "
+            "BEFORE UPDATE ON sg_colony_physical_child_authority "
+            "BEGIN SELECT RAISE(ABORT,'physical child authority immutable'); END");
+        run(db,"CREATE TRIGGER IF NOT EXISTS sg_colony_child_authority_no_delete "
+            "BEFORE DELETE ON sg_colony_physical_child_authority "
+            "BEGIN SELECT RAISE(ABORT,'physical child authority immutable'); END");
+        Statement entry(db,"INSERT INTO sg_colony_physical_child_authority "
+            "VALUES(?,?,?,?,?,?)");
+        entry.text(1,std::to_string(command.transport_id));
+        entry.text(2,std::to_string(command.id));
+        entry.text(3,std::to_string(command.passenger_ids.front()));
+        entry.text(4,std::to_string(command.actor));
+        entry.text(5,scope);
+        entry.text(6,std::to_string(seed));
+        entry.execute();
+    };
+    store_->commit(next,generation_,resource_origin_,credit_origin_,
+                   &command,{},{},{},fail,nullptr,nullptr,effect);
+    world_.swap(next);++generation_;
+    return true;
+}
+void PersistentWorld::step_with_dependent_registration(FailPoint fail){
+    auto next=world_;
+    const auto before=next.events().size();
+    const auto activity_before=next.activity_events().size();
+    std::map<std::uint64_t,Command> due;
+    if(auto it=next.commands_.find(next.tick()+1);it!=next.commands_.end())
+        for(const auto& cmd:it->second)due.emplace(cmd.id,cmd);
+    if(due.size()!=1 || due.begin()->second.action!=Action::HostRegisterDependent ||
+       due.begin()->second.issuer!=Simulation::kServerAuthority)
+        throw std::runtime_error("physical child registration requires one host command");
+    const auto cmd=due.begin()->second;
+    const auto check=[&](sqlite3* db){
+        Statement record(db,"SELECT command_id,guardian_id,home_ship,"
+            "family_scope,family_seed FROM sg_colony_physical_child_authority WHERE child_id=?");
+        record.text(1,std::to_string(cmd.transport_id));
+        if(!record.row())throw std::runtime_error("unapproved physical child admission");
+        if(sqlite_str(record.get(),0)!=std::to_string(cmd.id) ||
+           sqlite_str(record.get(),1)!=std::to_string(cmd.passenger_ids.front()) ||
+           sqlite_str(record.get(),2)!=std::to_string(cmd.actor))
+            throw std::runtime_error("physical child guardian receipt mismatch");
+        const auto scope=sqlite_str(record.get(),3);
+        const auto seed=parse_u64(sqlite3_column_text(record.get(),4));
+        if(record.row())throw std::runtime_error("duplicate birth authority");
+        store_->verify_physical_dependent_birth(world_,cmd,scope,seed);
+    };
+    next.step();
+    if(next.events().size()!=before+1 ||
+       next.events().back().command_id!=cmd.id ||
+       next.events().back().result!=Outcome::Applied ||
+       !next.physical_dependents().count(cmd.transport_id)) {
+        const auto outcome=next.events().empty() ? -1 :
+            static_cast<int>(next.events().back().result);
+        const auto guardian=next.npc_records().find(cmd.passenger_ids.front());
+        const auto location=guardian==next.npc_records().end() ?
+            std::uint64_t{0} : guardian->second.location;
+        throw std::runtime_error(
+            "dependent occupancy was not physically applied (command "+
+            std::to_string(cmd.id)+", outcome "+std::to_string(outcome)+
+            ", actor "+std::to_string(cmd.actor)+
+            ", guardian location "+std::to_string(location)+")");
+    }
+    const std::vector<Event> delta(next.events().begin()+
+        static_cast<std::ptrdiff_t>(before),next.events().end());
+    const std::vector<ActivityEvent> activity(next.activity_events().begin()+
+        static_cast<std::ptrdiff_t>(activity_before),next.activity_events().end());
+    const auto effect=[&](sqlite3* db,std::uint64_t){check(db);};
+    store_->commit(next,generation_,resource_origin_,credit_origin_,
+                   nullptr,delta,due,activity,fail,nullptr,nullptr,effect);
+    world_.swap(next);++generation_;
+}
+
+bool PersistentWorld::submit_host_colony_departure(const Command& command,FailPoint fail){
+    if(command.action!=Action::HostColonyDeparture ||
+       command.issuer!=Simulation::kServerAuthority ||
+       command.execute_tick!=world_.tick()+1 ||
+       !command.actor || !command.target)return false;
+    const auto no_child_links=[&](){
+        if(store_->has_child_or_dependent_link(command.actor) ||
+           store_->has_child_or_dependent_link(command.target))return false;
+        for(const auto& [site,outpost]:world_.built_outposts())
+            if(outpost.source_colony_ship==command.actor &&
+               store_->has_child_or_dependent_link(site))return false;
+        return true;
+    };
+    if(!no_child_links())return false;
+    auto next=world_;
+    if(!next.submit(command))return false;
+    // Recheck under BEGIN IMMEDIATE, not only before it, so another writer
+    // cannot insert a guardian/dependent between admission and publication.
+    const auto locked_guard=[&](sqlite3*,std::uint64_t){
+        if(!no_child_links())throw std::runtime_error("birth/guardian custody changed during departure admission");
+    };
+    store_->commit(next,generation_,resource_origin_,credit_origin_,
+                   &command,{},{},{},fail,nullptr,nullptr,locked_guard);
+    world_.swap(next);++generation_;
+    return true;
+}
+void PersistentWorld::step_with_colony_departure(FailPoint fail){
+    auto next=world_;
+    const auto before=next.events().size();
+    const auto before_activity=next.activity_events().size();
+    std::map<std::uint64_t,Command> due;
+    if(auto it=next.commands_.find(next.tick()+1);it!=next.commands_.end())
+        for(const auto& c:it->second)due.emplace(c.id,c);
+    if(due.size()!=1 ||
+       due.begin()->second.action!=Action::HostColonyDeparture ||
+       due.begin()->second.issuer!=Simulation::kServerAuthority)
+        throw std::runtime_error("colony departure requires one authorized due command");
+    const auto cmd=due.begin()->second;
+    const auto no_child_links=[&](){
+        if(store_->has_child_or_dependent_link(cmd.actor) ||
+           store_->has_child_or_dependent_link(cmd.target))return false;
+        for(const auto& [site,outpost]:world_.built_outposts())
+            if(outpost.source_colony_ship==cmd.actor &&
+               store_->has_child_or_dependent_link(site))return false;
+        return true;
+    };
+    if(!no_child_links())
+        throw std::runtime_error("colony departure conflicts with recorded dependent or birth custody");
+    next.step();
+    if(next.events().size()!=before+1 ||
+       next.events().back().command_id!=cmd.id ||
+       next.events().back().result!=Outcome::Applied ||
+       !next.colony_departures_.count(cmd.actor))
+        throw std::runtime_error("departure failed physical execution; original world unchanged");
+    const std::vector<Event> events(next.events().begin()+
+        static_cast<std::ptrdiff_t>(before),next.events().end());
+    const std::vector<ActivityEvent> activity(next.activity_events().begin()+
+        static_cast<std::ptrdiff_t>(before_activity),next.activity_events().end());
+    const auto locked_guard=[&](sqlite3*,std::uint64_t){
+        if(!no_child_links())throw std::runtime_error("dependent custody changed during atomic world publication");
+    };
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   events,due,activity,fail,nullptr,nullptr,locked_guard);
+    world_.swap(next);
+    ++generation_;
+}
+
+// AUTO-04D.5A: verify a delivered, local, current threshold notice. An
+// opportunity alone is NOT NPC knowledge and never authorizes movement.
+static bool autonomous_notice_verified(sqlite3* db,const Simulation& world,
+    const PersistentWorld::AutonomousRescueRequest& request){
+    const auto actor=world.npc_records().find(request.leader_id);
+    if(!db || !request.source || !request.leader_id || !request.observed_event_id ||
+       actor==world.npc_records().end() ||
+       actor->second.home_ship!=request.source ||
+       actor->second.location!=request.source ||
+       actor->second.transport_id)
+        return false;
+    Statement notice(db,"SELECT o.generation,o.tick,o.risk,e.ship FROM "
+        "sg_colony_npc_opportunities o "
+        "JOIN sg_colony_npc_acks a ON a.event_id=o.event_id AND a.npc_id=o.npc_id "
+        "JOIN sg_colony_response_events e ON e.id=o.event_id "
+        "WHERE o.event_id=? AND o.npc_id=? AND o.site=?");
+    notice.i64(1,static_cast<sqlite3_int64>(request.observed_event_id));
+    notice.i64(2,static_cast<sqlite3_int64>(request.leader_id));
+    notice.i64(3,static_cast<sqlite3_int64>(request.source));
+    if(!notice.row())return false;
+    const auto recorded_risk=sqlite3_column_int(notice.get(),2);
+    const auto source_ship=sqlite3_column_int64(notice.get(),3);
+    if(source_ship!=static_cast<sqlite3_int64>(request.source) ||
+       recorded_risk<static_cast<int>(colony_safety::Risk::Critical) ||
+       recorded_risk>static_cast<int>(colony_safety::Risk::Emergency) ||
+       notice.row())return false;
+    Statement latest(db,"SELECT id FROM sg_colony_response_events "
+        "WHERE site=? ORDER BY id DESC LIMIT 1");
+    latest.i64(1,static_cast<sqlite3_int64>(request.source));
+    if(!latest.row() ||
+       sqlite3_column_int64(latest.get(),0)!=
+            static_cast<sqlite3_int64>(request.observed_event_id) ||
+       latest.row())return false;
+    const auto present=colony_safety::assess(world,request.source,request.source);
+    return static_cast<int>(present.risk)==recorded_risk &&
+           present.population>0;
+}
+
+PersistentWorld::AutonomousRescueDecision
+PersistentWorld::assess_autonomous_colony_emergency(
+    const AutonomousRescueRequest& request) const{
+    AutonomousRescueDecision result;
+    try{
+        if(!request.source || !request.leader_id || !request.observed_event_id ||
+           !request.family_seed || !request.intent_id || !request.command_id ||
+           request.intent_id==request.command_id ||
+           request.family_scope.empty() || request.region_scope.empty() ||
+           request.origin_colony.empty() || request.destinations.empty() ||
+           request.destinations.size()>32){
+            result.reason="autonomous controller requires valid bounded host routing";
+            return result;
+        }
+        result.response=colony_safety::plan_response(world_,request.source,request.source);
+        if(result.response.risk!=colony_safety::Risk::Critical &&
+           result.response.risk!=colony_safety::Risk::Emergency){
+            result.reason="colony is not in actual critical or emergency shortage";
+            return result;
+        }
+        sqlite3* raw=nullptr;
+        if(sqlite3_open_v2(db_path_.c_str(),&raw,SQLITE_OPEN_READONLY,nullptr)!=SQLITE_OK){
+            if(raw)sqlite3_close(raw);
+            throw std::runtime_error("autonomous response cannot open world evidence");
+        }
+        std::unique_ptr<sqlite3,decltype(&sqlite3_close)> db(raw,sqlite3_close);
+        if(!autonomous_notice_verified(db.get(),world_,request)){
+            result.reason="NPC leader has no delivered current local critical notice";
+            return result;
+        }
+        result.notified_leader=true;
+        regional_events::CheckpointStore region(db_path_,request.region_scope);
+        const auto regional=region.load();
+        if(!regional){
+            result.reason="regional population checkpoint missing";
+            return result;
+        }
+        regional_events::RegionalModeAuthority mode(region);
+        const auto authority=mode.state();
+        if(authority.owner!=regional_events::SimulationOwner::Cold ||
+           authority.phase!=regional_events::TransitionPhase::Stable ||
+           authority.checkpoint_revision!=regional->revision){
+            result.reason="regional owner not stable/cold for family transfer";
+            return result;
+        }
+        NpcAppearanceStore family(db_path_,request.family_scope,request.family_seed,
+            [&](std::uint64_t id){return world_.npc_records().count(id)!=0;});
+        const auto from=family.family_census(request.source);
+        if(regional->scheduler.colony(request.origin_colony).population!=
+           from.current_population){
+            result.reason="source ART02/ECON03 census reconciliation refused";
+            return result;
+        }
+        colony_family::DeparturePlan manifest;
+        manifest.source=request.source;
+        manifest.intent_id=request.intent_id;
+        manifest.expected_world_generation=generation_;
+        manifest.family_scope=request.family_scope;
+        manifest.family_seed=request.family_seed;
+        for(const auto& [id,record]:world_.npc_records())
+            if(record.home_ship==request.source)manifest.adult_ids.push_back(id);
+        for(const auto& [id,child]:world_.physical_dependents())
+            if(child.home_ship==request.source || child.location==request.source){
+                if(child.home_ship!=request.source ||
+                   child.location!=request.source){
+                    result.reason="physical dependent custody already split";
+                    return result;
+                }
+                manifest.children.push_back({id,child.guardian_id});
+            }
+        if(manifest.adult_ids.empty() || manifest.children.empty() ||
+           manifest.adult_ids.size()+manifest.children.size()>16 ||
+           request.member_event_ids.size()!=
+               manifest.adult_ids.size()+manifest.children.size()){
+            result.reason="incomplete physical family or host member event allocation";
+            return result;
+        }
+        std::set<std::uint64_t> unique_events{request.command_id,request.intent_id};
+        for(const auto id:request.member_event_ids)
+            if(!id || !unique_events.insert(id).second){
+                result.reason="duplicate or absent immutable member event ID";
+                return result;
+            }
+        const auto* src=world_.find(request.source);
+        if(!src)throw std::runtime_error("autonomous source ship missing");
+        long double best_distance=-1;
+        for(const auto& destination:request.destinations){
+            if(!destination.ship || destination.ship==request.source ||
+               destination.regional_colony.empty() ||
+               destination.regional_colony==request.origin_colony)continue;
+            const auto* ship=world_.find(destination.ship);
+            const auto* supplies=world_.life_support(destination.ship);
+            if(!ship || !supplies)continue;
+            manifest.receiver=destination.ship;
+            const auto audit=store_->audit_colony_family_departure(world_,manifest);
+            if(!audit.ready_for_transaction)continue;
+            const auto census=family.family_census(destination.ship);
+            if(regional->scheduler.colony(destination.regional_colony).population!=
+               census.current_population)continue;
+            const auto persons=world_.people_physically_aboard(destination.ship)+
+                world_.children_physically_aboard(destination.ship)+
+                manifest.adult_ids.size()+manifest.children.size();
+            // A receiver must survive at least four *real* whole-person needs
+            // cycles after this evacuation, not become the next emergency.
+            if(persons>1000 || supplies->food_kg<static_cast<std::int64_t>(4*persons) ||
+               supplies->water_kg<static_cast<std::int64_t>(4*persons) ||
+               supplies->oxygen_kg<static_cast<std::int64_t>(4*persons))continue;
+            const auto dx=static_cast<long double>(src->position.x)-ship->position.x;
+            const auto dy=static_cast<long double>(src->position.y)-ship->position.y;
+            const auto distance=dx*dx+dy*dy;
+            if(best_distance>=0 &&
+               (distance>best_distance ||
+                (distance==best_distance && destination.ship>=result.selected_receiver)))
+                continue;
+            best_distance=distance;
+            result.selected_receiver=destination.ship;
+            result.transfer.family=manifest;
+            result.transfer.region_scope=request.region_scope;
+            result.transfer.origin_colony=request.origin_colony;
+            result.transfer.receiver_colony=destination.regional_colony;
+            result.transfer.command_id=request.command_id;
+            result.transfer.expected_region_revision=regional->revision;
+            result.transfer.expected_owner_generation=authority.generation;
+            result.transfer.expected_origin_family_revision=from.revision;
+            result.transfer.expected_receiver_family_revision=census.revision;
+            result.transfer.member_event_ids=request.member_event_ids;
+        }
+        if(!result.selected_receiver){
+            result.reason="no verified nearby stocked receiver: retain emergency/distress response";
+            return result;
+        }
+        result.rescue_ready=true;
+        result.reason="real recipient selected; prepared family still requires host admission and world execution";
+    }catch(const std::exception& e){
+        result.rescue_ready=false;
+        result.selected_receiver=0;
+        result.reason=e.what();
+    }
+    return result;
+}
+
+bool PersistentWorld::submit_autonomous_colony_rescue(
+    const AutonomousRescueRequest& request,FailPoint fail){
+    const auto planned=assess_autonomous_colony_emergency(request);
+    if(!planned.notified_leader || !planned.rescue_ready ||
+       !planned.selected_receiver)return false;
+    const auto& p=planned.transfer;
+    if(!prepare_host_colony_family_departure(p.family))return false;
+    Command command{};
+    command.id=p.command_id;command.sequence=p.command_id;
+    command.execute_tick=world_.tick()+1;
+    command.issuer=Simulation::kServerAuthority;
+    command.actor=p.family.source;command.target=p.family.receiver;
+    command.action=Action::HostColonyDeparture;
+    command.passenger_ids=p.family.adult_ids;
+    auto next=world_;
+    if(!next.submit(command))return false;
+    const auto effect=[&](sqlite3* db,std::uint64_t next_generation){
+        verify_atomic_colony_family_preparation(db,world_,p);
+        if(!autonomous_notice_verified(db,world_,request))
+            throw std::runtime_error("NPC warning withdrawn or tampered before dispatch");
+        Statement owner(db,"SELECT owner,phase,generation,checkpoint_revision "
+            "FROM sg_regional_mode_authority WHERE scope=?");
+        owner.text(1,request.region_scope);
+        if(!owner.row() || sqlite3_column_int(owner.get(),0)!=0 ||
+           sqlite3_column_int(owner.get(),1)!=0 ||
+           sqlite3_column_int64(owner.get(),2)!=
+               static_cast<sqlite3_int64>(p.expected_owner_generation) ||
+           sqlite3_column_int64(owner.get(),3)!=
+               static_cast<sqlite3_int64>(p.expected_region_revision) || owner.row())
+            throw std::runtime_error("autonomous dispatch crossed a regional owner transition");
+        run(db,"CREATE TABLE IF NOT EXISTS sg_colony_npc_autonomous_dispatch("
+            "command_id TEXT PRIMARY KEY,intent_id TEXT NOT NULL UNIQUE,"
+            "admission_generation INTEGER NOT NULL CHECK(admission_generation>1),"
+            "world_hash TEXT NOT NULL,leader_id TEXT NOT NULL,observation_id INTEGER NOT NULL,"
+            "source TEXT NOT NULL,receiver TEXT NOT NULL,"
+            "family_scope TEXT NOT NULL,region_scope TEXT NOT NULL,"
+            "risk INTEGER NOT NULL CHECK(risk IN (2,3)))");
+        run(db,"CREATE TRIGGER IF NOT EXISTS sg_colony_npc_auto_no_update "
+            "BEFORE UPDATE ON sg_colony_npc_autonomous_dispatch "
+            "BEGIN SELECT RAISE(ABORT,'immutable autonomous response'); END");
+        run(db,"CREATE TRIGGER IF NOT EXISTS sg_colony_npc_auto_no_delete "
+            "BEFORE DELETE ON sg_colony_npc_autonomous_dispatch "
+            "BEGIN SELECT RAISE(ABORT,'immutable autonomous response'); END");
+        Statement insert(db,"INSERT INTO sg_colony_npc_autonomous_dispatch VALUES "
+            "(?,?,?,?,?,?,?,?,?,?,?)");
+        insert.text(1,std::to_string(p.command_id));
+        insert.text(2,std::to_string(p.family.intent_id));
+        insert.i64(3,static_cast<sqlite3_int64>(next_generation));
+        insert.text(4,std::to_string(next.state_hash()));
+        insert.text(5,std::to_string(request.leader_id));
+        insert.i64(6,static_cast<sqlite3_int64>(request.observed_event_id));
+        insert.text(7,std::to_string(p.family.source));
+        insert.text(8,std::to_string(p.family.receiver));
+        insert.text(9,request.family_scope);
+        insert.text(10,request.region_scope);
+        insert.i64(11,static_cast<int>(planned.response.risk));
+        insert.execute();
+        // v79: the complete restart plan belongs to this SAME writer
+        // transaction as the actual accepted command and NPC observation.
+        // Never persist half a manifest or a speculative player-facing rescue.
+        run(db,"CREATE TABLE IF NOT EXISTS sg_colony_npc_supervisor_activation("
+            "singleton INTEGER PRIMARY KEY CHECK(singleton=1),"
+            "first_generation INTEGER NOT NULL CHECK(first_generation>1))");
+        Statement activate(db,"INSERT OR IGNORE INTO "
+            "sg_colony_npc_supervisor_activation VALUES(1,?)");
+        activate.i64(1,static_cast<sqlite3_int64>(next_generation));
+        activate.execute();
+        run(db,"CREATE TABLE IF NOT EXISTS sg_colony_npc_supervisor_plan("
+            "command_id TEXT PRIMARY KEY,intent_id TEXT NOT NULL UNIQUE,"
+            "admission_generation INTEGER NOT NULL CHECK(admission_generation>1),"
+            "family_seed TEXT NOT NULL,origin_colony TEXT NOT NULL,"
+            "receiver_colony TEXT NOT NULL,regional_revision INTEGER NOT NULL,"
+            "owner_generation INTEGER NOT NULL,"
+            "origin_family_revision INTEGER NOT NULL,"
+            "receiver_family_revision INTEGER NOT NULL,"
+            "adult_count INTEGER NOT NULL CHECK(adult_count>0),"
+            "child_count INTEGER NOT NULL CHECK(child_count>0))");
+        run(db,"CREATE TABLE IF NOT EXISTS sg_colony_npc_supervisor_member("
+            "command_id TEXT NOT NULL,ordinal INTEGER NOT NULL CHECK(ordinal>=0),"
+            "person_id TEXT NOT NULL,guardian_id TEXT NOT NULL,"
+            "kind INTEGER NOT NULL CHECK(kind IN(0,1)),event_id TEXT NOT NULL UNIQUE,"
+            "PRIMARY KEY(command_id,ordinal),UNIQUE(command_id,person_id))");
+        for(const auto* name:{"sg_colony_npc_supervisor_activation",
+                              "sg_colony_npc_supervisor_plan",
+                              "sg_colony_npc_supervisor_member"}){
+            const auto tab=std::string(name);
+            run(db,("CREATE TRIGGER IF NOT EXISTS "+tab+"_immutable_update "
+                "BEFORE UPDATE ON "+tab+" BEGIN SELECT RAISE(ABORT,"
+                "'immutable NPC supervisor'); END").c_str());
+            run(db,("CREATE TRIGGER IF NOT EXISTS "+tab+"_immutable_delete "
+                "BEFORE DELETE ON "+tab+" BEGIN SELECT RAISE(ABORT,"
+                "'immutable NPC supervisor'); END").c_str());
+        }
+        Statement plan(db,"INSERT INTO sg_colony_npc_supervisor_plan VALUES("
+            "?,?,?,?,?,?,?,?,?,?,?,?)");
+        plan.text(1,std::to_string(p.command_id));
+        plan.text(2,std::to_string(p.family.intent_id));
+        plan.i64(3,static_cast<sqlite3_int64>(next_generation));
+        plan.text(4,std::to_string(p.family.family_seed));
+        plan.text(5,p.origin_colony);plan.text(6,p.receiver_colony);
+        plan.i64(7,static_cast<sqlite3_int64>(p.expected_region_revision));
+        plan.i64(8,static_cast<sqlite3_int64>(p.expected_owner_generation));
+        plan.i64(9,static_cast<sqlite3_int64>(p.expected_origin_family_revision));
+        plan.i64(10,static_cast<sqlite3_int64>(p.expected_receiver_family_revision));
+        plan.i64(11,static_cast<sqlite3_int64>(p.family.adult_ids.size()));
+        plan.i64(12,static_cast<sqlite3_int64>(p.family.children.size()));
+        plan.execute();
+        for(std::size_t i=0;i<p.member_event_ids.size();++i){
+            const bool is_child=i>=p.family.adult_ids.size();
+            const auto child_index=is_child?i-p.family.adult_ids.size():0;
+            const auto person=is_child?p.family.children[child_index].child_id:
+                p.family.adult_ids[i];
+            const auto guardian=is_child?p.family.children[child_index].guardian_id:0;
+            Statement member(db,"INSERT INTO sg_colony_npc_supervisor_member "
+                "VALUES(?,?,?,?,?,?)");
+            member.text(1,std::to_string(p.command_id));
+            member.i64(2,static_cast<sqlite3_int64>(i));
+            member.text(3,std::to_string(person));
+            member.text(4,std::to_string(guardian));
+            member.i64(5,is_child?1:0);
+            member.text(6,std::to_string(p.member_event_ids[i]));
+            member.execute();
+        }
+    };
+    store_->commit(next,generation_,resource_origin_,credit_origin_,
+                   &command,{},{},{},fail,nullptr,nullptr,effect);
+    world_.swap(next);++generation_;
+    return true;
+}
+
+// AUTO-04D.5B — Persisted NPC supervisor. A whole family plan is a durable
+// admission, never an implication that its world transaction already ran.
+std::optional<PersistentWorld::AtomicColonyFamilyPlan>
+PersistentWorld::pending_autonomous_family_rescue(std::uint64_t command_id) const{
+    if(!command_id)return std::nullopt;
+    store_->verify_autonomous_dispatch(generation_);
+    store_->verify_supervisor_plans(generation_);
+    auto plan=store_->supervisor_plan(command_id);
+    if(!plan)return std::nullopt; // v78 legacy admissions lacked a resume plan
+    if(plan->family.expected_world_generation+1!=generation_)
+        return std::nullopt; // already applied or obsolete; never replay it
+    if(const auto result=world_.colony_departures().find(plan->family.source);
+       result!=world_.colony_departures().end() &&
+       result->second.command_id==command_id)
+        return std::nullopt;
+    const auto it=world_.commands_.find(world_.tick()+1);
+    if(it==world_.commands_.end() || it->second.size()!=1 ||
+       it->second.front().id!=command_id ||
+       it->second.front().action!=Action::HostColonyDeparture ||
+       it->second.front().issuer!=Simulation::kServerAuthority ||
+       it->second.front().actor!=plan->family.source ||
+       it->second.front().target!=plan->family.receiver ||
+       it->second.front().passenger_ids!=plan->family.adult_ids)
+        throw std::runtime_error("supervisor plan not equal to only pending native command");
+    return plan;
+}
+
+bool PersistentWorld::resume_autonomous_family_rescue(
+    std::uint64_t command_id,FailPoint fail){
+    auto pending=pending_autonomous_family_rescue(command_id);
+    if(!pending)return false;
+    // Independent existing atomic writer: one world snapshot, ART02
+    // residence/guardian batch and ECON03 regional population receipt.
+    step_with_atomic_family_departure(*pending,fail);
+    if(!verified_atomic_family_departure(command_id))
+        throw std::runtime_error("supervisor resumed evacuation without final custody proof");
+    return true;
+}
+
+bool PersistentWorld::resume_next_pending_autonomous_rescue(FailPoint fail){
+    sqlite3* raw=nullptr;
+    if(sqlite3_open_v2(db_path_.c_str(),&raw,SQLITE_OPEN_READONLY,nullptr)!=SQLITE_OK){
+        if(raw)sqlite3_close(raw);
+        throw std::runtime_error("cannot inspect NPC supervisor recoverable queue");
+    }
+    std::unique_ptr<sqlite3,decltype(&sqlite3_close)> db(raw,sqlite3_close);
+    Statement table(db.get(),"SELECT 1 FROM sqlite_master WHERE type='table' "
+        "AND name='sg_colony_npc_supervisor_plan'");
+    if(!table.row())return false;
+    Statement due(db.get(),"SELECT command_id FROM sg_colony_npc_supervisor_plan "
+        "WHERE admission_generation=? ORDER BY command_id");
+    due.i64(1,static_cast<sqlite3_int64>(generation_));
+    if(!due.row())return false;
+    const auto command_id=parse_u64(sqlite3_column_text(due.get(),0));
+    if(due.row())
+        throw std::runtime_error("two competing autonomous rescues at same world generation");
+    return resume_autonomous_family_rescue(command_id,fail);
+}
+
+PersistentWorld::SupervisorTick PersistentWorld::supervise_autonomous_colony_emergency(
+    const AutonomousSupervisorRoute& route,FailPoint fail){
+    SupervisorTick result;
+    result.command_id=route.command_id;
+    if(!route.source || !route.family_seed || !route.intent_id ||
+       !route.command_id || route.command_id==route.intent_id ||
+       route.family_scope.empty() || route.region_scope.empty() ||
+       route.origin_colony.empty() || route.destinations.empty() ||
+       route.destinations.size()>32)
+        throw std::invalid_argument("NPC supervisor requires trusted bounded region bindings");
+    // A supervisor for one colony cannot inadvertently execute another
+    // colony's durable rescue. Only the correct site owner may drive the
+    // corresponding host-scheduled follow-up.
+    if(const auto due=world_.commands_.find(world_.tick()+1);
+       due!=world_.commands_.end()){
+        for(const auto& accepted:due->second){
+            if(accepted.action!=Action::HostColonyDeparture)continue;
+            const auto recorded=store_->supervisor_plan(accepted.id);
+            if(!recorded)continue;
+            if(recorded->family.source!=route.source ||
+               recorded->region_scope!=route.region_scope ||
+               recorded->family.family_scope!=route.family_scope){
+                result.status=SupervisorStatus::RescuePending;
+                result.command_id=accepted.id;
+                result.receiver=accepted.target;
+                result.reason="a different colony owns the pending rescue; route-scoped execution refused";
+                return result;
+            }
+        }
+    }
+    // Highest priority: finish an already-admitted rescue after restart.
+    // The host does not need to keep the plan, leader or allocated event IDs.
+    if(resume_next_pending_autonomous_rescue(fail)){
+        result.status=SupervisorStatus::RescueCompleted;
+        result.reason="recovered and verified already-admitted whole-family evacuation";
+        const auto departure=world_.colony_departures().find(route.source);
+        if(departure!=world_.colony_departures().end()){
+            result.receiver=departure->second.receiver;
+            result.command_id=departure->second.command_id;
+        }
+        return result;
+    }
+    if(const auto completed=world_.colony_departures().find(route.source);
+       completed!=world_.colony_departures().end()){
+        result.status=SupervisorStatus::RescueCompleted;
+        result.command_id=completed->second.command_id;
+        result.receiver=completed->second.receiver;
+        result.reason="family already physically evacuated; no second rescue admitted";
+        return result;
+    }
+    const auto response=colony_safety::plan_response(world_,route.source,route.source);
+    if(response.risk!=colony_safety::Risk::Critical &&
+       response.risk!=colony_safety::Risk::Emergency){
+        result.status=SupervisorStatus::NoCurrentEmergency;
+        result.reason="canonical life support not in emergency evacuation range";
+        return result;
+    }
+    sqlite3* raw=nullptr;
+    if(sqlite3_open_v2(db_path_.c_str(),&raw,SQLITE_OPEN_READONLY,nullptr)!=SQLITE_OK){
+        if(raw)sqlite3_close(raw);
+        throw std::runtime_error("cannot read NPC emergency observation ledger");
+    }
+    std::unique_ptr<sqlite3,decltype(&sqlite3_close)> db(raw,sqlite3_close);
+    Statement latest(db.get(),"SELECT id,new_risk FROM sg_colony_response_events "
+        "WHERE site=? ORDER BY id DESC LIMIT 1");
+    latest.i64(1,static_cast<sqlite3_int64>(route.source));
+    if(!latest.row() ||
+       sqlite3_column_int(latest.get(),1)!=static_cast<int>(response.risk)){
+        result.status=SupervisorStatus::NoCurrentEmergency;
+        result.reason="no current committed life-support threshold notification";
+        return result;
+    }
+    result.notice_id=static_cast<std::uint64_t>(sqlite3_column_int64(latest.get(),0));
+    Statement eligible(db.get(),"SELECT npc_id FROM sg_colony_npc_opportunities "
+        "WHERE event_id=? AND site=? ORDER BY npc_id");
+    eligible.i64(1,static_cast<sqlite3_int64>(result.notice_id));
+    eligible.i64(2,static_cast<sqlite3_int64>(route.source));
+    while(eligible.row()){
+        const auto id=static_cast<std::uint64_t>(sqlite3_column_int64(eligible.get(),0));
+        const auto person=world_.npc_records().find(id);
+        if(person!=world_.npc_records().end() &&
+           person->second.home_ship==route.source &&
+           person->second.location==route.source &&
+           !person->second.transport_id){
+            result.leader_id=id;break;
+        }
+    }
+    if(!result.leader_id){
+        result.status=SupervisorStatus::NoLocalNpc;
+        result.reason="no living, physically present NPC received a local alert opportunity";
+        return result;
+    }
+    // This is the host's actual delivery step. A crash immediately after
+    // acknowledgment is safe: the outbox remembers delivery, and the next
+    // supervisor pass will select the same latest observable alert.
+    acknowledge_colony_notification(result.notice_id,result.leader_id);
+    AutonomousRescueRequest request{};
+    request.source=route.source;
+    request.leader_id=result.leader_id;
+    request.observed_event_id=result.notice_id;
+    request.family_seed=route.family_seed;
+    request.intent_id=route.intent_id;
+    request.command_id=route.command_id;
+    request.family_scope=route.family_scope;
+    request.region_scope=route.region_scope;
+    request.origin_colony=route.origin_colony;
+    request.destinations=route.destinations;
+    request.member_event_ids=route.member_event_ids;
+    const auto evaluated=assess_autonomous_colony_emergency(request);
+    if(!evaluated.rescue_ready){
+        result.status=SupervisorStatus::AwaitingPhysicalRescue;
+        result.reason=evaluated.reason;
+        // The original physical shortage and delivered-NPC outbox remain
+        // durable; neither a shipment nor a person movement is fabricated.
+        return result;
+    }
+    if(!submit_autonomous_colony_rescue(request,fail)){
+        result.status=SupervisorStatus::AwaitingPhysicalRescue;
+        result.reason="qualified recipient could not receive an admitted command";
+        return result;
+    }
+    result.status=SupervisorStatus::RescueQueued;
+    result.receiver=evaluated.selected_receiver;
+    result.reason="supervisor queued immutable whole-family transfer; execution still pending";
+    return result;
+}
+
+// AUTO-04D.5C1: re-use the native physical habitat stock transfer. The
+// NPC receives a genuinely delivered LOCAL danger observation; its proposed
+// supplies come only from the colony ship's already-existing inventory.
+PersistentWorld::NpcLocalSupplyResult
+PersistentWorld::supervise_npc_habitat_resupply(
+    EntityId source,EntityId site,std::uint64_t command_id,FailPoint fail){
+    NpcLocalSupplyResult result;
+    result.command_id=command_id;
+    if(!source || !site || source==site || !command_id)
+        throw std::invalid_argument("NPC resupply requires host route and unique command ID");
+    const auto* origin=world_.find(source);
+    const auto* destination=world_.find(site);
+    const auto* stocks=world_.life_support(source);
+    const auto* habitat=world_.habitat(site);
+    if(!origin || !destination || !stocks || !habitat ||
+       habitat->source_ship!=source || origin->type!=EntityType::Ship ||
+       destination->type!=EntityType::Station ||
+       origin->owner_id!=destination->owner_id ||
+       origin->system_id!=destination->system_id ||
+       origin->owner_id==Simulation::kServerAuthority)
+        throw std::invalid_argument("NPC resupply has no valid owned local habitat/ship");
+    const auto dx=origin->position.x-destination->position.x;
+    const auto dy=origin->position.y-destination->position.y;
+    if(dx < -Simulation::kDockingRangeMm || dx>Simulation::kDockingRangeMm ||
+       dy < -Simulation::kDockingRangeMm || dy>Simulation::kDockingRangeMm ||
+       dx*dx+dy*dy>Simulation::kDockingRangeMm*Simulation::kDockingRangeMm){
+        result.status=NpcLocalSupplyStatus::NoUsableStock;
+        result.reason="no physical delivery access to threatened habitat";
+        return result;
+    }
+    const auto risk=colony_safety::assess(world_,source,site);
+    if(risk.population==0 ||
+       static_cast<int>(risk.risk)<static_cast<int>(colony_safety::Risk::Critical)){
+        result.reason="occupied habitat has no critical or emergency shortage";
+        return result;
+    }
+    if(const auto it=world_.commands_.find(world_.tick()+1);
+       it!=world_.commands_.end() && !it->second.empty()){
+        result.status=NpcLocalSupplyStatus::NoUsableStock;
+        result.reason="pending due world commands need reconciliation before emergency logistics";
+        return result;
+    }
+    // Observations are bound to a real committed threshold crossing, NOT a
+    // hazard inferred by the NPC or a fabricated notification.
+    sqlite3* raw=nullptr;
+    if(sqlite3_open_v2(db_path_.c_str(),&raw,SQLITE_OPEN_READONLY,nullptr)!=SQLITE_OK){
+        if(raw)sqlite3_close(raw);
+        throw std::runtime_error("NPC supply cannot open local observation ledger");
+    }
+    std::unique_ptr<sqlite3,decltype(&sqlite3_close)> db(raw,sqlite3_close);
+    Statement latest(db.get(),"SELECT id,new_risk FROM sg_colony_response_events "
+        "WHERE site=? ORDER BY id DESC LIMIT 1");
+    latest.i64(1,static_cast<sqlite3_int64>(site));
+    if(!latest.row() ||
+       sqlite3_column_int(latest.get(),1)!=static_cast<int>(risk.risk)){
+        result.status=NpcLocalSupplyStatus::NoResponder;
+        result.reason="no current locally committed critical shortage observation";
+        return result;
+    }
+    result.notice_id=static_cast<std::uint64_t>(
+        sqlite3_column_int64(latest.get(),0));
+    Statement responders(db.get(),"SELECT npc_id FROM sg_colony_npc_opportunities "
+        "WHERE event_id=? AND site=? ORDER BY npc_id");
+    responders.i64(1,static_cast<sqlite3_int64>(result.notice_id));
+    responders.i64(2,static_cast<sqlite3_int64>(site));
+    while(responders.row()){
+        const auto npc=static_cast<std::uint64_t>(
+            sqlite3_column_int64(responders.get(),0));
+        const auto it=world_.npc_records().find(npc);
+        if(it!=world_.npc_records().end() &&
+           it->second.home_ship==source &&
+           it->second.location==site &&
+           !it->second.transport_id && world_.npc_available_for_duty(npc)){
+            result.npc_id=npc;break;
+        }
+    }
+    if(!result.npc_id){
+        result.status=NpcLocalSupplyStatus::NoResponder;
+        result.reason="no available physically present NPC received a current local alert";
+        return result;
+    }
+    // Real host delivery happens before execution. It survives interruption,
+    // and a retry does not generate a second notification.
+    acknowledge_colony_notification(result.notice_id,result.npc_id);
+    std::array<std::pair<std::int64_t,int>,3> choices{{
+        {risk.remaining.food_periods,1},
+        {risk.remaining.water_periods,2},
+        {risk.remaining.oxygen_periods,3}
+    }};
+    std::stable_sort(choices.begin(),choices.end());
+    const auto source_amount=[&](int r){
+        return r==1?stocks->food_kg:r==2?stocks->water_kg:stocks->oxygen_kg;
+    };
+    const auto destination_amount=[&](int r){
+        return r==1?habitat->life.food_kg:r==2?
+            habitat->life.water_kg:habitat->life.oxygen_kg;
+    };
+    for(const auto& [runway,selector]:choices){
+        (void)runway;
+        const auto required=static_cast<std::int64_t>(4*risk.population);
+        const auto present=destination_amount(selector);
+        const auto available=source_amount(selector);
+        if(present>=required || available<=0)continue;
+        const auto amount=std::min<std::int64_t>(
+            {required-present,available,10000});
+        if(amount<=0)continue;
+        result.resource_selector=selector;
+        result.amount_kg=amount;
+        break;
+    }
+    if(!result.resource_selector){
+        result.status=NpcLocalSupplyStatus::NoUsableStock;
+        result.reason="no physically stock-backed local replenishment is possible";
+        return result;
+    }
+    Command command{};
+    command.id=command_id;command.sequence=command_id;
+    command.execute_tick=world_.tick()+1;
+    command.issuer=origin->owner_id;
+    command.actor=source;command.target=site;
+    command.action=Action::TransferHabitatStock;
+    command.thrust_x=result.resource_selector;
+    command.amount=result.amount_kg;
+    auto next=world_;
+    if(!next.submit(command)){
+        result.status=NpcLocalSupplyStatus::NoUsableStock;
+        result.reason="native authorization rejected emergency habitat stock transfer";
+        return result;
+    }
+    const auto before_source=source_amount(result.resource_selector);
+    const auto before_dest=destination_amount(result.resource_selector);
+    const auto effect=[&](sqlite3* writer,std::uint64_t next_generation){
+        Statement observed(writer,"SELECT o.risk,e.ship,a.delivery_generation "
+            "FROM sg_colony_npc_opportunities o "
+            "JOIN sg_colony_response_events e ON e.id=o.event_id "
+            "JOIN sg_colony_npc_acks a ON a.event_id=o.event_id AND a.npc_id=o.npc_id "
+            "WHERE o.event_id=? AND o.npc_id=? AND o.site=?");
+        observed.i64(1,static_cast<sqlite3_int64>(result.notice_id));
+        observed.i64(2,static_cast<sqlite3_int64>(result.npc_id));
+        observed.i64(3,static_cast<sqlite3_int64>(site));
+        if(!observed.row() ||
+           sqlite3_column_int(observed.get(),0)!=static_cast<int>(risk.risk) ||
+           sqlite3_column_int64(observed.get(),1)!=static_cast<sqlite3_int64>(source) ||
+           sqlite3_column_int64(observed.get(),2)>static_cast<sqlite3_int64>(generation_) ||
+           observed.row())
+            throw std::runtime_error("NPC resupply has no actual delivered local warning");
+        Statement newest(writer,"SELECT id FROM sg_colony_response_events "
+            "WHERE site=? ORDER BY id DESC LIMIT 1");
+        newest.i64(1,static_cast<sqlite3_int64>(site));
+        if(!newest.row() ||
+           sqlite3_column_int64(newest.get(),0)!=
+               static_cast<sqlite3_int64>(result.notice_id) || newest.row())
+            throw std::runtime_error("NPC attempted supply using obsolete hazard");
+        run(writer,"CREATE TABLE IF NOT EXISTS sg_colony_npc_emergency_supply("
+            "command_id TEXT PRIMARY KEY,generation INTEGER NOT NULL CHECK(generation>1),"
+            "world_hash TEXT NOT NULL,npc_id TEXT NOT NULL,notice_id INTEGER NOT NULL,"
+            "source_ship TEXT NOT NULL,habitat TEXT NOT NULL,"
+            "resource INTEGER NOT NULL CHECK(resource BETWEEN 1 AND 3),"
+            "amount_kg INTEGER NOT NULL CHECK(amount_kg>0 AND amount_kg<=10000),"
+            "source_before_kg INTEGER NOT NULL,habitat_before_kg INTEGER NOT NULL,"
+            "risk INTEGER NOT NULL CHECK(risk IN(2,3)))");
+        run(writer,"CREATE TRIGGER IF NOT EXISTS sg_colony_npc_emergency_supply_no_update "
+            "BEFORE UPDATE ON sg_colony_npc_emergency_supply "
+            "BEGIN SELECT RAISE(ABORT,'immutable emergency stock order'); END");
+        run(writer,"CREATE TRIGGER IF NOT EXISTS sg_colony_npc_emergency_supply_no_delete "
+            "BEFORE DELETE ON sg_colony_npc_emergency_supply "
+            "BEGIN SELECT RAISE(ABORT,'immutable emergency stock order'); END");
+        Statement receipt(writer,"INSERT INTO sg_colony_npc_emergency_supply "
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?)");
+        receipt.text(1,std::to_string(command_id));
+        receipt.i64(2,static_cast<sqlite3_int64>(next_generation));
+        receipt.text(3,std::to_string(next.state_hash()));
+        receipt.text(4,std::to_string(result.npc_id));
+        receipt.i64(5,static_cast<sqlite3_int64>(result.notice_id));
+        receipt.text(6,std::to_string(source));
+        receipt.text(7,std::to_string(site));
+        receipt.i64(8,result.resource_selector);
+        receipt.i64(9,result.amount_kg);
+        receipt.i64(10,before_source);
+        receipt.i64(11,before_dest);
+        receipt.i64(12,static_cast<int>(risk.risk));
+        receipt.execute();
+    };
+    store_->commit(next,generation_,resource_origin_,credit_origin_,&command,
+                   {},{},{},fail,nullptr,nullptr,effect);
+    world_.swap(next);
+    ++generation_;
+    result.status=NpcLocalSupplyStatus::Accepted;
+    result.reason="real local inventory transfer admitted; native world step pending";
+    return result;
+}
+bool PersistentWorld::verified_npc_habitat_resupply(std::uint64_t command_id) const{
+    if(!command_id)return false;
+    return store_->npc_habitat_supply_applied(command_id,generation_);
+}
+
+std::vector<colony_defense::Contact>
+PersistentWorld::local_colony_watch_contacts(
+    EntityId source,std::uint64_t npc) const{
+    return colony_defense::observe_local_contacts(world_,source,npc);
+}
+colony_defense::Contact PersistentWorld::record_colony_watch_contact(
+    std::uint64_t id,EntityId source,std::uint64_t npc,EntityId foreign){
+    return store_->record_colony_watch_contact(
+        world_,generation_,id,source,npc,foreign);
+}
+
+void PersistentWorld::establish_colony_conflict_agenda(
+    std::uint64_t agenda_id,EntityId source,std::uint64_t leader,
+    colony_conflict::Agenda agenda){
+    store_->establish_colony_agenda(
+        world_,generation_,agenda_id,source,leader,agenda);
+}
+colony_conflict::Decision PersistentWorld::assess_colony_conflict_intent(
+    EntityId source,std::uint64_t contact_event_id) const{
+    return store_->assess_colony_aggression(
+        world_,generation_,source,contact_event_id);
+}
+colony_conflict::Decision PersistentWorld::record_colony_conflict_intent(
+    std::uint64_t event,EntityId source,std::uint64_t contact_event){
+    return store_->record_colony_aggression(
+        world_,generation_,event,source,contact_event);
+}
+
+colony_conflict::RelationRevision
+PersistentWorld::assess_colony_relationship_revision(
+    EntityId source,std::uint64_t knowledge_id) const{
+    return store_->assess_colony_relationship(
+        world_,generation_,source,knowledge_id);
+}
+colony_conflict::RelationRevision
+PersistentWorld::record_colony_relationship_revision(
+    std::uint64_t event_id,EntityId source,std::uint64_t knowledge_id){
+    return store_->record_colony_relationship(
+        world_,generation_,event_id,source,knowledge_id);
+}
+colony_conflict::RelationRevision
+PersistentWorld::colony_relationship(EntityId source,PlayerId owner) const{
+    if(!source || !owner)
+        throw std::invalid_argument("colony diplomacy needs source and foreign owner");
+    return store_->latest_colony_relationship(source,owner);
+}
+
+std::optional<colony_conflict::ExitPressure>
+PersistentWorld::assess_colony_exit_pressure(
+    EntityId source,std::uint64_t npc_id) const{
+    return store_->assess_colony_exit_pressure(
+        world_,generation_,source,npc_id);
+}
+colony_conflict::ExitPressure PersistentWorld::record_colony_exit_pressure(
+    std::uint64_t event_id,EntityId source,std::uint64_t npc_id){
+    return store_->record_colony_exit_pressure(
+        world_,generation_,event_id,source,npc_id);
+}
+
+std::optional<colony_conflict::PersonalOutlook>
+PersistentWorld::assess_personal_outlook(
+    EntityId source,std::uint64_t npc) const{
+    return store_->assess_personal_outlook(world_,generation_,source,npc);
+}
+colony_conflict::PersonalOutlook PersistentWorld::record_personal_outlook(
+    std::uint64_t event,EntityId source,std::uint64_t npc){
+    return store_->record_personal_outlook(world_,generation_,event,source,npc);
+}
+std::optional<colony_conflict::PersonalOutlook>
+PersistentWorld::colony_personal_outlook(
+    EntityId source,std::uint64_t npc) const{
+    if(generation_==std::numeric_limits<std::uint64_t>::max())
+        throw std::overflow_error("world generation exhausted");
+    return store_->personal_outlook_before(source,npc,generation_+1);
+}
+
+PersistentWorld::VoluntaryImmigrationAdmission
+PersistentWorld::record_voluntary_immigration_admission(
+    std::uint64_t event,std::uint64_t pressure,
+    EntityId origin,EntityId destination,EntityId ferry,
+    std::uint64_t npc,std::uint64_t transport,PlayerId receiving_owner){
+    return store_->record_voluntary_admission(
+        world_,generation_,event,pressure,origin,destination,ferry,
+        npc,transport,receiving_owner);
+}
+
+PersistentWorld::HostVoluntaryDepartureReport
+PersistentWorld::supervise_voluntary_migration(
+    const HostVoluntaryDepartureSchedule& schedule,FailPoint fail){
+    HostVoluntaryDepartureReport out;
+    out.origin=schedule.origin;out.tick=world_.tick();
+    if(!schedule.origin || !schedule.scan_budget || schedule.scan_budget>32)
+        throw std::invalid_argument("voluntary supervisor requires colony and scan budget 1..32");
+    const auto* site=world_.find(schedule.origin);
+    if(!site || !world_.colony_ship(schedule.origin) ||
+       !site->owner_id || site->type!=EntityType::Ship)
+        throw std::invalid_argument("voluntary supervisor source is not a physically owned colony");
+    if(!store_->has_founded_governance(schedule.origin)){
+        out.status=HostVoluntaryDepartureStatus::NoResidents;
+        out.reason="this colony has not yet established a legitimate local governor";
+        return out;
+    }
+    constexpr auto max_id=static_cast<std::uint64_t>(
+        std::numeric_limits<sqlite3_int64>::max());
+    if(schedule.personal_event_base &&
+       schedule.personal_event_base>max_id-schedule.scan_budget)
+        throw std::invalid_argument("host reserved a non-viable personal history event range");
+    // The host calls us every committed tick. We only assess on a bounded,
+    // deterministic cadence; restarting cannot secretly advance any NPC's
+    // appraisal clock or duplicate a past current-generation observation.
+    if(world_.tick()<8 || world_.tick()%8){
+        out.status=HostVoluntaryDepartureStatus::NotDue;
+        out.reason="individual observations are due every eight world ticks";
+        return out;
+    }
+    std::vector<std::uint64_t> people;
+    for(const auto& [id,npc]:world_.npc_records())
+        if(npc.home_ship==schedule.origin && npc.location==schedule.origin &&
+           !npc.transport_id)people.push_back(id);
+    if(people.empty()){
+        out.status=HostVoluntaryDepartureStatus::NoResidents;
+        out.reason="there are no named physical residents to observe";
+        return out;
+    }
+    const auto budget=std::min<std::size_t>(
+        schedule.scan_budget,people.size());
+    const auto start=((world_.tick()/8)%people.size() *
+                      (schedule.scan_budget%people.size()))%people.size();
+    std::uint64_t eligible=0;
+    int eligible_priority=-1;
+    for(std::size_t i=0;i<budget;++i){
+        const auto npc=people[(start+i)%people.size()];
+        ++out.examined;
+        if(!store_->personal_outlook_recorded_at(
+               schedule.origin,npc,generation_)){
+            if(store_->assess_personal_outlook(
+                   world_,generation_,schedule.origin,npc)){
+                const auto event=schedule.personal_event_base?
+                    schedule.personal_event_base+i:
+                    store_->next_personal_outlook_event_id();
+                record_personal_outlook(event,schedule.origin,npc);
+                ++out.observed;
+            }
+        }
+        const auto now=colony_personal_outlook(schedule.origin,npc);
+        if(!now || !now->considering_departure)continue;
+        ++out.considering_departure;
+        // A decision first reached at this very generation must be
+        // committed before it can authorize a future immigrant permit.
+        const auto previous=store_->personal_outlook_before(
+            schedule.origin,npc,generation_);
+        if(previous && previous->considering_departure &&
+           now->world_generation>=previous->world_generation){
+            // Prioritize the most distressed and personally aggrieved,
+            // not whichever NPC happened to come first in one cyclic batch.
+            // Equal priorities rotate with the bounded round-robin scan.
+            const int priority=now->discontent+
+                (now->leader_rapport<0?10:0);
+            if(priority>eligible_priority){
+                eligible=npc;eligible_priority=priority;
+            }
+        }
+    }
+    if(!eligible){
+        out.status=out.considering_departure?
+            HostVoluntaryDepartureStatus::SeekingDestination:
+            (out.observed?HostVoluntaryDepartureStatus::Observed:
+                          HostVoluntaryDepartureStatus::NoEligibleMigrants);
+        out.reason=out.considering_departure?
+            "new intent must mature into a prior committed history generation":
+            "none of the bounded physical residents has mature exit intention";
+        return out;
+    }
+    out.selected_npc=eligible;
+    if(!schedule.approved_offer){
+        out.status=HostVoluntaryDepartureStatus::SeekingDestination;
+        out.reason="adult wants to emigrate, but no authenticated receiving-owner offer exists";
+        return out;
+    }
+    const auto& offer=*schedule.approved_offer;
+    if(!offer.destination || !offer.ferry || !offer.receiving_owner ||
+       !offer.transport_id || !offer.admission_event_id ||
+       !offer.boarding_command_id)
+        throw std::invalid_argument("host offer must reserve route, owner and durable identifiers");
+    const auto* destination=world_.find(offer.destination);
+    const auto* ferry=world_.find(offer.ferry);
+    const auto* origin=site;
+    const auto* old=world_.npc_records().count(eligible)?
+        &world_.npc_records().at(eligible):nullptr;
+    // Never create even a pending admission for an ungrounded ferry:
+    // physical same-system boarding, capacity/receiving owner and vehicle
+    // owner must already be real. The native passenger command does the
+    // final authoritative safety admission before execution.
+    if(!destination || !ferry || !old ||
+       destination->owner_id!=offer.receiving_owner ||
+       !world_.colony_ship(offer.destination) ||
+       !world_.colony_ship(offer.ferry) ||
+       ferry->system_id!=origin->system_id ||
+       (ferry->owner_id!=origin->owner_id &&
+        ferry->owner_id!=offer.receiving_owner) ||
+       colony_safety::assess(
+           world_,offer.destination,offer.destination).risk!=
+           colony_safety::Risk::Safe ||
+       store_->has_child_or_dependent_link(schedule.origin)){
+        out.status=HostVoluntaryDepartureStatus::PhysicalRouteBlocked;
+        out.reason="no real, safe, approved single-adult ferry route";
+        return out;
+    }
+    const auto dx=ferry->position.x-origin->position.x;
+    const auto dy=ferry->position.y-origin->position.y;
+    const auto range=Simulation::kDockingRangeMm;
+    if(dx < -range || dx>range || dy < -range || dy>range ||
+       dx*dx+dy*dy>range*range){
+        out.status=HostVoluntaryDepartureStatus::PhysicalRouteBlocked;
+        out.reason="offered ferry is not physically within boarding range";
+        return out;
+    }
+    const auto existing=store_->outstanding_voluntary_admission(
+        schedule.origin,eligible);
+    if(existing){
+        out.admission_event_id=existing->event_id;
+        if(existing->event_id!=offer.admission_event_id ||
+           existing->destination!=offer.destination ||
+           existing->ferry!=offer.ferry ||
+           existing->receiving_owner!=offer.receiving_owner ||
+           existing->transport_id!=offer.transport_id){
+            out.status=HostVoluntaryDepartureStatus::ExistingAdmission;
+            out.reason="this NPC has an unresolved different immigration admission";
+            return out;
+        }
+    }else{
+        // Deliberate scarcity can create a physical eligibility witness; a
+        // satisfied resident or unsupported subjective grievance cannot
+        // forge a new Critical/Emergency source event.
+        auto pressure=store_->existing_exit_pressure(schedule.origin,eligible);
+        if(!pressure){
+            if(!store_->assess_colony_exit_pressure(
+                   world_,generation_,schedule.origin,eligible)){
+                out.status=HostVoluntaryDepartureStatus::PhysicalRouteBlocked;
+                out.reason="resident lacks an authentic earlier shortage witness";
+                return out;
+            }
+            if(!offer.pressure_event_id)
+                throw std::invalid_argument(
+                    "host must reserve an event ID for the first physical shortage witness");
+            pressure=record_colony_exit_pressure(
+                offer.pressure_event_id,schedule.origin,eligible).event_id;
+        }
+        const auto accepted=record_voluntary_immigration_admission(
+            offer.admission_event_id,*pressure,schedule.origin,
+            offer.destination,offer.ferry,eligible,offer.transport_id,
+            offer.receiving_owner);
+        out.admission_event_id=accepted.event_id;
+    }
+    out.status=HostVoluntaryDepartureStatus::AdmissionCreated;
+    out.reason="receiving-owner admission is durable but boarding not yet queued";
+    if(world_.has_command_id(offer.boarding_command_id)){
+        out.status=HostVoluntaryDepartureStatus::ExistingAdmission;
+        out.reason="the host command identifier is already reserved; never duplicate a voyage";
+        return out;
+    }
+    Command board{};
+    board.id=offer.boarding_command_id;
+    board.sequence=offer.boarding_command_id;
+    board.execute_tick=world_.tick()+1;
+    board.issuer=Simulation::kServerAuthority;
+    board.actor=offer.ferry;
+    board.target=schedule.origin;
+    board.action=Action::HostEmbarkPassengers;
+    board.transport_id=offer.transport_id;
+    board.passenger_ids={eligible};
+    if(submit_voluntary_immigration_boarding(out.admission_event_id,board,fail)){
+        out.status=HostVoluntaryDepartureStatus::BoardingQueued;
+        out.reason="native host boarding command admitted; next physical world step executes it";
+    }
+    return out;
+}
+
+bool PersistentWorld::submit_voluntary_immigration_boarding(
+    std::uint64_t admission_event,const Command& c,FailPoint fail){
+    const auto a=store_->immigration_admission(admission_event);
+    const auto person=world_.npc_records().find(a.npc_id);
+    const auto* origin=world_.find(a.origin);
+    const auto* destination=world_.find(a.destination);
+    const auto* ferry=world_.find(a.ferry);
+    if(a.world_generation>generation_ ||
+       store_->verified_voluntary_immigration(a.event_id) ||
+       !origin || !destination || !ferry ||
+       origin->owner_id!=a.original_owner ||
+       destination->owner_id!=a.receiving_owner ||
+       ferry->system_id!=origin->system_id ||
+       person==world_.npc_records().end() ||
+       person->second.home_ship!=a.origin ||
+       person->second.location!=a.origin ||
+       person->second.transport_id ||
+       !world_.npc_available_for_duty(a.npc_id) ||
+       store_->has_child_or_dependent_link(a.origin) ||
+       world_.voyage_status(a.transport_id)!=0 ||
+       store_->effective_governance(a.origin,generation_).leader_id==a.npc_id ||
+       !([&]{
+           if(!a.personal_outlook_event_id){
+               // An authentic pre-EXIT01C permit may finish boarding under its
+               // original strict, still-critical source scarcity condition.
+               return static_cast<int>(colony_safety::assess(
+                   world_,a.origin,a.origin).risk)>=
+                   static_cast<int>(colony_safety::Risk::Critical);
+           }
+           const auto approved=store_->personal_outlook_before(
+               a.origin,a.npc_id,a.world_generation);
+           // Boarding is a new prospective action: a same-generation
+           // *already committed* recovery observation can veto it. The
+           // original admission still references only prior-generation
+           // personal history, preserving dated decisions without time travel.
+           if(generation_==std::numeric_limits<std::uint64_t>::max())
+               return false;
+           const auto latest=store_->personal_outlook_before(
+               a.origin,a.npc_id,generation_+1);
+           return approved && latest &&
+                  approved->event_id==a.personal_outlook_event_id &&
+                  approved->considering_departure &&
+                  latest->considering_departure;
+       }()) ||
+       colony_safety::assess(world_,a.destination,a.destination).risk!=
+           colony_safety::Risk::Safe ||
+       c.action!=Action::HostEmbarkPassengers ||
+       c.issuer!=Simulation::kServerAuthority ||
+       c.actor!=a.ferry || c.target!=a.origin ||
+       c.transport_id!=a.transport_id ||
+       c.passenger_ids!=std::vector<std::uint64_t>{a.npc_id} ||
+       c.execute_tick!=world_.tick()+1)
+        return false;
+    return submit_host_passenger_action(c,fail);
+}
+void PersistentWorld::step_with_voluntary_immigration(
+    std::uint64_t admission_event,const SocietyMigrationPlan& plan,FailPoint fail){
+    if(!admission_event || plan.voluntary_admission_event_id)
+        throw std::invalid_argument("voluntary migration must use exactly one admission");
+    auto linked=plan;
+    linked.voluntary_admission_event_id=admission_event;
+    step_with_atomic_migration(linked,fail);
+}
+bool PersistentWorld::verified_voluntary_immigration(
+    std::uint64_t admission_event) const{
+    return store_->verified_voluntary_immigration(admission_event);
+}
+
+colony_conflict::GovernanceEpoch PersistentWorld::record_colony_governance_transition(
+    std::uint64_t event,EntityId colony,std::uint64_t successor,
+    colony_conflict::Agenda agenda,colony_conflict::DiplomaticPolicy policy,
+    colony_conflict::TransitionKind kind,PlayerId approving_owner){
+    return store_->record_governance_transition(
+        world_,generation_,event,colony,successor,agenda,policy,kind,approving_owner);
+}
+colony_conflict::GovernanceEpoch PersistentWorld::colony_governance(
+    EntityId colony) const{
+    return store_->effective_governance(colony,generation_);
+}
+
+colony_conflict::Decision PersistentWorld::assess_colony_diplomatic_intent(
+    EntityId source,std::uint64_t contact) const{
+    return store_->assess_colony_diplomacy(world_,generation_,source,contact);
+}
+colony_conflict::Decision PersistentWorld::record_colony_diplomatic_intent(
+    std::uint64_t event,EntityId source,std::uint64_t contact){
+    return store_->record_colony_diplomacy(
+        world_,generation_,event,source,contact);
+}
+
+// COLONY-AUTO-04D.4D2B2: admission only. No family member relocates until
+// step_with_atomic_family_departure commits world, ART02 and ECON03 together.
+bool PersistentWorld::submit_host_atomic_family_departure(
+    const AtomicColonyFamilyPlan& p,FailPoint fail){
+    if(p.family.expected_world_generation!=generation_ ||
+       !p.command_id || p.command_id==p.family.intent_id)return false;
+    const auto audit=store_->audit_colony_family_departure(world_,p.family);
+    if(!audit.ready_for_transaction)return false;
+    Command command{};
+    command.id=p.command_id;command.sequence=p.command_id;
+    command.execute_tick=world_.tick()+1;
+    command.issuer=Simulation::kServerAuthority;
+    command.actor=p.family.source;command.target=p.family.receiver;
+    command.action=Action::HostColonyDeparture;
+    command.passenger_ids=p.family.adult_ids;
+    auto next=world_;
+    if(!next.submit(command))return false;
+    const auto effect=[&](sqlite3* db,std::uint64_t){
+        verify_atomic_colony_family_preparation(db,world_,p);
+    };
+    store_->commit(next,generation_,resource_origin_,credit_origin_,
+                   &command,{},{},{},fail,nullptr,nullptr,effect);
+    world_.swap(next);++generation_;
+    return true;
+}
+
+// The only publication point for a whole-family rescue. ART02 identity,
+ // cold-owner population, world snapshot, applied command and immutable
+// physical custody proof share the Store::commit BEGIN IMMEDIATE/COMMIT.
+void PersistentWorld::step_with_atomic_family_departure(
+    const AtomicColonyFamilyPlan& p,FailPoint fail){
+    if(!p.family.expected_world_generation ||
+       p.family.expected_world_generation+1!=generation_)
+        throw std::runtime_error("stale family evacuation execution generation");
+    auto next=world_;
+    const auto first=next.events().size(),first_activity=next.activity_events().size();
+    std::map<std::uint64_t,Command> due;
+    if(auto it=next.commands_.find(next.tick()+1);it!=next.commands_.end())
+        for(const auto& command:it->second)due.emplace(command.id,command);
+    if(due.size()!=1 || !due.count(p.command_id))
+        throw std::runtime_error("whole-family rescue needs exactly one due host command");
+    const auto& command=due.at(p.command_id);
+    if(command.issuer!=Simulation::kServerAuthority ||
+       command.action!=Action::HostColonyDeparture ||
+       command.actor!=p.family.source || command.target!=p.family.receiver ||
+       command.passenger_ids!=p.family.adult_ids)
+        throw std::runtime_error("family evacuation command/manifest mismatch");
+    const auto source_npcs=world_.npc_records().size();
+    const auto source_children=world_.physical_dependents().size();
+    next.step();
+    if(next.events().size()!=first+1 ||
+       next.events().back().command_id!=p.command_id ||
+       next.events().back().result!=Outcome::Applied ||
+       next.events().back().transferred!=0 ||
+       next.npc_records().size()!=source_npcs ||
+       next.physical_dependents().size()!=source_children)
+        throw std::runtime_error("native family transfer not atomically applied");
+    const auto result=next.colony_departures().find(p.family.source);
+    if(result==next.colony_departures().end() ||
+       result->second.receiver!=p.family.receiver ||
+       result->second.command_id!=p.command_id ||
+       result->second.relocated_npcs!=p.family.adult_ids ||
+       result->second.relocated_dependents.size()!=p.family.children.size())
+        throw std::runtime_error("native family receipt missing or partial");
+    std::vector<std::uint64_t> children;
+    for(const auto& c:p.family.children){
+        children.push_back(c.child_id);
+        const auto d=next.physical_dependents().find(c.child_id);
+        if(d==next.physical_dependents().end() ||
+           d->second.guardian_id!=c.guardian_id ||
+           d->second.home_ship!=p.family.receiver ||
+           d->second.location!=p.family.receiver)
+            throw std::runtime_error("native dependent did not arrive with guardian");
+    }
+    if(result->second.relocated_dependents!=children ||
+       next.children_physically_aboard(p.family.source)!=0)
+        throw std::runtime_error("world execution stranded or misplaced child");
+    const auto events=std::vector<Event>(next.events().begin()+
+        static_cast<std::ptrdiff_t>(first),next.events().end());
+    const auto activity=std::vector<ActivityEvent>(next.activity_events().begin()+
+        static_cast<std::ptrdiff_t>(first_activity),next.activity_events().end());
+    const auto path=store_->sqlite_path();
+    regional_events::CheckpointStore region(path,p.region_scope);
+    const auto effect=[&](sqlite3* db,std::uint64_t committed_generation){
+        verify_atomic_colony_family_preparation(db,world_,p);
+        NpcAppearanceStore family(db,p.family.family_scope,p.family.family_seed,
+            [&](std::uint64_t id){return next.npc_records().count(id)!=0;});
+        const auto original=family.family_census(p.family.source);
+        const auto receiver=family.family_census(p.family.receiver);
+        if(original.revision!=p.expected_origin_family_revision ||
+           receiver.revision!=p.expected_receiver_family_revision)
+            throw std::runtime_error("family census changed during evacuation");
+        std::vector<std::pair<std::uint64_t,std::uint64_t>> members;
+        for(std::size_t i=0;i<p.family.adult_ids.size();++i)
+            members.emplace_back(p.family.adult_ids[i],p.member_event_ids[i]);
+        for(std::size_t i=0;i<p.family.children.size();++i)
+            members.emplace_back(p.family.children[i].child_id,
+                p.member_event_ids[p.family.adult_ids.size()+i]);
+        const auto authorize=[&](auto id,auto origin,auto destination){
+            if(origin!=p.family.source || destination!=p.family.receiver)return false;
+            auto adult=world_.npc_records().find(id);
+            if(adult!=world_.npc_records().end()){
+                const auto after=next.npc_records().find(id);
+                return std::binary_search(p.family.adult_ids.begin(),
+                         p.family.adult_ids.end(),id) &&
+                       adult->second.home_ship==origin &&
+                       after!=next.npc_records().end() &&
+                       after->second.home_ship==destination &&
+                       after->second.location==destination &&
+                       after->second.transport_id==0;
+            }
+            const auto before=world_.physical_dependents().find(id);
+            const auto after=next.physical_dependents().find(id);
+            if(before==world_.physical_dependents().end() ||
+               after==next.physical_dependents().end())return false;
+            const auto selected=std::find_if(p.family.children.begin(),
+                p.family.children.end(),[&](const auto& c){return c.child_id==id;});
+            return selected!=p.family.children.end() &&
+                   selected->guardian_id==after->second.guardian_id &&
+                   before->second.home_ship==origin &&
+                   before->second.location==origin &&
+                   after->second.home_ship==destination &&
+                   after->second.location==destination &&
+                   next.npc_records().at(after->second.guardian_id).home_ship==destination;
+        };
+        const auto moved=family.record_complete_colony_moves(members,
+            p.family.source,p.family.receiver,next.tick(),
+            p.expected_origin_family_revision,p.expected_receiver_family_revision,authorize);
+        if(moved.size()!=members.size())
+            throw std::runtime_error("ART02 household movement incomplete");
+        const auto regional_revision=region.commit_migration_in_world_transaction(
+            db,p.expected_region_revision,p.expected_owner_generation,next.tick(),
+            p.origin_colony,p.receiver_colony,original.current_population,
+            receiver.current_population,std::to_string(p.command_id),
+            members.size(),"colony-family-evacuation-host");
+        run(db,"CREATE TABLE IF NOT EXISTS sg_colony_family_evacuation("
+            "command_id TEXT PRIMARY KEY,intent_id TEXT NOT NULL UNIQUE,"
+            "world_generation INTEGER NOT NULL,tick INTEGER NOT NULL,"
+            "family_scope TEXT NOT NULL,family_seed TEXT NOT NULL,"
+            "region_scope TEXT NOT NULL,region_revision INTEGER NOT NULL,"
+            "owner_generation INTEGER NOT NULL,source TEXT NOT NULL,"
+            "receiver TEXT NOT NULL,origin_colony TEXT NOT NULL,"
+            "receiver_colony TEXT NOT NULL,member_count INTEGER NOT NULL,"
+            "adult_count INTEGER NOT NULL,child_count INTEGER NOT NULL)");
+        run(db,"CREATE TABLE IF NOT EXISTS sg_colony_family_evacuation_member("
+            "command_id TEXT NOT NULL,event_id TEXT NOT NULL UNIQUE,"
+            "person_id TEXT NOT NULL,guardian_id TEXT NOT NULL,"
+            "kind INTEGER NOT NULL CHECK(kind IN (0,1)),"
+            "origin_revision INTEGER NOT NULL,destination_revision INTEGER NOT NULL,"
+            "PRIMARY KEY(command_id,person_id))");
+        for(const auto* tab:{"sg_colony_family_evacuation",
+                             "sg_colony_family_evacuation_member"}){
+            const auto table=std::string(tab);
+            run(db,("CREATE TRIGGER IF NOT EXISTS "+table+"_immutable_update "
+                "BEFORE UPDATE ON "+table+" BEGIN SELECT RAISE(ABORT,"
+                "'family evacuation immutable'); END").c_str());
+            run(db,("CREATE TRIGGER IF NOT EXISTS "+table+"_immutable_delete "
+                "BEFORE DELETE ON "+table+" BEGIN SELECT RAISE(ABORT,"
+                "'family evacuation immutable'); END").c_str());
+        }
+        Statement head(db,"INSERT INTO sg_colony_family_evacuation VALUES "
+            "(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)");
+        head.text(1,std::to_string(p.command_id));
+        head.text(2,std::to_string(p.family.intent_id));
+        head.i64(3,static_cast<sqlite3_int64>(committed_generation));
+        head.i64(4,static_cast<sqlite3_int64>(next.tick()));
+        head.text(5,p.family.family_scope);
+        head.text(6,std::to_string(p.family.family_seed));
+        head.text(7,p.region_scope);
+        head.i64(8,static_cast<sqlite3_int64>(regional_revision));
+        head.i64(9,static_cast<sqlite3_int64>(p.expected_owner_generation));
+        head.text(10,std::to_string(p.family.source));
+        head.text(11,std::to_string(p.family.receiver));
+        head.text(12,p.origin_colony);head.text(13,p.receiver_colony);
+        head.i64(14,static_cast<sqlite3_int64>(members.size()));
+        head.i64(15,static_cast<sqlite3_int64>(p.family.adult_ids.size()));
+        head.i64(16,static_cast<sqlite3_int64>(p.family.children.size()));
+        head.execute();
+        for(std::size_t i=0;i<moved.size();++i){
+            const auto child=i>=p.family.adult_ids.size();
+            const auto guardian=child?
+                p.family.children[i-p.family.adult_ids.size()].guardian_id:0;
+            Statement member(db,"INSERT INTO sg_colony_family_evacuation_member "
+                "VALUES(?,?,?,?,?,?,?)");
+            member.text(1,std::to_string(p.command_id));
+            member.text(2,std::to_string(moved[i].event_id));
+            member.text(3,std::to_string(moved[i].npc_id));
+            member.text(4,std::to_string(guardian));
+            member.i64(5,child?1:0);
+            member.i64(6,static_cast<sqlite3_int64>(moved[i].origin_revision));
+            member.i64(7,static_cast<sqlite3_int64>(moved[i].destination_revision));
+            member.execute();
+        }
+    };
+    store_->commit(next,generation_,resource_origin_,credit_origin_,
+                   nullptr,events,due,activity,fail,nullptr,nullptr,effect);
+    world_.swap(next);++generation_;
+}
+
+bool PersistentWorld::verified_atomic_family_departure(std::uint64_t command_id) const{
+    if(!command_id)return false;
+    const auto found=std::find_if(world_.colony_departures().begin(),
+        world_.colony_departures().end(),
+        [&](const auto& row){return row.second.command_id==command_id;});
+    if(found==world_.colony_departures().end() ||
+       found->second.relocated_dependents.empty())return false;
+    // COLONY-AUTO-04D.4D2C: a yes/no "evacuated" query must independently
+    // certify its entire durable ledger, not just trust a mutable header.
+    // Store::restore audits the source/destination snapshots, birth bridge,
+    // every ART02 member and census revision, and the ECON03 receipt.
+    // A removed child row or changed guardian MUST throw, never return true.
+    Simulation reread(1);
+    std::uint64_t persisted_generation=0;
+    std::int64_t persisted_ore=0,persisted_credits=0;
+    if(!store_->restore(reread,persisted_generation,persisted_ore,persisted_credits) ||
+       persisted_generation!=generation_ || reread.state_hash()!=world_.state_hash())
+        throw std::runtime_error("family receipt does not match authoritative world");
+    store_->verify_physical_dependent_authority(reread);
+    store_->verify_autonomous_dispatch(persisted_generation);
+    store_->verify_supervisor_plans(persisted_generation);
+    sqlite3* raw=nullptr;
+    if(sqlite3_open_v2(db_path_.c_str(),&raw,SQLITE_OPEN_READONLY,nullptr)!=SQLITE_OK){
+        if(raw)sqlite3_close(raw);
+        throw std::runtime_error("cannot verify family evacuation database");
+    }
+    std::unique_ptr<sqlite3,decltype(&sqlite3_close)> db(raw,sqlite3_close);
+    Statement present(db.get(),"SELECT 1 FROM sqlite_master "
+        "WHERE type='table' AND name='sg_colony_family_evacuation'");
+    if(!present.row())return false;
+    Statement witness(db.get(),"SELECT receiver,member_count,child_count "
+        "FROM sg_colony_family_evacuation WHERE command_id=?");
+    witness.text(1,std::to_string(command_id));
+    if(!witness.row())return false;
+    const auto receiver=parse_u64(sqlite3_column_text(witness.get(),0));
+    const auto count=sqlite3_column_int64(witness.get(),1);
+    const auto children=sqlite3_column_int64(witness.get(),2);
+    if(witness.row())return false;
+    return receiver==found->second.receiver &&
+           count==static_cast<sqlite3_int64>(found->second.relocated_npcs.size()+
+                found->second.relocated_dependents.size()) &&
+           children==static_cast<sqlite3_int64>(found->second.relocated_dependents.size());
+}
+
+bool PersistentWorld::submit_host_emergency_ferry_rescue(
+        const Command& command,FailPoint fail){
+    // This gate is deliberately limited to EXISTING ferry passengers in one
+    // active/stranded voyage. It does not move home-ship crew, colonists,
+    // dependents, or create a transport/repair resource.
+    if(command.action!=Action::HostEvacuatePassengers ||
+       command.issuer!=Simulation::kServerAuthority ||
+       !command.actor || !command.target || command.actor==command.target ||
+       command.execute_tick!=world_.tick()+1 ||
+       command.transport_id==0 || command.amount<=0 ||
+       command.passenger_ids.empty() || command.passenger_ids.size()>16)
+        return false;
+    const auto voyage=world_.voyages_.find(command.transport_id);
+    if(voyage==world_.voyages_.end() ||
+       voyage->second.ferry!=command.actor ||
+       (voyage->second.status!=1 && voyage->second.status!=3) ||
+       voyage->second.passengers!=command.passenger_ids)
+        return false;
+    const auto* source=world_.colony_ship(command.actor);
+    const auto* receiver=world_.colony_ship(command.target);
+    const auto* provision=world_.life_support(command.target);
+    const auto* dest=world_.find(command.target);
+    if(!source||!receiver||!provision||!dest||
+       dest->type!=EntityType::Ship || receiver->crew<=0)
+        return false;
+    // No emergency authority to evacuate a healthy ferry speculatively.
+    const auto hazard=colony_safety::assess(world_,command.actor,command.actor);
+    if(hazard.risk!=colony_safety::Risk::Critical &&
+       hazard.risk!=colony_safety::Risk::Emergency)
+        return false;
+    // Recipient must carry physical provisions for at least TWO whole
+    // consumption periods for its native crew, existing onboard passengers,
+    // and every newly rescued passenger. Unfulfilled imports do not count.
+    const auto currently_present=world_.passenger_needs_enabled()?
+        static_cast<std::uint64_t>(world_.people_physically_aboard(command.target)):
+        static_cast<std::uint64_t>(receiver->crew)+world_.passengers_aboard(command.target);
+    const auto people=currently_present+
+                      static_cast<std::uint64_t>(command.passenger_ids.size());
+    if(people==0||people>1000 ||
+       provision->food_kg<static_cast<std::int64_t>(2*people) ||
+       provision->water_kg<static_cast<std::int64_t>(2*people) ||
+       provision->oxygen_kg<static_cast<std::int64_t>(2*people))
+        return false;
+    // Full source passenger roster, exact seat capacity, route/ship proximity,
+    // reserved voyage identity, child berth protection and custody validation
+    // are all rechecked by existing native command admission.
+    // Success here means SCHEDULED, never arrived or rescued until execution.
+    return submit_host_passenger_action(command,fail);
+}
+
 bool PersistentWorld::submit_host_passenger_action(const Command& command, FailPoint fail){
     if(command.action!=Action::HostEmbarkPassengers && command.action!=Action::HostDisembarkPassengers &&
        command.action!=Action::HostStrandFerry && command.action!=Action::HostResumeFerry &&
@@ -5607,6 +13391,22 @@ bool PersistentWorld::submit_host_passenger_action(const Command& command, FailP
        command.action!=Action::HostMobileStabilize &&
        command.action!=Action::HostSettleMigrant)return false;
     if(command.issuer!=Simulation::kServerAuthority)return false;
+    // v57: boarding is physical custody, so reserve a conservative TWO-cycle
+    // runway at the *actual* receiving ship, for everyone currently present
+    // and every newly boarding named passenger. Legacy replay is unchanged.
+    if(world_.passenger_needs_enabled() &&
+       (command.action==Action::HostEmbarkPassengers ||
+        command.action==Action::HostEvacuatePassengers)){
+        const auto receiving=command.action==Action::HostEmbarkPassengers ?
+                             command.actor:command.target;
+        const auto* life=world_.life_support(receiving);
+        const auto present=world_.people_physically_aboard(receiving);
+        if(!life || command.passenger_ids.empty() || present>1000 ||
+           command.passenger_ids.size()>1000-present)return false;
+        const auto count=static_cast<std::int64_t>(present+command.passenger_ids.size());
+        if(life->food_kg<2*count || life->water_kg<2*count ||
+           life->oxygen_kg<2*count)return false;
+    }
     // Child physical berths count against the same actual 16 seats. Host-only
     // incident handlers must not destroy/teleport a ferry full of dependents.
     if(command.action==Action::HostEmbarkPassengers &&
@@ -5634,7 +13434,154 @@ bool PersistentWorld::submit_host_consigned_transfer(const Command& command,Fail
     world_.swap(next);++generation_;return true;
 }
 
+bool PersistentWorld::submit_testing_ship_confusion(
+    EntityId source,EntityId target,std::uint64_t effect_id,
+    std::uint64_t random_seed,std::uint64_t duration_ticks,
+    std::uint32_t pulse_ticks,std::uint8_t intensity,
+    std::uint8_t resistance,std::uint8_t exposed_hardpoint_mask,
+    FailPoint fail) {
+    // TEST-ONLY transition. No real mounted hacking hardware exists yet.
+    // As with ordinary host world changes, a failed SQLite commit leaves
+    // in-memory state unchanged. No second status database or free hardware.
+    auto next=world_;
+    if(!next.install_testing_confusion(source,target,effect_id,random_seed,
+            duration_ticks,pulse_ticks,intensity,resistance,
+            exposed_hardpoint_mask))return false;
+    store_->commit(next,generation_,resource_origin_,credit_origin_,
+                   nullptr,{},{},{},fail);
+    world_.swap(next);
+    ++generation_;
+    return true;
+}
+
+
+bool PersistentWorld::submit_cockpit_flight_checked(
+        const Command& command,std::uint64_t expected_seat_sequence,FailPoint fail){
+    // Internal friend-only gateway. External PersistentWorld::submit rejects
+    // the reserved cockpit-command ID namespace.
+    constexpr std::uint64_t cockpit_tag=std::uint64_t{1}<<60;
+    constexpr std::uint64_t other_tags=std::uint64_t{3}<<61;
+    if(!(command.id&cockpit_tag)||(command.id&other_tags)||
+       !expected_seat_sequence||
+       (command.action!=Action::Thrust&&command.action!=Action::RequestUndock&&
+        command.action!=Action::RequestDock)||
+       command.issuer==0||command.issuer==Simulation::kServerAuthority||
+       !command.actor||command.execute_tick!=world_.tick()+1||
+       ((command.action==Action::RequestDock) ? !command.target : !!command.target)||
+       command.transport_id||!command.passenger_ids.empty()||
+       command.secondary_receiver||command.secondary_transport||
+       world_.has_pending_cockpit_flight())return false;
+    const auto* ship=world_.find(command.actor);
+    const auto person=world_.player_people().find(command.issuer);
+    if(!ship||ship->type!=EntityType::Ship||
+       ship->owner_id!=command.issuer||
+       person==world_.player_people().end()||
+       person->second.owner!=command.issuer||
+       person->second.state!=PlayerPersonState::AboardOwnShip||
+       person->second.home_ship!=command.actor||
+       person->second.physical_ship!=command.actor)return false;
+    for(const auto& [id,flight]:world_.npc_flight_orders()){
+        (void)id;
+        if(flight.ship==command.actor&&
+           (flight.phase==NpcFlightPhase::Planned||
+            flight.phase==NpcFlightPhase::InTransit))return false;
+    }
+    if(command.action==Action::RequestUndock &&
+       has_named_crew_on_station(world_,command.actor))return false;
+    // Original world command acceptance is a separate native journal commit.
+    // Seat state is revalidated UNDER its SQLite BEGIN IMMEDIATE lock.
+    auto next=world_;
+    if(!next.submit(command))return false;
+    const auto require_seat=[&](sqlite3* db,std::uint64_t){
+        Statement q(db,"SELECT ship,seated,seq FROM sg_fp3d03a_seat WHERE owner=?");
+        q.i64(1,static_cast<std::int64_t>(command.issuer));
+        if(!q.row()||
+           sqlite3_column_int64(q.get(),0)!=static_cast<sqlite3_int64>(command.actor)||
+           sqlite3_column_int(q.get(),1)!=1||
+           sqlite3_column_int64(q.get(),2)!=
+               static_cast<sqlite3_int64>(expected_seat_sequence)||
+           q.row())throw std::runtime_error("cockpit seat authorization changed inside writer");
+    };
+    store_->commit(next,generation_,resource_origin_,credit_origin_,&command,
+                   {},{},{},fail,nullptr,nullptr,require_seat);
+    world_.swap(next);
+    ++generation_;
+    return true;
+}
+
 bool PersistentWorld::submit(const Command& command, FailPoint fail) {
+    return submit_with_cell_worker(command,nullptr,fail);
+}
+bool PersistentWorld::submit_as_cell_worker(
+        const Command& command,const NativeCellWorkerTick& token,
+        FailPoint fail) {
+    return submit_with_cell_worker(command,&token,fail);
+}
+bool PersistentWorld::submit_with_cell_worker(
+        const Command& command,const NativeCellWorkerTick* token,
+        FailPoint fail) {
+    if((command.action==Action::RequestUndock ||
+        command.action==Action::RequestJump) &&
+       has_named_crew_on_station(world_,command.actor))return false;
+    // Reserved native NPC and cockpit command IDs cannot be submitted via
+    // ordinary client/worker APIs. Cockpit admission requires trusted seat proof.
+    if((command.id & (std::uint64_t{1}<<60)) &&
+       !(command.id & (std::uint64_t{3}<<61)))return false;
+    if((command.id & (std::uint64_t{1}<<61)) &&
+       !(command.id & (std::uint64_t{1}<<62)))return false;
+    // Physical command actor must already inhabit the worker's genuine
+    // original cell. Target range remains owned by original Simulation;
+    // a scope string is never a shortcut for player/crew authorization.
+    if(token){
+        const auto* actor=world_.find(command.actor);
+        const auto cell=spatial::ship_cell(world_,command.actor);
+        if(!actor || actor->type!=EntityType::Ship || !cell ||
+           spatial::scope(*cell)!=token->canonical_cell_scope)
+            throw std::runtime_error("worker cannot submit outside its original cell");
+    }
+    // NPC-RESP-02B: independent character custody is authoritative for
+    // PLAYER-operated ship controls. A rescued/detained person cannot
+    // remotely pilot an abandoned hull by changing the selected cockpit.
+    // The native NPC navigator submits its own original controls through
+    // Simulation::submit inside the host-journaled step, unaffected here.
+    if(command.action==Action::Thrust ||
+       command.action==Action::Mine ||
+       command.action==Action::StartMining ||
+       command.action==Action::StopMining ||
+       command.action==Action::RequestDock ||
+       command.action==Action::RequestUndock ||
+       command.action==Action::RequestJump ||
+       command.action==Action::FireTrainingWeapon ||
+       command.action==Action::SetHardpointPower ||
+       command.action==Action::SetCyberIsolation ||
+       command.action==Action::ConfigureCyberModule ||
+       command.action==Action::HackConfuse ||
+       command.action==Action::SalvageWreck){
+        const auto person=world_.player_people_.find(command.issuer);
+        if(person!=world_.player_people_.end() &&
+           (person->second.state!=PlayerPersonState::AboardOwnShip ||
+            person->second.physical_ship!=command.actor))
+            return false;
+    }
+    // A player command cannot race an active NPC navigator's exclusive
+    // physical ship-control session. The NPC uses Simulation::submit
+    // INSIDE the same host-journaled step, not this external owner API.
+    if(command.action==Action::Thrust ||
+       command.action==Action::RequestDock ||
+       command.action==Action::RequestUndock ||
+       command.action==Action::SetHardpointPower ||
+       command.action==Action::SetCyberIsolation ||
+       command.action==Action::ConfigureCyberModule ||
+       command.action==Action::HackConfuse ||
+       command.action==Action::RequestJump){
+        for(const auto& [id,flight]:world_.npc_flight_orders_){
+            (void)id;
+            if(flight.ship==command.actor &&
+               (flight.phase==NpcFlightPhase::Planned ||
+                flight.phase==NpcFlightPhase::InTransit))
+                return false;
+        }
+    }
     if (command.action == Action::HostDestroyShip || command.action == Action::HostCrewLoss ||
         command.action == Action::SetGatePairOnline ||
         command.action == Action::SetGateStaff ||
@@ -5643,7 +13590,8 @@ bool PersistentWorld::submit(const Command& command, FailPoint fail) {
     if(!store_->manifest_transfer_allowed(command))return false;
     auto next = world_;
     if (!next.submit(command)) return false;
-    store_->commit(next, generation_, resource_origin_, credit_origin_, &command, {}, {}, {}, fail);
+    store_->commit(next, generation_, resource_origin_, credit_origin_,
+                   &command, {}, {}, {}, fail,nullptr,nullptr,{},token);
     world_.swap(next); // noexcept: in-memory state published only after COMMIT
     ++generation_;
     return true;
@@ -5683,6 +13631,95 @@ bool PersistentWorld::submit_testing_gate_operations(EntityId forward,EntityId r
     if(!next.submit(c))return false;
     store_->commit(next,generation_,resource_origin_,credit_origin_,&c,{},{},{},fail);
     world_.swap(next);++generation_;
+    return true;
+}
+bool PersistentWorld::submit_npc_cyber_attack(
+    PlayerId owner,EntityId attacking_ship,std::uint64_t pilot_npc,
+    std::uint64_t observer_npc,EntityId target,
+    std::uint64_t command_id,FailPoint fail) {
+    if(!owner || owner==Simulation::kServerAuthority ||
+       !attacking_ship || !target || attacking_ship==target ||
+       !pilot_npc || !observer_npc || !command_id ||
+       command_id>=(std::uint64_t{1}<<62) ||
+       store_->npc_busy_this_tick(pilot_npc,world_.tick()) ||
+       store_->npc_busy_this_tick(observer_npc,world_.tick()))
+        return false;
+    const auto* ship=world_.find(attacking_ship);
+    const auto* opponent=world_.find(target);
+    const auto& crew=world_.npc_records();
+    const auto p=crew.find(pilot_npc),w=crew.find(observer_npc);
+    if(!ship || !opponent || ship->type!=EntityType::Ship ||
+       opponent->type!=EntityType::Ship ||
+       ship->owner_id!=owner || opponent->owner_id==owner ||
+       !world_.colony_ship(attacking_ship) ||
+       !world_.passenger_needs_enabled() ||
+       !ship->fitting.intrusion_emitter() ||
+       p==crew.end() || w==crew.end() ||
+       p->second.home_ship!=attacking_ship ||
+       p->second.location!=attacking_ship ||
+       p->second.role!=NpcRole::Ship ||
+       p->second.transport_id ||
+       w->second.home_ship!=attacking_ship ||
+       w->second.location!=attacking_ship ||
+       w->second.transport_id ||
+       !world_.npc_available_for_duty(pilot_npc) ||
+       !world_.npc_available_for_duty(observer_npc))
+        return false;
+    // The original v102 admission receipt also reserves the named real
+    // operator for this tick. It prevents two cyber requests (or two
+    // observers acting as duplicate controllers) from scheduling the same
+    // physical NPC or ship concurrently, including after a host restart.
+    for(const auto& [id,prior]:world_.npc_cyber_operators()){
+        (void)id;
+        if(prior.admitted_tick==world_.tick() &&
+           (prior.attacking_ship==attacking_ship ||
+            prior.pilot_npc==pilot_npc ||
+            prior.observer_npc==observer_npc ||
+            prior.pilot_npc==observer_npc ||
+            prior.observer_npc==pilot_npc))
+            return false;
+    }
+    // A tactical operator cannot steal an NPC navigator's exclusive
+    // control of a physically moving ship.
+    for(const auto& [id,flight]:world_.npc_flight_orders()){
+        (void)id;
+        if(flight.ship==attacking_ship &&
+           (flight.phase==NpcFlightPhase::Planned ||
+            flight.phase==NpcFlightPhase::InTransit))return false;
+    }
+    // Recompute a fresh original named-NPC sensory observation. A supplied
+    // target ID or an old territorial complaint is not a verified contact.
+    const auto observed=local_colony_watch_contacts(attacking_ship,observer_npc);
+    const auto found=std::find_if(observed.begin(),observed.end(),
+        [&](const colony_defense::Contact& c){
+            return c.source==attacking_ship && c.foreign_ship==target &&
+                   c.foreign_owner==opponent->owner_id &&
+                   c.observer_npc==observer_npc &&
+                   c.world_tick==world_.tick();
+        });
+    if(found==observed.end())return false;
+    Command command{};
+    command.id=command_id;
+    command.sequence=command_id;
+    command.execute_tick=world_.tick()+1;
+    command.issuer=owner;
+    command.actor=attacking_ship;
+    command.target=target;
+    command.action=Action::HackConfuse;
+    auto next=world_;
+    if(!next.submit(command) ||
+       next.npc_cyber_operators_.size()>=10000 ||
+       next.npc_cyber_operators_.count(command_id))return false;
+    next.npc_cyber_operators_.emplace(command_id,NpcCyberOperator{
+        command_id,owner,attacking_ship,target,pilot_npc,observer_npc,
+        world_.tick()});
+    next.snapshot_version_=std::max(next.snapshot_version_,102);
+    // The pilot/observer provenance and native command commit in the
+    // SAME original SQLite generation, never in an orphan side journal.
+    store_->commit(next,generation_,resource_origin_,credit_origin_,
+                   &command,{},{},{},fail);
+    world_.swap(next);
+    ++generation_;
     return true;
 }
 bool PersistentWorld::submit_npc_mining_work(std::uint64_t npc_id,EntityId ship,EntityId rock,
@@ -5979,6 +14016,17 @@ void PersistentWorld::step_with_atomic_migration(const SocietyMigrationPlan& pla
        plan.origin_colony==plan.destination_colony ||
        plan.family_scope.empty() || plan.region_scope.empty())
         throw std::invalid_argument("stale or incomplete host migration plan");
+    // Typed endpoints prevent a raw numeric surface ID from being mistaken
+    // for a colony ship. The existing census bridge cannot yet account for
+    // planetary residences; reject rather than corrupt family population.
+    if(plan.origin_kind!=transport::LocationKind::ColonyShip ||
+       plan.destination_kind!=transport::LocationKind::ColonyShip)
+        throw std::invalid_argument(
+            "planetary migration requires typed regional/census residency support");
+    if(plan.voluntary_admission_event_id)
+        store_->validate_voluntary_settlement(world_,generation_,plan);
+    else if(store_->immigration_pending_for_transport(plan.npc_id,plan.transport_id))
+        throw std::runtime_error("admitted NPC immigration must use voluntary settlement receipt");
     auto next=world_;
     const auto before=next.events().size(), prior_activity=next.activity_events().size();
     std::map<std::uint64_t,Command> due;
@@ -5998,6 +14046,19 @@ void PersistentWorld::step_with_atomic_migration(const SocietyMigrationPlan& pla
            !plan.co_parent_event_id || plan.co_parent_event_id==plan.command_id)) ||
        (!plan.co_parent_id && plan.co_parent_event_id))
         throw std::runtime_error("migration plan does not match authenticated passenger command");
+    // Resolve from the live authoritative Simulation, not a caller-created
+    // ArrivalEvidence: the same identity contract covers ferries and shuttles.
+    const auto arrival=world_.npc_transport_arrival(plan.transport_id,plan.npc_id);
+    if(!arrival || !transport::completed_transport(*arrival,plan.npc_id) ||
+       arrival->source().id!=plan.origin ||
+       arrival->destination().id!=plan.destination)
+        throw std::runtime_error("migration lacks authenticated completed NPC transport");
+    // Existing HostSettleMigrant still mutates only colony-ship endpoints.
+    // Never route a planetary arrival into this legacy ship writer.
+    if(arrival->mode()!=transport::Mode::Ferry ||
+       arrival->source().kind!=transport::LocationKind::ColonyShip ||
+       arrival->destination().kind!=transport::LocationKind::ColonyShip)
+        throw std::runtime_error("non-ship endpoint needs universal residency transaction");
     const auto old=world_.npc_records().find(plan.npc_id);
     if(old==world_.npc_records().end() || old->second.home_ship!=plan.origin ||
        old->second.location!=plan.destination || old->second.transport_id!=0)
@@ -6016,18 +14077,45 @@ void PersistentWorld::step_with_atomic_migration(const SocietyMigrationPlan& pla
        family.current_residence(plan.npc_id)!=plan.origin ||
        src.family_population==0)
         throw std::runtime_error("migration family or regional population preflight failed");
+    // The same admission contract now runs inside the existing real SQLite
+    // migration path. All values are derived from trusted host state. Legacy
+    // v41 ship-to-ship migrations retain their historical crew-capacity and
+    // support semantics; new planetary settlements must reserve real housing
+    // and life support before entering the universal writer.
+    migration::Admission admission{};
+    admission.command_id=plan.command_id;
+    admission.npc_id=plan.npc_id;
+    admission.origin={plan.origin_kind,plan.origin};
+    admission.destination={plan.destination_kind,plan.destination};
+    admission.expected_generation=plan.expected_world_generation;
+    admission.current_generation=generation_;
+    admission.physical_custody_at_destination=
+        old->second.location==plan.destination && !old->second.transport_id;
+    admission.household_reconciled=src.reconciled && dst.reconciled &&
+        family.current_residence(plan.npc_id)==plan.origin;
+    admission.consent_required=plan.voluntary_admission_event_id!=0;
+    admission.verified_consent=plan.voluntary_admission_event_id!=0;
+    admission.housing_required=false; // grandfathered colony crew limit
+    admission.life_support_required=false; // legacy migration baseline
+    admission.no_competing_residence=
+        old->second.assigned_site==plan.origin;
+    if(migration::preflight(admission,*arrival)!=migration::Denial::None)
+        throw std::runtime_error("universal migration admission rejected authenticated host move");
     const auto initial_named=world_.npc_records().size();
     if(plan.co_parent_id){
         const auto co=world_.npc_records().find(plan.co_parent_id);
-        const auto voy=world_.voyages_.find(plan.transport_id);
+        const auto coparent_arrival=world_.npc_transport_arrival(
+            plan.transport_id,plan.co_parent_id);
         if(co==world_.npc_records().end() ||
            co->second.home_ship!=plan.origin ||
            co->second.assigned_site!=plan.origin ||
            co->second.location!=plan.destination || co->second.transport_id ||
            family.current_residence(plan.co_parent_id)!=plan.origin ||
-           voy==world_.voyages_.end() || voy->second.status!=2 ||
-           !std::binary_search(voy->second.passengers.begin(),
-               voy->second.passengers.end(),plan.co_parent_id))
+           !coparent_arrival ||
+           coparent_arrival->mode()!=arrival->mode() ||
+           coparent_arrival->source()!=arrival->source() ||
+           coparent_arrival->destination()!=arrival->destination() ||
+           !transport::completed_transport(*coparent_arrival,plan.co_parent_id))
             throw std::runtime_error("second parent has no completed physical arrival");
     }
     if(plan.dependents.size()>32)
@@ -6196,6 +14284,9 @@ void PersistentWorld::step_with_atomic_migration(const SocietyMigrationPlan& pla
                 child.execute();
             }
         }
+        if(plan.voluntary_admission_event_id)
+            store_->insert_voluntary_settlement_receipt(
+                db,plan.voluntary_admission_event_id,plan,committed_generation);
     };
     store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,delta,due,
                    activity,fail,nullptr,nullptr,effect);
@@ -7404,7 +15495,110 @@ void PersistentWorld::settle_constructed_stock(const Command& command,
     world_.swap(next);++generation_;
 }
 
+void PersistentWorld::enable_native_3d_physics(FailPoint fail) {
+    if(world_.native_3d_physics())return;
+    auto next=world_;
+    next.enable_native_3d_physics();
+    // Refuse to publish a nonroundtripping or physically lossy migration.
+    if(Simulation::from_snapshot(next.canonical_state()).state_hash()!=
+       next.state_hash() || next.total_ore()!=resource_origin_ ||
+       next.total_credits()!=credit_origin_)
+        throw std::runtime_error("SPACE-04B native 3D migration not lossless");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,
+                   nullptr,{},{},{},fail);
+    world_.swap(next);
+    ++generation_;
+}
+
+void PersistentWorld::enable_native_galactic_physics(
+        const std::string& native_sqlite,FailPoint fail) {
+    if(world_.native_galactic_physics())return;
+    if(native_sqlite.empty())
+        throw std::invalid_argument("original galaxy SQLite path required");
+    sqlite3* db=nullptr;
+    if(sqlite3_open_v2(native_sqlite.c_str(),&db,
+        SQLITE_OPEN_READONLY|SQLITE_OPEN_FULLMUTEX,nullptr)!=SQLITE_OK){
+        if(db)sqlite3_close_v2(db);
+        throw std::runtime_error("cannot read real original star origins");
+    }
+    std::map<std::uint32_t,galactic::Point> origins;
+    try{
+        if(!galactic::snapshot_match(db,*this))
+            throw std::runtime_error("stale native galaxy source during v120 upgrade");
+        galactic::Query q(db,"SELECT system,sector_x,mm_x,sector_y,mm_y,"
+            "sector_z,mm_z FROM sg_galaxy_system_origin ORDER BY system");
+        while(q.row()){
+            const auto system=q.n(0);
+            if(system<=0 ||
+               system>std::numeric_limits<std::uint32_t>::max())
+                throw std::runtime_error("untrusted system registry key");
+            const galactic::Point star{{q.n(1),q.n(2)},
+                {q.n(3),q.n(4)},{q.n(5),q.n(6)}};
+            if(!star.valid() ||
+               !origins.emplace(static_cast<std::uint32_t>(system),star).second)
+                throw std::runtime_error("invalid immutable galaxy registry");
+        }
+        sqlite3_close_v2(db);db=nullptr;
+    }catch(...){if(db)sqlite3_close_v2(db);throw;}
+    auto next=world_;
+    next.enable_native_galactic_physics(origins);
+    if(Simulation::from_snapshot(next.canonical_state()).state_hash()!=
+       next.state_hash() || next.total_ore()!=resource_origin_ ||
+       next.total_credits()!=credit_origin_)
+        throw std::runtime_error("v120 galaxy migration not lossless");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,
+                   nullptr,{},{},{},fail);
+    world_.swap(next);
+    ++generation_;
+}
+
+void PersistentWorld::enable_native_3d_probes(FailPoint fail){
+    if(world_.native_3d_probes())return;
+    auto next=world_;
+    next.enable_native_3d_probes();
+    if(Simulation::from_snapshot(next.canonical_state()).state_hash()!=
+       next.state_hash() || next.total_ore()!=resource_origin_ ||
+       next.total_credits()!=credit_origin_)
+        throw std::runtime_error("v121 3D probes migration not lossless");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,
+                   nullptr,{},{},{},fail);
+    world_.swap(next);
+    ++generation_;
+}
+
 void PersistentWorld::step(FailPoint fail) {
+    step_with_cell_worker(nullptr,fail);
+}
+void PersistentWorld::step_as_cell_worker(
+        const NativeCellWorkerTick& token,FailPoint fail) {
+    step_with_cell_worker(&token,fail);
+}
+void PersistentWorld::step_with_cell_worker(
+        const NativeCellWorkerTick* token,FailPoint fail,
+        const std::function<void(sqlite3*,std::uint64_t)>& trusted_interior_effect,
+        const std::function<void(Simulation&)>& trusted_station_mutation) {
+    // SPACE-05: no active-worker authorization can make an ordinary host
+    // tick into a distributed writer. One original SQLite writer remains.
+    if(token){
+        if(token->canonical_cell_scope.empty() || token->trusted_worker.empty() ||
+           token->canonical_cell_scope.size()>256 ||
+           token->trusted_worker.size()>128 || !token->worker_epoch ||
+           !token->region_generation || !token->checkpoint_revision)
+            throw std::runtime_error("invalid native cell worker admission");
+        bool occupied=false;
+        for(const auto& [id,e]:world_.entities()){
+            if(e.type!=EntityType::Ship)continue;
+            const auto cell=spatial::ship_cell(world_,id);
+            if(!cell)
+                throw std::runtime_error("missing physical native ship residency");
+            if(spatial::scope(*cell)==token->canonical_cell_scope)
+                occupied=true;
+        }
+        if(!occupied)
+            throw std::runtime_error("worker dispatch has no occupied physical cell");
+        // The original Simulation::step still advances ALL entities once.
+        // This token elects its serialized writer, not per-cell physics.
+    }
     auto next = world_;
     const auto before = next.events().size();
     const auto before_activity = next.activity_events().size();
@@ -7423,6 +15617,10 @@ void PersistentWorld::step(FailPoint fail) {
             throw std::runtime_error("migration needs host atomic society step");
         if(c.action==Action::HostSplitEvacuatePassengers)
             throw std::runtime_error("split evacuation requires atomic two-receiver child custody step");
+        if(c.action==Action::HostColonyDeparture)
+            throw std::runtime_error("colony departure requires atomic full-population host step");
+        if(c.action==Action::HostRegisterDependent)
+            throw std::runtime_error("physical child requires birth-authorized atomic host step");
     }
     for(const auto& [id,c]:due){(void)id;
         if((c.action==Action::HostDisembarkPassengers ||
@@ -7433,10 +15631,30 @@ void PersistentWorld::step(FailPoint fail) {
             throw std::runtime_error("dependent travelers need atomic child custody step");
     }
     next.step();
+    if(trusted_station_mutation)trusted_station_mutation(next);
+    // Capture precisely those new native commands created INSIDE this
+    // simulation tick, not already accepted host/player commands.
+    std::vector<Command> generated_native_commands;
+    if(const auto at=next.commands_.find(next.tick()+1);
+       at!=next.commands_.end()){
+        for(const auto& c:at->second)
+            if(!world_.submitted_ids_.count(c.id) &&
+               (c.id & (std::uint64_t{1}<<61)) &&
+               !(c.id & (std::uint64_t{1}<<62)))
+                generated_native_commands.push_back(c);
+    }
     const std::vector<Event> new_events(next.events().begin() + static_cast<std::ptrdiff_t>(before), next.events().end());
     const std::vector<ActivityEvent> new_activity(
         next.activity_events().begin() + static_cast<std::ptrdiff_t>(before_activity), next.activity_events().end());
-    store_->commit(next, generation_, resource_origin_, credit_origin_, nullptr, new_events, due, new_activity, fail);
+    // Validation occurs under the original Store::commit BEGIN IMMEDIATE
+    // *after* the exact new world/spatial index is inserted and before COMMIT.
+    // Worker takeover, region handoff or stale world changes are serialized
+    // with this same lock. A refusal rolls back the entire simulated tick.
+    // Store::commit is the final admission authority for both worker
+    // ticks and EVERY other world mutation, under the original SQLite lock.
+    store_->commit(next, generation_, resource_origin_, credit_origin_, nullptr,
+                   new_events, due, new_activity, fail,nullptr,nullptr,trusted_interior_effect,token,
+                   generated_native_commands);
     world_.swap(next);
     ++generation_;
 }

@@ -1,0 +1,26 @@
+; Single-Galaxy FPS standalone graybox bootstrap.
+; Godot 4.7.2 stable, no external assets, no browser, no network dependency.
+config_version=5
+
+[application]
+config/name="Single-Galaxy — Graybox FPS"
+run/main_scene="res://world/main.tscn"
+config/description="Single-Galaxy graybox Windows playtest: automatically reconnect original supervised C++/SQLite station and native ship with no developer H/P startup keys"
+
+[display]
+window/size/viewport_width=1280
+window/size/viewport_height=720
+window/stretch/mode="canvas_items"
+window/vsync/vsync_mode=1
+
+[physics]
+common/physics_ticks_per_second=60
+
+[rendering]
+renderer/rendering_method="gl_compatibility"
+renderer/rendering_method.mobile="gl_compatibility"
+textures/default_filters/use_nearest_mipmap_filter=false
+environment/defaults/default_clear_color=Color(0.125, 0.125, 0.125, 1)
+
+[debug]
+settings/stdout/print_fps=false

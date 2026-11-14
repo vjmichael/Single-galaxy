@@ -146,7 +146,7 @@ static void legacy_boundary(const fs::path& root){
                        "DROP TABLE group_views; DROP TABLE group_relays; DROP TABLE social_groups; "
            "DROP TABLE social_meta; "
            "DROP TRIGGER knowledge_no_update; DROP TRIGGER knowledge_no_delete; "
-           "DROP TABLE npc_knowledge; DROP TABLE knowledge_meta; PRAGMA user_version=6;");
+           "DROP TABLE npc_knowledge; DROP TABLE knowledge_meta; DROP TABLE IF EXISTS sg_native_npc_commands; PRAGMA user_version=6;");
     {
         PersistentWorld w(db.string(),Simulation(44));
         CHECK(w.world().colony_ship(home)->crew==23);

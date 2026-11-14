@@ -1,4 +1,5 @@
 #include "galaxy/Persistence.hpp"
+#include "galaxy/DockLogistics.hpp"
 #include <filesystem>
 #include <iostream>
 #include <stdexcept>
@@ -75,6 +76,38 @@ int main(){
             // Clinic qualification remains local and consumes real raw supplies.
             hc(w,401,Action::HostTrainMedic,clinic,1,0,{},3);
             hc(w,402,Action::HostTrainMedic,clinic,2,0,{},3);
+            // POP-05: a forged, active dock appointment may not cause the
+            // original medical writer to double-book real trained medic #1.
+            // This is a negative adversarial fixture, not a claimed real dock.
+            {
+                dock::Ledger dock(db);
+                sqlite3* attacker=nullptr;
+                ck(sqlite3_open_v2(db.c_str(),&attacker,
+                    SQLITE_OPEN_READWRITE,nullptr)==SQLITE_OK,
+                    "cannot open dock adversarial SQLite");
+                const auto sql=std::string(
+                    "INSERT INTO dock_staff_v1 "
+                    "(npc_id,station,owner,assigned_tick,shift_end_tick) VALUES(1,")+
+                    std::to_string(clinic)+",7,"+
+                    std::to_string(w.world().tick())+","+
+                    std::to_string(w.world().tick()+64)+")";
+                const auto rc=sqlite3_exec(attacker,sql.c_str(),nullptr,nullptr,nullptr);
+                sqlite3_close(attacker);
+                ck(rc==SQLITE_OK,"cannot register competing dock worker witness");
+                const auto before_generation=w.generation();
+                const auto before_state=w.world().canonical_state();
+                bool refused_duty=false;
+                try{
+                    (void)w.submit_host_medical_action(host(
+                        403,w.world().tick()+1,
+                        Action::HostScheduleMedicShift,clinic,1,0,{},200));
+                }catch(const std::runtime_error&){refused_duty=true;}
+                ck(refused_duty && before_generation==w.generation() &&
+                   before_state==w.world().canonical_state() &&
+                   !w.world().has_command_id(403),
+                   "competing dock duty bypassed native medical one-writer");
+                ck(dock.release(clinic,7,1),"hostile dock fixture not released");
+            }
             hc(w,403,Action::HostScheduleMedicShift,clinic,1,0,{},200);
             hc(w,404,Action::HostScheduleMedicShift,clinic,2,0,{},200);
             // Mobile kit physically moves 10 kg of each input from clinic to EMS.

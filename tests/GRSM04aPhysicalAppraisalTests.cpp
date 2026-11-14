@@ -121,7 +121,7 @@ static void genuine_v13_migration(const fs::path& root){
         CHECK(w.submit_testing_crew_loss(home,1,201));w.step();
         CHECK(w.record_local_observation("death:201:1",2));
     }
-    sql(db,"DROP TABLE npc_fabrication_executions; DROP TABLE npc_fabrication_execution_meta; DROP TABLE npc_fabrication_assignments; DROP TABLE npc_fabrication_assignment_meta; DROP TABLE npc_mining_executions; DROP TABLE npc_mining_execution_meta; DROP TABLE npc_mining_assignments; DROP TABLE npc_mining_assignment_meta; DROP TABLE incident_role_receipts; DROP TABLE incident_role_meta; DROP TABLE physical_appraisals; DROP TABLE physical_appraisal_meta; PRAGMA user_version=13;");
+    sql(db,"DROP TABLE npc_fabrication_executions; DROP TABLE npc_fabrication_execution_meta; DROP TABLE npc_fabrication_assignments; DROP TABLE npc_fabrication_assignment_meta; DROP TABLE npc_mining_executions; DROP TABLE npc_mining_execution_meta; DROP TABLE npc_mining_assignments; DROP TABLE npc_mining_assignment_meta; DROP TABLE incident_role_receipts; DROP TABLE incident_role_meta; DROP TABLE physical_appraisals; DROP TABLE physical_appraisal_meta; DROP TABLE IF EXISTS sg_native_npc_commands; PRAGMA user_version=13;");
     {
         PersistentWorld w(db.string(),Simulation(111));
         CHECK(w.recent_physical_appraisals().empty()); // old witnesses are not given invented views

@@ -416,14 +416,16 @@ std::uint64_t CheckpointStore::commit_migration_in_world_transaction(
     sqlite3* active,std::uint64_t expected_revision,std::uint64_t expected_owner_generation,
     std::uint64_t tick,const std::string& origin,const std::string& destination,
     std::uint64_t origin_pop,std::uint64_t dest_pop,const std::string& command_id,
-    std::uint64_t person_count) const {
+    std::uint64_t person_count,const std::string& receipt_actor) const {
     if(!active || sqlite3_get_autocommit(active)!=0 || active==db_ || !expected_revision ||
        expected_revision>=max_sqlint || !expected_owner_generation ||
        expected_owner_generation>max_sqlint || !tick || tick>max_sqlint ||
        origin.empty() || destination.empty() || origin==destination ||
        person_count==0 || origin_pop<person_count || origin_pop>max_records ||
        person_count>max_records-dest_pop ||
-       command_id.empty() || command_id.size()>max_label)
+       command_id.empty() || command_id.size()>max_label ||
+       (receipt_actor!="society-migration-host" &&
+        receipt_actor!="colony-family-evacuation-host"))
         throw std::invalid_argument("migration requires bounded world transaction");
     const auto* a=sqlite3_db_filename(active,"main"),*b=sqlite3_db_filename(db_,"main");
     if(!a || !b || std::string(a)!=b)
@@ -474,11 +476,12 @@ std::uint64_t CheckpointStore::commit_migration_in_world_transaction(
         throw std::runtime_error("migration authority generation changed during world step");
     Statement receipt(active,"INSERT INTO sg_regional_command_receipt "
         "(scope,command_id,actor,request,revision,outcome) "
-        "VALUES (?1,?2,'society-migration-host',?3,?4,1)");
+        "VALUES (?1,?2,?5,?3,?4,1)");
     receipt.bind_text(1,scope_);receipt.bind_text(2,command_id);
     receipt.bind_text(3,"society-migration-generation:"+std::to_string(tick)+":"+origin+":"+destination+
         (person_count==1 ? "" : ":household:"+std::to_string(person_count)));
     receipt.bind_int(4,expected_revision+1);
+    receipt.bind_text(5,receipt_actor);
     if(sqlite3_step(receipt.stmt)!=SQLITE_DONE)
         throw std::runtime_error("duplicate migration regional receipt");
     return expected_revision+1;

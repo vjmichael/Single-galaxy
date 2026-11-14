@@ -109,7 +109,7 @@ int main() {
                    "DROP TABLE npc_knowledge; DROP TABLE knowledge_meta; "
                    "DROP TRIGGER physical_no_update; DROP TRIGGER physical_no_delete; "
                    "DROP TABLE physical_incidents; DROP TABLE physical_meta; "
-                   "DROP TABLE historical_events; DROP TABLE historical_meta; PRAGMA user_version=4");
+                   "DROP TABLE historical_events; DROP TABLE historical_meta; DROP TABLE IF EXISTS sg_native_npc_commands; PRAGMA user_version=4");
         {
             PersistentWorld w(legacy.string(),Simulation(999));
             CHECK(w.world().tick()==3 && w.recent_history().empty());

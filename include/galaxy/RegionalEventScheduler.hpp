@@ -65,6 +65,11 @@ public:
     const std::vector<Notice>& pending_notices() const noexcept {return notices_;}
     std::size_t pending_events() const noexcept {return events_.size();}
     std::size_t colony_count() const noexcept {return colonies_.size();}
+    // DOCK-05: bounded source-only enumeration for human-authorized
+    // station-to-region population binding. No cold population mutation.
+    const std::map<std::string,cold_colony::State>& colonies() const noexcept {
+        return colonies_;
+    }
     // Materials reserved for shipments/local deliveries, not currently in any depot.
     Cargo custody() const;
 private:

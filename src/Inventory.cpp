@@ -30,7 +30,13 @@ const Catalogue& Catalogue::standard() {
         {"good/aluminum_panels",1},{"good/aluminum_frames",1},
         {"good/aluminum_scrap",1},{"good/ceramic",1},
         {"good/glass",1},{"good/water",1},{"good/sulfur",1},
-        {"good/carbon_feed",1}
+        {"good/carbon_feed",1},
+        // Sealed transport holds are real ship cargo, not life-support supply.
+        {"good/freight_water",1},{"good/freight_food",1},
+        {"good/freight_nutrients",1},
+        // S6-D7: identifiable, source-funded physical planetary freight.
+        {"good/planetary_soil",1},{"good/planetary_mineral",1},
+        {"good/planetary_volatile",1}
     });
     return c;
 }

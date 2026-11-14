@@ -151,11 +151,16 @@
   function validateState(s) {
     if (!s.system || s.entities.size > 100000 || s.mining.size > 100000) throw new Error('Invalid world state');
     for (const [id,e] of s.entities) {
-      if (id <= 0 || e.id !== id || e.system !== s.system || e.entityType < 0 || e.entityType > 3 ||
+      if (id <= 0 || e.id !== id || e.system !== s.system || e.entityType < 0 || e.entityType > 4 ||
           e.ore < 0 || e.cargo < 0 || e.capacity < 0) throw new Error('Invalid entity');
-      if (e.entityType === 0 && (!e.owner || !e.capacity || e.cargo > e.capacity || e.ore !== 0))
-        throw new Error('Invalid ship');
+      // The native owner-scoped projection masks an observed foreign hull's owner to 0
+      // and always removes its cargo. Zero owner is NOT an authority to control it.
+      if (e.entityType === 0 && (!e.capacity || e.cargo > e.capacity || e.ore !== 0 ||
+          (e.owner === 0 && e.cargo !== 0))) throw new Error('Invalid ship');
       if (e.entityType === 1 && (e.owner || e.cargo || e.capacity)) throw new Error('Invalid asteroid');
+      // Entity type 4 is an actual recoverable wreck, not a vanished ship.
+      if (e.entityType === 4 && (!e.owner || !e.capacity || e.ore !== 0 ||
+          e.cargo > e.capacity)) throw new Error('Invalid wreck');
       if ((e.entityType === 2 || e.entityType === 3) && ((e.entityType === 3 && e.owner) || e.ore || e.cargo || e.capacity)) throw new Error('Invalid station');
     }
     if (s.docks.size > s.entities.size || s.hangars.size > 100000) throw new Error('Invalid station state size');

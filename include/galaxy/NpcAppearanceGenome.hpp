@@ -134,6 +134,12 @@ public:
     // Moves a guardian and EVERY child currently assigned to that guardian
     // at this residence, inside the world's borrowed SQLite transaction.
     // Child identities remain uninstantiated census dependents.
+    // Batch move every adult and child in one borrowed world transaction.
+    std::vector<NpcMoveRecord> record_complete_colony_moves(
+        const std::vector<std::pair<std::uint64_t,std::uint64_t>>& members,
+        std::uint64_t origin,std::uint64_t destination,std::uint64_t tick,
+        std::uint64_t expected_origin_revision,std::uint64_t expected_destination_revision,
+        const std::function<bool(std::uint64_t,std::uint64_t,std::uint64_t)>& authorize);
     std::vector<NpcMoveRecord> record_guardian_household_moves(
         std::uint64_t guardian_event,std::uint64_t guardian_id,
         const std::vector<std::pair<std::uint64_t,std::uint64_t>>& children,

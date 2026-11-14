@@ -126,7 +126,7 @@ static void legacy_migration(const fs::path& root){
            "BEGIN SELECT RAISE(ABORT,'social history immutable'); END; "
            "CREATE TRIGGER group_relays_no_delete BEFORE DELETE ON group_relays "
            "BEGIN SELECT RAISE(ABORT,'social history immutable'); END; "
-           "PRAGMA user_version=8;");
+           "DROP TABLE IF EXISTS sg_native_npc_commands; PRAGMA user_version=8;");
     {
         PersistentWorld w(db.string(),Simulation(42));
         CHECK(w.recent_social_groups().size()==1);

@@ -16,7 +16,7 @@ main{max-width:1450px;margin:0 auto;padding:18px;display:grid;gap:14px;grid-temp
 .canvashead{display:flex;justify-content:space-between;align-items:center;padding:12px 16px;border-bottom:1px solid var(--border)}
 .canvaswrap{position:relative;height:min(66vh,690px);min-height:350px;overflow:hidden;background:#060d1a}
 canvas{display:block;width:100%;height:100%}#toast{position:absolute;left:18px;top:18px;color:#caedff;background:rgba(9,24,44,.86);border:1px solid #2b506a;padding:9px 12px;border-radius:9px;max-width:calc(100% - 36px);pointer-events:none}
-#toast:empty{display:none}#qaPanel[hidden],#colonyPanel[hidden],#interactiveControls[hidden],#surveyPanel[hidden]{display:none}.controls{padding:13px 16px;display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+#toast:empty{display:none}#flightCameraControls[hidden]{display:none}#qaPanel[hidden],#colonyPanel[hidden],#interactiveControls[hidden],#surveyPanel[hidden]{display:none}.controls{padding:13px 16px;display:flex;gap:12px;align-items:center;flex-wrap:wrap}
 button,select,.filebutton{background:#17273c;color:var(--ink);border:1px solid #3b536e;border-radius:8px;padding:9px 12px;cursor:pointer;font:inherit}
 button:hover,select:hover,.filebutton:hover{border-color:#74bacc}button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid var(--cyan);outline-offset:3px}
 button.primary{background:#175b70;border-color:#2385a2;font-weight:700}button:disabled{opacity:.4;cursor:default}
@@ -56,7 +56,15 @@ input[type=file]{display:none}.error{color:#ffb3a8;background:#3d1f24;border:1px
 <div class="error" id="error" role="alert"></div>
 <div class="card">
 <div class="canvashead"><div><div class="kicker" id="sceneName">10 asteroids</div><div class="muted" id="frameLabel">Loading frames…</div></div><div class="pill" id="tickPill">Tick 0</div></div>
-<div class="canvaswrap" id="canvaswrap"><canvas id="space" aria-label="Top-down visualization of ship, station, and asteroid entities"></canvas><div id="toast" role="status"></div></div>
+<div class="canvaswrap" id="canvaswrap"><canvas id="space" aria-label="Top-down visualization of ship, station, and asteroid entities. Click a scanned asteroid to select it." tabindex="0"></canvas><div id="toast" role="status"></div></div>
+<div id="flightCameraControls" class="controls" hidden style="padding:9px 15px;gap:7px">
+ <button type="button" id="cameraFollow">Follow ship</button>
+ <button type="button" id="cameraOverview">Overview</button>
+ <button type="button" id="cameraZoomIn" aria-label="Zoom in">＋</button>
+ <button type="button" id="cameraZoomOut" aria-label="Zoom out">－</button>
+ <button type="button" id="cameraReset">Reset view</button>
+ <span class="muted" id="cameraStatus" role="status" aria-live="polite">Following colony ship · 1× zoom</span>
+</div>
 <div class="legend"><span><i class="dot ship"></i>Ship</span><span><i class="dot rock"></i>Asteroid</span><span><i class="dot station"></i>Station</span><span style="margin-left:auto">Position unit: mm · Debug scale</span></div>
 <div class="controls"><div class="controller"><button class="primary" id="play">▶ Play</button><button id="back" title="Previous tick">◀</button><button id="next" title="Next tick">▶|</button></div><input type="range" id="progress" min="0" max="10" step="1" value="0" aria-label="Simulation tick"><span id="indexText" class="muted" style="white-space:nowrap">0 / 0</span><select id="speed" aria-label="Replay speed"><option value="0.5">0.5×</option><option selected value="1">1×</option><option value="2">2×</option><option value="4">4×</option></select></div>
 </div>
@@ -65,7 +73,234 @@ input[type=file]{display:none}.error{color:#ffb3a8;background:#3d1f24;border:1px
 <aside class="side">
 <div class="card pad" id="interactiveControls"><h2>Live ship controls</h2><div class="controls" style="padding:0;margin-bottom:8px"><button id="undock" class="primary">Undock</button><button id="dock">Request dock</button><button id="unload">Unload ore</button><button id="load">Load ore</button><button id="sell">Sell local ore</button></div><div class="controls" style="padding:0;margin-bottom:8px"><button id="mine4" class="primary">⛏ Mine 4/tick</button><button id="stopMine">Stop mining</button></div><div class="controls" style="padding:0;gap:5px"><button id="left">← Thrust</button><button id="right">→ Thrust</button><button id="up">↑ Thrust</button><button id="down">↓ Thrust</button><button id="drift">Drift</button></div><div class="controls" style="padding:0;gap:5px;margin-top:8px"><button id="travelA">Assist to Station A</button><button id="travelGate">Assist to Gate</button><button id="jump" class="primary">Jump Gate</button><button id="travelB">Assist to Station B</button></div><button style="margin-top:12px" id="reconnect">Reconnect viewer</button><div class="help" id="commandMessage" aria-live="polite">Opening the local session…</div></div><div class="card pad" style="display:none"><h2>Scenario</h2><select id="scenario" style="width:100%"><option value="ten">10 asteroids · 10 ore each</option><option value="hold">Automatic mining · hold 10</option><option value="motion">Ship movement · inertia</option></select><div class="help" id="description">Ten finite asteroids are removed as they are mined.</div><label class="filebutton" for="import" style="display:block;text-align:center;margin-top:15px">Open other .sgview recording</label><input id="import" type="file" accept=".sgview,.txt,text/plain"></div>
 <div class="card pad" id="colonyPanel" hidden><h2>Colony ship · first settlement</h2>
+<button id="showOpening" type="button" hidden>Show tutorial</button>
+<section id="openingGuide" aria-labelledby="openingTitle" style="border:1px solid #37657a;border-radius:10px;padding:12px;margin:10px 0;background:#0d2433">
+ <h2 id="openingTitle">First Outpost · Optional tutorial</h2>
+ <button id="skipOpening" type="button">Skip tutorial</button>
+ <div id="openingStage" role="status" aria-live="polite">Awaiting verified colony status…</div>
+ <p id="openingDetail" class="help">Your mission updates only when the native world reports committed changes.</p>
+ <button id="openingAction" class="primary" type="button" disabled>Awaiting world</button>
+ <div class="help" style="margin-top:8px">The host saves the world. Reconnecting reloads the actual inventory and construction progress; a queued command is not a completed action.</div>
+</section>
 <div class="help">One ship · finite crew · no starting stations or gates. Every resource action is executed and saved by the C++ simulation. The mineral distributions below are illustrative based on real mineral classes.</div>
+<section aria-labelledby="fittingTitle" style="border:1px solid #596a84;border-radius:10px;padding:12px;margin:10px 0">
+ <h2 id="fittingTitle">Ship fitting · Exploration systems</h2>
+ <div class="help">Finite ship module slots: hardpoints for active equipment, support for passive assistance, subsystems for internal upgrades, and rigging for physical modifications. Only the survey scanner is available to fit in PLAY-11.</div>
+ <div id="fittingCapacity" role="status" class="help">Awaiting actual ship fittings.</div>
+ <div class="controls" style="padding:8px 0;gap:6px">
+  <button id="fitScanner" type="button" disabled>Fit scanner (1 constructed module)</button>
+  <button id="unfitScanner" type="button" disabled>Remove fitted scanner</button>
+ </div>
+ <div class="help" id="proximityStatus" role="status">Proximity safety sensor awaiting native ship contacts.</div>
+ <div class="help">The intrinsic proximity sensor warns of nearby ships; it is not a long-range discovery scanner or an implemented collision-response engine. Future scanning probes and drones will consume hardpoint capacity and physical inventory.</div>
+</section>
+<section aria-labelledby="probeTitle" style="border:1px solid #436a7b;border-radius:10px;padding:12px;margin:10px 0">
+  <h2 id="probeTitle">Physical exploration probes</h2>
+  <div class="help">A real probe launcher occupies a hardpoint. Launching places one persistent probe at your ship's current position, consuming one onboard probe. A deployed probe can scan locally even when your ship has traveled away; return within 2,500 mm to recover the same device.</div>
+  <div id="probeInventory" class="help" role="status">Awaiting native probe stock.</div>
+  <div class="controls" style="padding:8px 0;gap:6px">
+    <label>Geological asteroid <select id="droneTarget"><option value="">Scan nearby rocks first</option></select></label>
+    <button id="droneLaunch" type="button" disabled>Launch geological drone</button>
+    <button id="probeLaunch" type="button" disabled>Launch probe</button>
+    <label>Deployed probe <select id="probeTarget"><option value="">No probe deployed</option></select></label>
+    <button id="probeSurvey" type="button" disabled>Scan from probe</button>
+    <button id="probeRetrieve" type="button" disabled>Recover probe</button>
+  </div>
+  <div class="controls" style="padding:8px 0;gap:6px">
+    <label>Scanner mode <select id="signatureMode">
+      <option value="anomaly">Anomalies</option>
+      <option value="celestial">Celestial catalogue</option>
+      <option value="environmental">Environment survey</option>
+    </select></label>
+    <label>Range <select id="signatureRange">
+      <option value="5000000">5 km</option>
+      <option value="50000000">50 km</option>
+      <option value="100000000">100 km</option>
+      <option value="500000000" selected>500 km</option>
+    </select></label>
+    <button id="signatureScan" type="button">Search for signatures</button>
+    <label>Detected signature <select id="signatureTarget"><option value="">Scan to detect signals</option></select></label>
+    <button id="signatureFocus" type="button" disabled>Focus selected probe</button>
+    <button id="signatureCancel" type="button" disabled>Cancel probe focus</button>
+  </div>
+  <div class="help" id="signatureFeedback" role="status" aria-live="polite">Native survey: anomaly signatures, generated celestial catalogue, or environmental indicators. Orbital bands are metadata, not physical bodies.</div>
+  <div id="celestialBodyList" aria-live="polite" class="help">No physical celestial bodies surveyed yet.</div>
+  <div class="help" id="probeFeedback" role="status" aria-live="polite">Native equipment required. Deployments and discoveries are saved.</div>
+  <div class="help">Drone mission: travel to a geological asteroid within 10 km of your ship, inspect its composition without removing ore, and return with a saved geological report. Live contact requires the ship to be within 10 km; the drone continues its assigned mission autonomously if the link drops. Recover the same finite drone when it returns to its launch point and you are within the native recovery radius (currently 2.5 m).</div>
+</section>
+<section aria-labelledby="explorationTitle" style="border:1px solid #3b6077;border-radius:10px;padding:12px;margin:10px 0">
+ <h2 id="explorationTitle">Exploration · Discoveries</h2>
+ <div class="help">Local sensors map existing asteroids within 50,000 mm of the colony ship. Native SQLite stores the first observation tick and location. Fly closer to distant deposits to map them; no instant galaxy-wide reveal.</div>
+ <div class="controls" style="padding:8px 0;gap:6px"><button type="button" class="primary" id="explorationScan">Scan nearby space</button></div>
+ <div class="help" id="explorationSummary" role="status" aria-live="polite">No mapped discoveries yet. Execute a native local scan.</div>
+ <div id="explorationResults" role="log" aria-live="polite" style="display:grid;gap:5px;max-height:240px;overflow:auto;margin-top:8px"></div>
+ <div class="help">Observations are historical facts, not claims that a deposit still exists or contains the same resources. Mining and selection still require current native world data.</div>
+</section>
+<section aria-labelledby="flightTitle" style="border:1px solid #31445c;border-radius:10px;padding:12px;margin:10px 0">
+ <h2 id="flightTitle">Flight deck · Manual piloting</h2>
+ <div class="help">Arrow keys or WASD: world-axis thrust · Q/E: yaw left/right (15°) · Space: coast (no thrust). Use the mouse controls if preferred. Yaw changes the ship’s saved heading; world-axis thrust is unchanged for now.</div>
+ <div class="controls" style="padding:8px 0;gap:6px">
+  <button type="button" id="flightLeft">←</button><button type="button" id="flightUp">↑</button>
+  <button type="button" id="flightDown">↓</button><button type="button" id="flightRight">→</button>
+  <button type="button" id="flightDrift">Coast (no thrust)</button><button type="button" id="flightBrake" class="primary">Brake to zero (B)</button>
+  <button type="button" id="flightYawLeft">⟲ Yaw left</button>
+  <button type="button" id="flightYawRight">Yaw right ⟳</button>
+ </div>
+ <div class="help" id="flightBrakeStatus" role="status" aria-live="polite">No automatic thrust. Brake to zero if your saved ship is moving; Coast does not stop momentum.</div>
+ <div class="help">Current heading: <strong id="flightHeading">—</strong></div>
+ <div class="help" id="flightTelemetry" role="status" aria-live="polite">Awaiting authoritative ship location and nearby asteroids.</div>
+ <div class="controls" style="padding:8px 0;gap:6px">
+  <button type="button" id="flightScan">Scan asteroids</button>
+  <button type="button" id="flightMine" class="primary">Mine nearest 8 t</button>
+  <button type="button" id="flightMineSelected">Mine selected scanned rock</button>
+ </div>
+ <div class="help">Click a scanned asteroid in the space view to target it. Use camera controls below the map to follow your ship or zoom out; steering remains manual. Mining range and cargo capacity are enforced by the native world.</div>
+</section>
+<section aria-labelledby="travelTitle" style="border:1px solid #475774;border-radius:10px;padding:12px;margin:10px 0">
+ <h2 id="travelTitle">Travel assist · Optional</h2>
+ <div class="help">Travel assist uses the ship’s existing inertia and native thrust, with no teleporting or invisible position changes. Steering or yaw manually cancels it. Arrival is not automatic docking or mining.</div>
+ <div class="controls" style="padding:8px 0;gap:6px">
+  <button id="assistRock" type="button" disabled>Assist to selected asteroid</button>
+  <button id="assistHome" type="button" disabled>Assist home</button>
+  <button id="assistCancel" type="button" disabled>Cancel assist</button>
+ </div>
+ <div id="assistStatus" class="help" role="status" aria-live="polite">Manual flight. Select an asteroid or your home outpost to engage travel assist.</div>
+</section>
+<section aria-labelledby="cyberTitle" style="border:1px solid #496c85;border-radius:10px;padding:12px;margin:10px 0">
+ <h2 id="cyberTitle">Cyber warfare · Ship modules</h2>
+ <div class="help">Physical intrusion emitter, passive firewall and isolated control lines. Effects temporarily change the ship's native module state—not your manual flight controls. Build ordinary colony modules before fitting equipment.</div>
+ <div id="cyberStatus" class="help" role="status" aria-live="polite">Waiting for committed ship electronics.</div>
+ <div id="cyberDefense" class="help" role="status" aria-live="polite">Waiting for committed defense state.</div>
+ <div id="cyberAlert" class="help" role="status" aria-live="polite">No incoming cyber attack reported.</div>
+ <div id="cyberSensorStatus" class="help" role="status" aria-live="polite">Awaiting real fitted sensors and stealth status.</div>
+ <div class="controls" style="padding:8px 0;gap:6px">
+  <button type="button" id="cyberFitEmitter" disabled>Fit intrusion emitter</button>
+  <button type="button" id="cyberRemoveEmitter" disabled>Remove emitter</button>
+  <button type="button" id="cyberFitFirewall" disabled>Fit firewall</button>
+  <button type="button" id="cyberRemoveFirewall" disabled>Remove firewall</button>
+  <button type="button" id="cyberFitStealth" disabled>Fit stealth baffle</button>
+  <button type="button" id="cyberRemoveStealth" disabled>Remove stealth baffle</button>
+  <button type="button" id="cyberFitCounterSensor" disabled>Fit counter-ECM sensors</button>
+  <button type="button" id="cyberRemoveCounterSensor" disabled>Remove counter-ECM sensors</button>
+ </div>
+ <div class="help">Stealth and counter-ECM require manufactured modules in actual support slots. Stealth narrows detection range; powered scanners and strong arrays recover contacts. Sensor descriptions cannot prove a pilot's identity without a verified hail.</div>
+ <div class="help" style="margin-bottom:6px">Module power and isolation operate on fitted hardpoints. Changes take effect only after the simulation commits its next tick.</div>
+ <div id="cyberModuleList" role="group" aria-label="Native ship module controls"></div>
+ <div class="controls" style="padding:8px 0;gap:6px">
+  <label>Observed foreign ship <select id="cyberTarget"><option value="">No valid local target</option></select></label>
+  <button id="cyberAttack" type="button" class="primary" disabled>Attempt Confusion attack</button>
+ </div>
+ <div id="cyberFeedback" class="help" role="status" aria-live="polite">No attack queued. Real targets require an operating emitter and physical range.</div>
+ <div class="help">A refused attack may be out of range, blocked by module isolation, or within the equipment cooldown. NPC ships follow the same rules. All attack outcomes are decided by the native world.</div>
+</section>
+<section aria-labelledby="securityDeskTitle" style="border:1px solid #60848b;border-radius:10px;padding:12px;margin:10px 0">
+ <h2 id="securityDeskTitle">Ship hails &amp; colony security cases</h2>
+ <div class="help">A visual contact is not a verified identity. Staying silent preserves anonymity unless other evidence proves who controlled the ship. A verified voluntary hail identifies the current ship controller and can link earlier incidents to that hull, but does not itself prove who committed a past offense.</div>
+ <div id="securityDeskStatus" class="help" role="status" aria-live="polite">Awaiting authenticated local security journal.</div>
+ <div class="controls" style="padding:8px 0;gap:6px">
+  <button type="button" id="securityRefresh">Refresh security records</button>
+  <label>Claim radius (mm) <input id="securityClaimRadius" type="number" min="1" max="5000" step="100" value="3000" style="width:85px"></label>
+  <button type="button" id="securityClaim" disabled>Establish claim</button>
+ </div>
+ <div class="help">Claims are policy declarations around a real existing colony ship, not free police stations. Recording a suspected vessel does not grant weapons or arrest authority.</div>
+ <h3>Observed foreign vessels</h3>
+ <div class="controls" style="padding:8px 0;gap:6px">
+  <label>Contact <select id="securityContact"><option value="">No acquired contact</option></select></label>
+  <button type="button" id="securityWarn" disabled>Send territorial warning</button>
+  <button type="button" id="securityCallShip" disabled>Hail observed ship</button>
+ </div>
+ <div class="help">The first direct hail identifies the calling account to the recipient, not the recipient to the caller. The recipient may identify itself or decline; unanswered calls are not proof of identity. Repeated unsolicited hails after a verified identification or explicit refusal incur escalating native communication penalties.</div>
+ <div id="securityCommsPenalty" class="help" role="status" aria-live="polite">No communications abuse penalty.</div>
+ <h3>Incoming direct ship hails</h3>
+ <div class="controls" style="padding:8px 0;gap:6px">
+  <label>Incoming hail <select id="securityCallInbox"><option value="">No incoming ship call</option></select></label>
+  <button type="button" id="securityIdentifyCaller" disabled>Identify my ship to caller</button>
+  <button type="button" id="securityDeclineCaller" disabled>Decline this hail</button>
+ </div>
+ <div id="securityCommsComplaints" class="help" role="log" aria-label="Hail harassment complaints">No communications abuse complaints.</div>
+ <h3>Durable private notifications</h3>
+ <div id="securityNotificationList" class="help" role="log" aria-label="Owner-private durable notification delivery">Waiting for original SQLite security outbox.</div>
+ <h3>Colony law agency · evidence referral only</h3>
+ <div class="help">A territorial claim alone is not a police agency. A current government must appoint a distinct physically present NPC officer, and a separate qualified NPC independently reviews an original complaint. This grants no guilt, warrant, armed response, arrest or seizure.</div>
+ <div id="securityAgencyStatus" class="help" role="status">No appointed agency.</div>
+ <div class="controls" style="padding:8px 0;gap:6px">
+  <button id="securityAgencyEstablish" type="button" disabled>Appoint staffed colony agency</button>
+  <label>Verified complaint <select id="securityAgencyComplaint"><option value="">No verified complaint</option></select></label>
+  <button id="securityAgencyRefer" type="button" disabled>Refer evidence to appointed agency</button>
+ </div>
+ <div id="securityAgencyReferrals" class="help" role="log" aria-label="Independent verified law-agency referrals">No verified agency referrals.</div>
+ <h3>Nonviolent NPC investigative work</h3>
+ <div class="help">An existing, assigned NPC officer may approach an actually witnessed hull under an independently verified case referral, using the original Patrol flight/work rules. A live match to the reported caller is a lead, NOT evidence that this hull committed the older offense. No stop, search, boarding, arrest or gunfire is authorized. A busy or unqualified pilot cannot be silently replaced.</div>
+ <div class="controls" style="padding:8px 0;gap:6px">
+  <label>Agency referral <select id="securityAgencyInvestigationReferral"><option value="">No admitted referral</option></select></label>
+  <button id="securityAgencyInvestigate" type="button" disabled>Order supervised nonviolent approach to selected observed contact</button>
+ </div>
+ <div id="securityAgencyInvestigations" class="help" role="log" aria-label="Original NPC patrol execution evidence">No investigations admitted.</div>
+ <h3>Security incident records</h3>
+ <div id="securityCaseList" class="help" role="log" aria-label="Witnessed cyber incident cases">No cases loaded.</div>
+ <div class="controls" style="padding:8px 0;gap:6px">
+  <label>Case <select id="securityCaseSelect"><option value="">No recorded case</option></select></label>
+  <button type="button" id="securityPatrol" disabled>Investigate observed match (nonviolent)</button>
+ </div>
+ <div class="help">Patrol requests require strong installed sensors, qualified NPC crew, and a current matching physical contact. Similar-looking ships may be innocent.</div>
+ <h3>Voluntary hail from your piloted ship</h3>
+ <div class="controls" style="padding:8px 0;gap:6px">
+  <label>Foreign jurisdiction <select id="securityDestination"><option value="">No witnessed foreign claim</option></select></label>
+  <button type="button" id="securityHail" disabled>Identify my ship by hail</button>
+ </div>
+ <h3>Incoming territorial hails</h3>
+ <div class="controls" style="padding:8px 0;gap:6px">
+  <label>Pending notice <select id="securityNotice"><option value="">No pending notice</option></select></label>
+  <button type="button" id="securityAcknowledge" disabled>Acknowledge notice</button>
+  <button type="button" id="securityRefuse" disabled>Refuse notice</button>
+ </div>
+ <div id="securityDeskFeedback" class="help" role="status" aria-live="polite">No security action submitted.</div>
+ <div class="help">No automatic hail is sent when you enter someone else's territory. Staying silent is an intentional choice. Hailing or replying is authenticated, logged, and may reveal the controlling account for that vessel, but never creates a retroactive crime conviction.</div>
+</section>
+<section aria-labelledby="combatTitle" style="border:1px solid #7b4752;border-radius:10px;padding:12px;margin:10px 0">
+ <h2 id="combatTitle">Ship combat · Training weapons</h2>
+ <div class="help">An uncrewed practice drone starts nearby. Rotate with Q/E to aim; the native weapon checks a 12 km range, 90° forward cone, finite charges and a two-tick cooldown. No civilian or colony attacks in this first slice.</div>
+ <div class="metric"><span>Ship hull</span><strong id="combatHull">—</strong></div>
+ <div class="metric"><span>Training weapon charges</span><strong id="combatCharges">—</strong></div>
+ <div class="controls" style="padding:8px 0;gap:6px">
+  <label>Target <select id="combatTarget"><option value="">Awaiting native combat target</option></select></label>
+  <button type="button" id="combatFire" class="primary" disabled>Fire training weapon</button>
+ </div>
+ <div id="combatFeedback" role="status" aria-live="polite" class="help">Awaiting native weapon and target status.</div>
+ <div class="help">Each shot is resolved and saved by the C++ world. A queued command does not confirm a hit. Destroyed drones become persistent physical wrecks; salvage recovery is not yet enabled.</div>
+</section>
+<section aria-labelledby="salvageTitle" style="border:1px solid #55764c;border-radius:10px;padding:12px;margin:10px 0">
+ <h2 id="salvageTitle">Wreck salvage · Physical recovery</h2>
+ <div class="help">Approach within 2,500 mm of a destroyed uncrewed training drone. Recover finite pre-existing bulk material into the ship’s real hold. No manufactured weapons, fuel, or salvage loot is generated.</div>
+ <div class="controls" style="padding:8px 0;gap:6px">
+  <label>Wreck <select id="salvageTarget"><option value="">No recoverable wreck reported</option></select></label>
+  <button id="salvageRecover" type="button" disabled>Recover up to 6 t</button>
+ </div>
+ <div id="salvageFeedback" role="status" aria-live="polite" class="help">Waiting for native wreck inventory.</div>
+</section>
+<section aria-labelledby="expeditionTitle" style="border:1px solid #236478;border-radius:10px;padding:12px;margin:10px 0;background:#0c2230">
+ <h2 id="expeditionTitle">Mining expedition · Live mission status</h2>
+ <div id="expeditionStatus" role="status" aria-live="polite" class="help">Waiting for committed ship and outpost state.</div>
+ <div class="metric"><span>New bulk ore mined this session</span><strong id="expeditionMined">0 t</strong></div>
+ <div class="metric"><span>Delivered to home from this session</span><strong id="expeditionDelivered">0 t</strong></div>
+ <div class="metric"><span>Current mineable target</span><strong id="expeditionTarget">—</strong></div>
+ <div class="metric"><span>Latest native command outcome</span><span id="expeditionOutcome" class="help">Awaiting an actual native result</span></div>
+ <div class="help">These are session-only indicators derived from the native world and result journal. The saved ore and structures live in SQLite. Reconnection does not fabricate completed expeditions.</div>
+</section>
+<section aria-labelledby="returnTitle" style="border:1px solid #475774;border-radius:10px;padding:12px;margin:10px 0">
+ <h2 id="returnTitle">Cargo run · Return to outpost</h2>
+ <div id="returnTelemetry" class="help" role="status" aria-live="polite">Build your first outpost to establish a home hangar.</div>
+ <div class="metric"><span>Bulk ore in ship</span><strong id="returnHold">—</strong></div>
+ <div class="metric"><span>Bulk ore in outpost hangar</span><strong id="returnBay">—</strong></div>
+ <div class="controls" style="padding:8px 0;gap:6px">
+  <button id="returnBrake" type="button" disabled>Brake toward zero</button>
+  <button id="returnDock" class="primary" type="button" disabled>Dock at home outpost</button>
+  <button id="returnUnload" type="button" disabled>Unload bulk ore</button>
+  <button id="returnLoad" type="button" disabled>Load bulk ore</button>
+  <button id="returnUndock" type="button" disabled>Undock</button>
+ </div>
+ <div class="help">Outpost docking requires real proximity and zero velocity. Ore moves between the ship's hold and a location-specific native hangar. Refined materials and geological mineral stock remain separate.</div>
+</section>
 <div class="metric"><span class="muted">Colonists</span><strong id="colonyCrew">—</strong></div>
 <div class="metric"><span class="muted">Raw ore (t)</span><strong id="colonyRaw">—</strong></div>
 <div class="metric"><span class="muted">Refined material (t)</span><strong id="colonyRefined">—</strong></div>
@@ -149,7 +384,7 @@ input[type=file]{display:none}.error{color:#ffb3a8;background:#3d1f24;border:1px
 <div class="help" id="maintenanceViability">No delegated maintenance readiness assessment yet.</div>
 <div class="help" id="utilityViability">No local utility installed yet.</div>
 <div class="help" id="utilityTelemetry" style="white-space:pre-wrap">No utility telemetry.</div>
-<div class="controls" style="padding:5px 0;gap:5px"><button id="colonyLeft">← Thrust</button><button id="colonyRight">→ Thrust</button><button id="colonyUp">↑ Thrust</button><button id="colonyDown">↓ Thrust</button><button id="colonyDrift">Drift</button></div>
+<div class="controls" style="padding:5px 0;gap:5px"><button id="colonyLeft">← Thrust</button><button id="colonyRight">→ Thrust</button><button id="colonyUp">↑ Thrust</button><button id="colonyDown">↓ Thrust</button><button id="colonyDrift">Coast (no thrust)</button></div>
 <div class="help">Mining targets the closest asteroid; the server checks surface distance, hold capacity and material stock. Thrust is physical, not teleportation. Larger asteroids hold millions of tonnes, not 10 fictional ore units.</div>
 <h2 style="margin-top:14px">Scanned geological deposits</h2><div id="colonyGeology" style="max-height:200px;overflow:auto"></div>
 <h2 style="margin-top:14px">Colony command results</h2><div id="colonyEvents" style="white-space:pre-wrap" class="help">Awaiting colony telemetry…</div></div>
@@ -186,7 +421,17 @@ input[type=file]{display:none}.error{color:#ffb3a8;background:#3d1f24;border:1px
 <script src="viewer.js"></script>
 <script src="region.js"></script>
 <script src="survey.js"></script>
+<script src="opening-guide.js"></script>
+<script src="flight-controls.js"></script>
+<script src="flight-brake.js"></script>
+<script src="flight-camera.js"></script>
+<script src="exploration-journal.js"></script>
+<script src="travel-assist.js"></script>
+<script src="cargo-return.js"></script>
+<script src="expedition-feedback.js"></script>
 <script src="colony.js"></script>
+<script src="cyber-controls.js"></script>
+<script src="security-desk.js"></script>
 <script src="interactive.js"></script>
 <script src="colony-shipping.js"></script>
 </body>

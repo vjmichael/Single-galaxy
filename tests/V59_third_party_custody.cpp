@@ -1,5 +1,7 @@
 #include "galaxy/RegionalProductionNetwork.hpp"
 #include "galaxy/ShipmentManifest.hpp"
+#include "galaxy/Stage07IndependentCommerce.hpp"
+#include "galaxy/Stage07ReciprocalBarter.hpp"
 #include "galaxy/NpcAppearanceGenome.hpp"
 #include <filesystem>
 #include <iostream>
@@ -167,11 +169,53 @@ int main(){
   shipping::ThirdPartyRegistry contracts(w,path,authenticate);
   shipping::ThirdPartyBooking frames{"frames-third-party",home,carrier,receiver,site,destination,7,8,9,2,2,1,9102,9401,9403};
   shipping::ThirdPartyBooking panels{"panels-third-party",home,carrier,receiver,site,destination,7,8,9,2,1,1,9106,9402,9404};
+  // Stage 7 POP-09: the original physically resident producer forms a
+  // specific real-world export decision based on the manufactured warehouse
+  // stock. The NPC has NO authority to consent for the other two owners.
+  std::uint64_t resident=0;
+  for(const auto& [id,p]:w.world().npc_records())
+   if(stage7::authentic_resident(w.world(),7,home,id,home)){
+    resident=id;break;
+   }
+  ck(resident!=0,"source has no genuine named resident");
+  const auto offer=stage7::decide_resident_manufactured_consignment(
+      w,7,home,resident,frames);
+  ck(offer.has_value()&&offer->original_contract.quantity_kg==1,
+     "native named resident failed to inspect actual manufactured goods");
+  ck(!stage7::decide_resident_manufactured_consignment(
+      w,8,home,resident,frames),"foreign citizen forged source consent");
+  ck(!stage7::book_resident_manufactured_consignment(
+      w,contracts,*offer,7,false),"NPC preference became owner consent");
+  ck(!stage7::book_resident_manufactured_consignment(
+      w,contracts,*offer,8,true),"foreign host principal authorized resident sale");
+  auto enlarged=*offer;
+  enlarged.original_contract.quantity_kg=2;
+  ck(!stage7::book_resident_manufactured_consignment(
+      w,contracts,enlarged,7,true),"resident sold absent physical goods");
   reject([&]{contracts.book(frames);},"anonymous source shipment proposal accepted");
   active=7;
   reject([&]{auto forged=frames;forged.id="bad-owner";forged.carrier_owner=7;contracts.book(forged);},"forged carrier ownership accepted");
   reject([&]{auto forged=frames;forged.id="bad-warehouse";forged.receiving_ship=home;contracts.book(forged);},"forged destination ownership accepted");
-  contracts.book(frames);contracts.book(panels);
+  ck(stage7::book_resident_manufactured_consignment(
+      w,contracts,*offer,7,true),
+      "authenticated producer did not create genuine original three-owner contract");
+  contracts.book(panels);
+  // POP-10B: two physical shipments in ONE direction are not reciprocal
+  // consideration, even if both finish delivery. An unrelated NPC cannot
+  // mint money or call these a settled exchange. The full two-way positive
+  // fixture must separately produce and ship goods from owner 9 to owner 7.
+  stage7::ReciprocalBarter barter(path,authenticate);
+  ck(!barter.propose(w,"invalid-retroactive-exchange",frames.id,
+                     panels.id,7,true),
+     "same-direction original shipments became counterfeit barter");
+  ck(!barter.propose(w,"unauthorized-terms",frames.id,
+                     panels.id,7,false),
+     "unapproved trade terms were posted");
+  ck(!barter.approve(w,"missing-barter",7),
+     "unrecorded barter was approved");
+  ck(!barter.settle(w,"missing-barter"),
+     "unrecorded trade settled without reciprocal native delivery");
+  barter.verify();
   reject([&]{contracts.load("frames-third-party");},"unsigned contract loaded before all three grants");
   active=8;reject([&]{contracts.approve("frames-third-party",7,1);},"carrier impersonated source authorization");
   active=7;reject([&]{contracts.approve("frames-third-party",7,2);},"source owner consented in carrier's role");
@@ -245,8 +289,8 @@ int main(){
   // Accelerate then decelerate exactly 25 km at 0.25 km/tick².
   // Arrival at a *system* is insufficient; the carrier must actually reach
   // the independently owned warehouse's docking radius before delivery.
-  for(int i=0;i<10;++i)send_as(w,9600+static_cast<std::uint64_t>(i),8,carrier,Action::Thrust,0,1,1);
-  for(int i=0;i<10;++i)send_as(w,9610+static_cast<std::uint64_t>(i),8,carrier,Action::Thrust,0,1,-1);
+  for(int i=0;i<10;++i)send_as(w,9600+static_cast<std::uint64_t>(i),8,carrier,Action::Thrust,0,0,1);
+  for(int i=0;i<10;++i)send_as(w,9610+static_cast<std::uint64_t>(i),8,carrier,Action::Thrust,0,0,-1);
   ck(w.world().find(carrier)->velocity.x==0,"carrier did not brake at receiving warehouse");
   for(const auto& name:{"frames-third-party","panels-third-party"}){
    const auto k=std::string(name)=="frames-third-party"?"aluminum_frames":"aluminum_panels";
@@ -265,6 +309,8 @@ int main(){
   ck(w.world().storage(site)->network_escrow_kg==8&&w.world().total_material_kg()==conserved,
      "delivery withdrew duplicated factory escrow or failed conservation");
   contracts.verify();net.verify();
+  ck(stage7::resident_manufactured_delivery_verified(
+      w,contracts,*offer),"NPC-backed consignment lacks original delivered stock and receipts");
   contracts.load("frames-third-party");contracts.unload("frames-third-party");
   {PersistentWorld reopen(path,Simulation(5153));shipping::ThirdPartyRegistry checked(reopen,path,[](PlayerId){return false;});checked.verify();
    ck(reopen.world().storage(destination)->goods_kg.at("aluminum_frames")==1,
@@ -296,7 +342,9 @@ int main(){
   clone(base+".forged-approval","DROP TRIGGER sg_v56_approval_immutable_update; UPDATE sg_v56_approval SET principal='8' WHERE contract_id='frames-third-party' AND role=1;");
   clone(base+".lost-approvals","DROP TABLE sg_v56_approval;");
   std::cout<<"v56 three independent owners: source warehouse -> reserved third-party carrier -> jump -> receiving warehouse; crash/replay/tamper PASS\n";
-  for(const auto& file:{path,copy,corrupt,badledger})std::filesystem::remove(file);
-  return 0;
+  // Keep every independent source/receiver and negative tamper check;
+  // release the live native SQLite owners before Windows file deletion.
  }catch(const std::exception& e){std::cerr<<"v56 third-party custody FAIL: "<<e.what()<<'\n';return 1;}
+ for(const auto& file:{path,copy,corrupt,badledger})std::filesystem::remove(file);
+ return 0;
 }

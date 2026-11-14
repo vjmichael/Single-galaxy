@@ -3,9 +3,11 @@
 // The authoritative simulation remains Simulation/PersistentWorld; no global
 // omniscient object stream is exposed to a player by this API.
 #include "galaxy/Simulation.hpp"
+#include "galaxy/Astronomy.hpp"
 #include <cstdint>
 #include <sqlite3.h>
 #include <map>
+#include <optional>
 #include <set>
 #include <string>
 #include <vector>
@@ -14,6 +16,7 @@ namespace galaxy {
 enum class Sovereignty { NPC, Player, Unclaimed };
 enum class SiteKind { Star, Planet, Moon, Station, Ship, AsteroidDeposit, GasCloud, Anomaly, Wormhole, Structure };
 enum class RoutePolicy { Shortest, PreferSecure };
+enum class DiscoveryUse { Navigation, SettlementSurvey };
 struct SystemDescriptor {
     std::uint32_t id = 0;
     std::string name;
@@ -41,6 +44,7 @@ public:
     const std::vector<SpaceSite>& sites(std::uint32_t system) const;
     std::vector<SpaceSite> visible_on_entry(std::uint32_t system) const;
     RouteResult route(std::uint32_t from,std::uint32_t to,RoutePolicy policy) const;
+    AstronomicalProfile astronomy(std::uint32_t system,std::uint64_t galaxy_seed) const;
 private:
     std::map<std::uint32_t,SystemDescriptor> systems_;
     std::map<std::uint32_t,std::vector<SpaceSite>> sites_;
@@ -55,6 +59,20 @@ struct ScanObservation {
     std::uint64_t observed_tick=0; // simulation time; never treat as live data forever
     int confidence=0; // integer 1..100
     bool published=false;
+};
+// PLAY-13B.1: different scan intentions share the trusted sensor implementation.
+enum class ScanMode { Environmental, Celestial, Anomaly };
+// Coarse signature contact never exposes the authoritative target position or class.
+struct SignatureContact {
+    std::uint64_t site=0;
+    Vector2 coarse_center{};
+    std::int64_t uncertainty_radius_mm=0;
+};
+// Host-issued waypoints for existing owned probes; execution requires native
+// per-tick movement and genuine observations, not client-side teleportation.
+struct RefinementPlan {
+    std::uint64_t site=0;
+    std::vector<std::pair<std::uint64_t,Vector2>> waypoints;
 };
 struct DirectionalContact {
     std::uint64_t site=0;
@@ -76,6 +94,20 @@ public:
     std::vector<ScanObservation> probe_scan(PlayerId owner,std::uint32_t system,
         std::uint64_t tick,std::int64_t radius_mm,int sensor_strength) const;
     std::size_t deployed_count(PlayerId owner) const;
+    std::vector<SignatureContact> coarse_signatures(PlayerId owner,std::uint32_t system,
+        Vector2 scanner_position,std::int64_t range_mm,int sensor_strength) const;
+    std::optional<RefinementPlan> plan_refinement(PlayerId owner,std::uint32_t system,
+        std::uint64_t signature,Vector2 scanner_position,std::int64_t discovery_range_mm,
+        std::int64_t scan_radius_mm,int sensor_strength) const;
+    // Trusted simulation tick moves real registered probe positions gradually.
+    // Returns true only once every planned probe reaches its waypoint.
+    bool advance_refinement(PlayerId owner,std::uint32_t system,
+        std::uint64_t signature,Vector2 scanner_position,
+        std::int64_t discovery_range_mm,std::int64_t scan_radius_mm,
+        int sensor_strength,std::int64_t max_step_mm);
+    // Filter actual native probe evidence by scan intent; no client-supplied sightings.
+    std::vector<ScanObservation> scan_mode(PlayerId owner,std::uint32_t system,
+        std::uint64_t tick,std::int64_t radius_mm,int sensor_strength,ScanMode mode) const;
 private:
     const GalaxyMap& map_;
     std::map<std::uint64_t,Probe> probes_;
@@ -100,6 +132,57 @@ public:
         int independent_surveyors=0;int confidence=0;std::uint64_t latest_tick=0;
         Vector2 estimated_position{}; };
     std::vector<PublicRecord> published(std::uint32_t system) const;
+    // Reusable, owner-private map knowledge for navigation/survey/construction.
+    // Not proof that the object still exists; callers must revalidate world state.
+    std::optional<ScanObservation> known_site(PlayerId owner,std::uint32_t system,
+        std::uint64_t site) const;
+    std::vector<ScanObservation> known_sites(PlayerId owner,std::uint32_t system,
+        int minimum_confidence=1) const;
+    // Trusted migration/bridge: import authoritative v67 world sightings
+    // into the reusable B6 survey archive without exposing another owner's data.
+    struct SystemCatalogueRecord {
+        std::uint64_t first_tick=0,last_tick=0,generator_version=0;
+        StellarArchitecture architecture=StellarArchitecture::Single;
+        std::uint8_t star_count=0;
+        std::uint32_t orbital_bands=0;
+    };
+    // Immutable first-survey provenance, owner-private, separate from live physics.
+    bool record_system_catalogue(PlayerId owner,std::uint32_t system,
+        std::uint64_t observed_tick,const AstronomicalProfile& profile);
+    std::optional<SystemCatalogueRecord> known_system_catalogue(
+        PlayerId owner,std::uint32_t system) const;
+    // PGF-01B.2: private, restart-durable observed geography. A catalogue
+    // result is immutable within one generator revision. The authoritative
+    // world is still Simulation, not this read-model/sidecar.
+    struct PlanetRegionRecord {
+        std::uint64_t body=0, observed_tick=0, drainage=0;
+        std::uint32_t revision=0;
+        std::uint16_t latitude=0, longitude=0;
+        std::int32_t elevation=0, down_latitude=-1, down_longitude=-1;
+        std::uint8_t ocean=0, terrain=0, watercourse=0;
+    };
+    bool record_planetary_region(PlayerId owner,std::uint32_t system,
+        const planetary::GeographicSite& site,std::uint64_t observed_tick);
+    std::optional<PlanetRegionRecord> known_planetary_region(
+        PlayerId owner,std::uint32_t system,std::uint64_t body,
+        std::uint16_t latitude,std::uint16_t longitude,
+        std::uint32_t revision) const;
+    std::size_t import_native_discoveries(const Simulation& world,
+        PlayerId owner,std::uint32_t system);
+    // A host-observed report enters a durable outbox. Reports become readable
+    // no earlier than 10 seconds of game-time after capture and only in range.
+    // Retrying delivery after a crash is safe: observation writes are idempotent.
+    bool queue_probe_report(const ScanObservation& observation,
+        std::uint64_t captured_at_ms);
+    std::size_t deliver_probe_reports(PlayerId owner,std::uint64_t now_ms,
+        std::int64_t link_distance_mm);
+    // Candidate filtering is a recommendation only; it does not authorize
+    // docking, gate transit, settlement or construction in the world.
+    std::vector<ScanObservation> actionable_sites(PlayerId owner,std::uint32_t system,
+        const GalaxyMap& live_map,DiscoveryUse purpose,int minimum_confidence,
+        std::uint64_t current_tick,std::uint64_t max_age_ticks) const;
+    static constexpr std::int64_t kDeepProbeLinkMm=74798935350000LL;
+    static constexpr std::uint64_t kNominalResponseMs=10000ULL;
 private:
     ::sqlite3* db_=nullptr;
 };

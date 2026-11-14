@@ -63,6 +63,8 @@ def run(host,relay,bridge):
         assert p.stderr.count('SAFETY_ORDER|1|REFUSED')==2,p.stderr[-1600:]
         assert p.stderr.count('SAFETY_ORDER|1|PREFLIGHT_ONLY')==1,p.stderr[-1600:]
         assert 'SAFETY_CHECK|1|0' in p.stderr
+        # Telemetry is a proposed response, never a forged rescue completion.
+        assert 'SAFETY_RESPONSE|1|0|0|0|0|0|0' in p.stderr
         assert evidence(world)==3
         with sqlite3.connect(world) as db:
             assert db.execute('SELECT COUNT(*) FROM sg_colony_safety_evidence WHERE attempted_hazard=1 AND allowed=0').fetchone()[0]==2
@@ -102,6 +104,19 @@ def run(host,relay,bridge):
             assert request(endpoint,'POST','/command',{'token':'forged','action':'colonySafetyPreflight','site':1},session)[0]==403
             assert request(endpoint,'POST','/command',{'token':owner['csrf'],'action':'colonySafetyPreflight','site':True},session)[0]==400
             assert request(endpoint,'POST','/command',{'token':owner['csrf'],'action':'colonySafetyPreflight','site':1,'playerId':7},session)[0]==400
+            # Ingress is a strict allowlist: a browser cannot synthesize forbidden
+            # occupied-site orders or smuggle a native SAFETY subcommand.
+            for action in ('colonySafetySealExit','colonySafetyDisableDistress',
+                           'colonySafetyDumpAtmosphere','colonySafetyBlockRepair',
+                           'SAFETY','nativeCommand'):
+                code,_,_=request(endpoint,'POST','/command',
+                    {'token':owner['csrf'],'action':action,'site':1},session)
+                assert code in (400,403),(action,code)
+            for malformed in (None,0,-1,1.0,'1',True,100000001):
+                assert request(endpoint,'POST','/command',
+                    {'token':owner['csrf'],'action':'colonySafetyAssess','site':malformed},
+                    session)[0]==400
+            assert evidence(world)==0,'rejected browser commands created a safety event'
             assert request(endpoint,'POST','/command',{'token':owner['csrf'],'action':'colonySafetyPreflight','site':1},session)[0]==202
             assert request(endpoint,'POST','/command',{'token':owner['csrf'],'action':'colonySafetyAssess','site':1},session)[0]==202
             for _ in range(80):

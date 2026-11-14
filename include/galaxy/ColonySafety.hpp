@@ -31,6 +31,38 @@ struct Decision {
     bool deliberate_hazard_attempt=false;
     std::string reason;
 };
+// AUTO-04D.1: authoritative, READ-ONLY response intent. An intent is never
+// evidence that a repair, shipment, or evacuation actually happened.
+// No social tolerance, player mood, forecast import, or inferred transport
+// capacity can weaken life-preserving priority.
+enum class ResponseLevel : int {
+    None=0, MonitorAndRequestSupply=1, UrgentRepairAndDepartureSearch=2,
+    EmergencySurvivalAndDistress=3
+};
+struct ResponsePlan {
+    EntityId site=0, home_ship=0;
+    std::uint64_t world_tick=0, population=0;
+    Risk risk=Risk::Safe;
+    ResponseLevel level=ResponseLevel::None;
+    bool request_supply=false;
+    bool seek_physical_repairs=false;
+    bool search_verified_departure=false;
+    bool activate_distress=false;
+    bool bypass_player_production_preferences=false;
+    // Rescue remains false until committed capacity, route and person-custody
+    // transfers have been verified elsewhere by the world owner.
+    bool rescue_completed=false;
+};
+ResponsePlan plan_response(const Assessment& current);
+// In particular, this rejects an obsolete assessment after advancing ticks;
+// the host must re-assess after every committed world mutation.
+ResponsePlan plan_response(const Simulation&,EntityId home_ship,EntityId site);
+struct ResponseTransition {
+    ResponsePlan previous,current;
+    bool risk_changed=false,escalated=false,requires_new_notice=false;
+};
+ResponseTransition response_transition(const ResponsePlan& previous,
+                                       const ResponsePlan& current);
 // Only the selected physical compartment is assessed. No double counting of
 // crew, resident or farm staff compartments, and NO speculative shipments.
 Assessment assess(const Simulation&, EntityId home_ship, EntityId site,

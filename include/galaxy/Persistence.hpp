@@ -1,17 +1,23 @@
 #pragma once
 #include "galaxy/Simulation.hpp"
 #include "galaxy/ColonySafety.hpp"
+#include "galaxy/ColonyDefense.hpp"
+#include "galaxy/ColonyConflict.hpp"
+#include "galaxy/ColonySafetyNotice.hpp"
+#include "galaxy/ColonyFamilyDeparture.hpp"
 #include <cstdint>
 #include <memory>
 #include <string>
 #include <vector>
 #include <cstddef>
 #include <functional>
+#include <optional>
 #include <sqlite3.h>
 
 namespace galaxy {
 namespace industry {class RegionalProductionNetwork;}
 namespace shipping {class ThirdPartyRegistry;}
+namespace fp3d {class InteriorMovement;}
 // Failures occur inside an SQLite transaction, before durable COMMIT.
 enum class FailPoint { None, AfterReceiptWrite, AfterSnapshotWrite, AfterFirstSplitReceiver };
 
@@ -226,6 +232,9 @@ struct SocietyMigrationPlan {
     std::uint64_t family_seed=0,expected_origin_family_revision=0;
     std::uint64_t expected_destination_family_revision=0;
     std::uint64_t npc_id=0,transport_id=0;
+    // EXIT-01B: optional immutable immigration admission, bound to this
+    // *same* ART02/ECON03 transaction, not a parallel population ledger.
+    std::uint64_t voluntary_admission_event_id=0;
     // 05q6e4: optionally migrate the second physically arrived parent in the SAME step.
     std::uint64_t co_parent_id=0,co_parent_event_id=0;
     // 05q6e: registered dependent cohort IDs, each with a distinct immutable
@@ -234,8 +243,29 @@ struct SocietyMigrationPlan {
     std::vector<DependentMove> dependents;
     EntityId origin=0,destination=0;
     std::string family_scope,region_scope,origin_colony,destination_colony;
+    // Universal migration endpoints: append only to preserve all existing
+    // aggregate initialization call sites and legacy ship-to-ship plans.
+    transport::LocationKind origin_kind=transport::LocationKind::ColonyShip;
+    transport::LocationKind destination_kind=transport::LocationKind::ColonyShip;
 };
 
+// WO3-E/v118: the one original ship <-> physically built planetary household.
+// Every other regional/family generation is supplied by trusted host state,
+// checked against the original ART02/ECON03 checkpoint, then CAS-committed.
+struct PlanetaryHouseholdSettlementPlan {
+    std::uint64_t expected_world_generation=0,request_id=0;
+    std::uint64_t expected_region_revision=0,expected_owner_generation=0;
+    std::uint64_t family_seed=0;
+    std::uint64_t expected_origin_family_revision=0;
+    std::uint64_t expected_destination_family_revision=0;
+    std::uint64_t coparent_move_id=0,child_move_id=0;
+    PlayerId owner=0;
+    EntityId ship=0;
+    PlanetarySiteKey site{};
+    std::uint64_t guardian_id=0;
+    bool returning=false,guardian_consented=false,coparent_consented=false;
+    std::string family_scope,region_scope,origin_colony,destination_colony;
+};
 // DEMOG-05q6e2: ART02 dependent identity has physical custody in the
 // trusted world SQLite transaction, without creating a playable NPC.
 struct DependentTravelPlan {
@@ -412,9 +442,23 @@ struct VerifiedSplitRescueIntent {
     std::vector<EntityId> receiving_ferries;
 };
 
+// SPACE-05: host-held admission token for one original physical world tick.
+// Never accept a worker identity/epoch from an unauthenticated player packet.
+struct NativeCellWorkerTick {
+    std::string canonical_cell_scope;
+    std::string trusted_worker;
+    std::uint64_t worker_epoch=0;
+    std::uint64_t region_generation=0;
+    std::uint64_t checkpoint_revision=0;
+    // SPACE-05B: nonempty when a durable global writer dispatch is selected.
+    // Legacy one-cell leased worlds may continue without a dispatch claim.
+    std::string dispatch_id;
+};
+
 class PersistentWorld {
     friend class industry::RegionalProductionNetwork;
     friend class shipping::ThirdPartyRegistry;
+    friend class fp3d::InteriorMovement;
 public:
     // If the SQLite file is new, persist the supplied initial world.
     // For an existing database, load authoritative saved world and ignore initial state.
@@ -433,10 +477,319 @@ public:
     colony_safety::Decision record_colony_safety_preflight(EntityId home_ship,
         EntityId site,PlayerId issuer,colony_safety::Order order);
     std::uint64_t colony_safety_evidence_count() const;
+    // AUTO-04D.2: committed threshold transitions, not actual rescues.
+    std::uint64_t colony_response_event_count() const;
+    // Read-only host queue. Presence at event tick is only an observation opportunity.
+    std::vector<colony_safety::notice::Pending> pending_colony_notifications(std::uint64_t limit=100) const;
+    // Trusted-host-only delivered-message receipt, not a GRSM belief or social judgment.
+    bool acknowledge_colony_notification(std::uint64_t event_id,std::uint64_t npc_id);
+    std::uint64_t colony_notification_opportunity_count() const;
+    std::uint64_t colony_notification_acknowledgement_count() const;
     bool submit(const Command& command, FailPoint fail = FailPoint::None);
+    // SPACE-05: host-only leased submission. Runs all original player,
+    // NPC, shipping and command authorization, then revalidates the worker
+    // inside the same SQLite writer transaction as this command receipt.
+    bool submit_as_cell_worker(const Command& command,
+                               const NativeCellWorkerTick& token,
+                               FailPoint fail = FailPoint::None);
+    // SHIP-STATUS-02: explicit trusted fixture to verify atomic world effects.
+    // No real hacker hardware exists yet: NEVER expose as a player/network API.
+    // Final attack admission will require original fitted emitter and legal
+    // combat authority before calling this same status engine.
+    bool submit_testing_ship_confusion(EntityId source,EntityId target,
+        std::uint64_t effect_id,std::uint64_t random_seed,
+        std::uint64_t duration_ticks,std::uint32_t pulse_ticks,
+        std::uint8_t intensity,std::uint8_t resistance,
+        std::uint8_t exposed_hardpoint_mask,
+        FailPoint fail=FailPoint::None);
+
     // Host-only: admits a receipt-reserved third-party shipment under the writer lock.
     bool submit_host_consigned_transfer(const Command&, FailPoint=FailPoint::None);
     bool submit_host_passenger_action(const Command& command, FailPoint fail = FailPoint::None);
+    // AUTO-04D.3E: narrow passenger-only, physical-ferry rescue gate.
+    // This is NOT a colony household evacuation or an executed rescue receipt.
+    // Submitted host voyage still requires a committed successful step().
+    bool submit_host_emergency_ferry_rescue(const Command& command,
+                                            FailPoint fail=FailPoint::None);
+    // v58: full, bounded ADULT colony in one local physically stocked receiver.
+    // Admission schedules only; execution revalidates and atomically commits
+    // ALL living named crew, farm staff, habitat residents, and intact hull state.
+    bool submit_host_colony_departure(const Command& command,
+                                      FailPoint fail=FailPoint::None);
+    void step_with_colony_departure(FailPoint fail=FailPoint::None);
+    // 04D.4D1: read-only, fail-closed ART02 child and guardian proof.
+    // This audit is NOT an authorization to commit population departure.
+    colony_family::Audit audit_colony_family_departure(
+        const colony_family::DeparturePlan& plan) const;
+    // Durable generation-bound PREPARATION ONLY. A returned true means the
+    // complete manifest was checked and journaled, not that a child moved.
+    bool prepare_host_colony_family_departure(
+        const colony_family::DeparturePlan& plan,
+        FailPoint fail=FailPoint::None);
+    // 04D.4D2B2: preparation and command admission never move a person.
+    // The dedicated execution commits world+ART02+ECON03 under ONE writer lock.
+    struct AtomicColonyFamilyPlan {
+        colony_family::DeparturePlan family;
+        std::uint64_t command_id=0;
+        std::uint64_t expected_region_revision=0, expected_owner_generation=0;
+        std::uint64_t expected_origin_family_revision=0, expected_receiver_family_revision=0;
+        std::string region_scope, origin_colony, receiver_colony;
+        // Unique immutable ART02 event IDs: one for every sorted adult, then
+        // one for every sorted physical dependent in family.children.
+        std::vector<std::uint64_t> member_event_ids;
+    };
+    bool submit_host_atomic_family_departure(const AtomicColonyFamilyPlan& plan,
+        FailPoint fail=FailPoint::None);
+    void step_with_atomic_family_departure(const AtomicColonyFamilyPlan& plan,
+        FailPoint fail=FailPoint::None);
+    // A completed receipt is not a prepared manifest or a narrative claim.
+    bool verified_atomic_family_departure(std::uint64_t command_id) const;
+    // AUTO-04D.5A: a host-supervised NPC coordinator responds to a real
+    // DELIVERED local shortage notice. It autonomously chooses among supplied,
+    // geographically grounded recipient colony bindings, but never invents
+    // personnel, resources, ships, legal custody, or permission.
+    struct AutonomousRescueDestination {
+        EntityId ship=0;
+        std::string regional_colony;
+    };
+    struct AutonomousRescueRequest {
+        EntityId source=0;
+        std::uint64_t leader_id=0, observed_event_id=0;
+        std::uint64_t family_seed=0, intent_id=0, command_id=0;
+        std::string family_scope, region_scope, origin_colony;
+        // These are host-trusted region bindings, NOT arbitrary client names.
+        std::vector<AutonomousRescueDestination> destinations;
+        // Trusted durable ID allocator supplies one unique event for each
+        // adult and child; the NPC does not mint commands or member IDs.
+        std::vector<std::uint64_t> member_event_ids;
+    };
+    struct AutonomousRescueDecision {
+        colony_safety::ResponsePlan response;
+        bool notified_leader=false, rescue_ready=false;
+        EntityId selected_receiver=0;
+        std::string reason;
+        AtomicColonyFamilyPlan transfer;
+    };
+    // Read-only deterministic option search, with real ART02 and ECON03 CAS
+    // revisions obtained from SQLite. Does not alter world or queue commands.
+    AutonomousRescueDecision assess_autonomous_colony_emergency(
+        const AutonomousRescueRequest& request) const;
+    // Host entrypoint; internally verifies notice and actual danger again
+    // under the SAME writer lock as queue admission and an immutable NPC
+    // decision witness. No family member moves until the existing v76
+    // step_with_atomic_family_departure executes with decision.transfer.
+    bool submit_autonomous_colony_rescue(const AutonomousRescueRequest& request,
+        FailPoint fail=FailPoint::None);
+    // AUTO-04D.5B: server scheduler entry point. It discovers a current
+    // local NPC warning opportunity and delivers the observation as a trusted
+    // host action, then selects and durably queues an authorized family plan.
+    // Routing and unique event IDs are supplied by the trusted region broker.
+    struct AutonomousSupervisorRoute {
+        EntityId source=0;
+        std::uint64_t family_seed=0,intent_id=0,command_id=0;
+        std::string family_scope,region_scope,origin_colony;
+        std::vector<AutonomousRescueDestination> destinations;
+        std::vector<std::uint64_t> member_event_ids;
+    };
+    enum class SupervisorStatus {
+        NoCurrentEmergency=0, NoLocalNpc=1, AwaitingPhysicalRescue=2,
+        RescueQueued=3, RescuePending=4, RescueCompleted=5
+    };
+    struct SupervisorTick {
+        SupervisorStatus status=SupervisorStatus::NoCurrentEmergency;
+        std::uint64_t leader_id=0,notice_id=0,command_id=0;
+        EntityId receiver=0;
+        std::string reason;
+    };
+    SupervisorTick supervise_autonomous_colony_emergency(
+        const AutonomousSupervisorRoute& route,FailPoint fail=FailPoint::None);
+    // Full immutable v79 transfer plan is published *atomically* with the
+    // accepted host command. A restart can independently load and execute it.
+    // An old v78 admission without this plan is intentionally not resumable.
+    std::optional<AtomicColonyFamilyPlan> pending_autonomous_family_rescue(
+        std::uint64_t command_id) const;
+    bool resume_autonomous_family_rescue(std::uint64_t command_id,
+        FailPoint fail=FailPoint::None);
+    // Host restart does not need to remember command IDs or transfer details:
+    // look up the one admitted due plan in SQLite and execute it precisely once.
+    bool resume_next_pending_autonomous_rescue(FailPoint fail=FailPoint::None);
+    // AUTO-04D.5C1: an already-present NPC may autonomously deliver ONLY
+    // real onboard food/water/oxygen to an occupied nearby habitat during an
+    // actual critical/emergency shortage. No magical supply, cross-owner
+    // hauling, or fabricated technician repair.
+    enum class NpcLocalSupplyStatus : int {
+        NoEmergency=0, NoResponder=1, NoUsableStock=2, Accepted=3
+    };
+    struct NpcLocalSupplyResult {
+        NpcLocalSupplyStatus status=NpcLocalSupplyStatus::NoEmergency;
+        std::uint64_t notice_id=0,npc_id=0,command_id=0;
+        int resource_selector=0; // 1=food, 2=water, 3=oxygen
+        std::int64_t amount_kg=0;
+        std::string reason;
+    };
+    // The trusted host allocates command IDs and invokes this scheduler
+    // callback. The host delivers the exact local NPC notification, and
+    // records the native owner-authorized supply command in one writer commit.
+    NpcLocalSupplyResult supervise_npc_habitat_resupply(
+        EntityId source_ship,EntityId occupied_habitat,
+        std::uint64_t command_id,FailPoint fail=FailPoint::None);
+    // Positive only after a genuinely executed world command with an Applied
+    // event, its real material transfer, and independent SQLite provenance.
+    bool verified_npc_habitat_resupply(std::uint64_t command_id) const;
+    // DEF-01A: fixed-range physically observed FOREIGN contact. A contact is
+    // NOT an attack or proof of hostile intent. Cannot see through systems or
+    // assign an omniscient guard; observation requires an on-duty named NPC.
+    std::vector<colony_defense::Contact> local_colony_watch_contacts(
+        EntityId colony_ship,std::uint64_t observer_npc) const;
+    // Trusted host records one already-visible contact under the canonical
+    // SQLite writer and world generation CAS. Durable proof survives restart.
+    colony_defense::Contact record_colony_watch_contact(
+        std::uint64_t event_id,EntityId colony_ship,std::uint64_t observer_npc,
+        EntityId foreign_ship);
+    // CONFLICT-01A: real colony agendas are durable host-approved leadership
+    // decisions, NOT fake historical aggression attributed to other players.
+    // An expansionist/predatory colony may initiate a confrontation even
+    // when the player has done nothing wrong. Weapon fire is a later gate.
+    void establish_colony_conflict_agenda(std::uint64_t agenda_event_id,
+        EntityId source_colony,std::uint64_t leader_npc,
+        colony_conflict::Agenda agenda);
+    colony_conflict::Decision assess_colony_conflict_intent(
+        EntityId source_colony,std::uint64_t observed_contact_event_id) const;
+    colony_conflict::Decision record_colony_conflict_intent(
+        std::uint64_t decision_event_id,EntityId source_colony,
+        std::uint64_t observed_contact_event_id);
+    // CONFLICT-01B2: new, append-only nonviolent strategic intents may use
+    // ONLY relationship revisions committed before the observed generation.
+    // Existing 01A intents remain forever evaluated under their old rules.
+    colony_conflict::Decision assess_colony_diplomatic_intent(
+        EntityId source_colony,std::uint64_t observed_contact_event_id) const;
+    colony_conflict::Decision record_colony_diplomatic_intent(
+        std::uint64_t decision_event_id,EntityId source_colony,
+        std::uint64_t observed_contact_event_id);
+    // CONFLICT-01B3: trusted, owner-approved governance transaction. The
+    // successor must actually be present and available at the colony.
+    // Appointments require a present incumbent; emergency replacements
+    // require a vacancy; same-leader policy revision is a separate cause.
+    // A new epoch becomes effective ONLY after the next world generation.
+    colony_conflict::GovernanceEpoch record_colony_governance_transition(
+        std::uint64_t event_id,EntityId colony,std::uint64_t successor_npc,
+        colony_conflict::Agenda agenda,
+        colony_conflict::DiplomaticPolicy policy,
+        colony_conflict::TransitionKind kind,PlayerId approving_owner);
+    // Effective leadership and political direction, excluding same-generation
+    // pending changes. Zero epoch event means the immutable founding charter.
+    colony_conflict::GovernanceEpoch colony_governance(EntityId colony) const;
+    // EXIT-01A: a named resident may become eligible to SEEK departure as
+    // objectively observed life support deteriorates. This does NOT invent
+    // dissent, cast ballots, remove crew, or authorize voyages. The witness
+    // is durable and reconstructible from original physical world history.
+    std::optional<colony_conflict::ExitPressure> assess_colony_exit_pressure(
+        EntityId source_colony,std::uint64_t npc_id) const;
+    colony_conflict::ExitPressure record_colony_exit_pressure(
+        std::uint64_t witness_event_id,EntityId source_colony,
+        std::uint64_t npc_id);
+    // EXIT-01C: independent dated observations of an NPC's OWN living
+    // conditions and directional relationship to the historical local leader.
+    // At least 8 actual simulation ticks separate successive appraisals.
+    // The bounded score has conservative exit/recovery hysteresis, survives
+    // governance changes and never itself moves people.
+    std::optional<colony_conflict::PersonalOutlook> assess_personal_outlook(
+        EntityId source_colony,std::uint64_t npc_id) const;
+    colony_conflict::PersonalOutlook record_personal_outlook(
+        std::uint64_t event_id,EntityId source_colony,std::uint64_t npc_id);
+    std::optional<colony_conflict::PersonalOutlook> colony_personal_outlook(
+        EntityId source_colony,std::uint64_t npc_id) const;
+    // EXIT-01D: fixed-cadence host-only supervision. The host invokes this
+    // after world steps; the coordinator scans actual residents in bounded,
+    // deterministic, rotating order and records only fact-backed appraisals.
+    // A route is an explicit previously authenticated receiving-owner offer
+    // from the trusted host resource/permission broker, NEVER discovered or
+    // granted by observing a nearby foreign colony.
+    struct HostVoluntaryImmigrationOffer {
+        EntityId destination=0,ferry=0;
+        PlayerId receiving_owner=0;
+        std::uint64_t admission_event_id=0,transport_id=0;
+        std::uint64_t pressure_event_id=0,boarding_command_id=0;
+    };
+    struct HostVoluntaryDepartureSchedule {
+        EntityId origin=0;
+        // Zero requests monotonic IDs automatically from the durable
+        // SQLite diary. Nonzero means the trusted host already reserved a
+        // unique contiguous event range (base + examined index).
+        std::uint64_t personal_event_base=0;
+        std::uint32_t scan_budget=8; // 1..32; 8 actual tick cadence
+        std::optional<HostVoluntaryImmigrationOffer> approved_offer;
+    };
+    enum class HostVoluntaryDepartureStatus : int {
+        NotDue=0,NoResidents=1,Observed=2,SeekingDestination=3,
+        NoEligibleMigrants=4,AdmissionCreated=5,BoardingQueued=6,
+        ExistingAdmission=7,PhysicalRouteBlocked=8
+    };
+    struct HostVoluntaryDepartureReport {
+        HostVoluntaryDepartureStatus status=HostVoluntaryDepartureStatus::NotDue;
+        EntityId origin=0;
+        std::uint64_t tick=0,selected_npc=0,admission_event_id=0;
+        std::uint32_t examined=0,observed=0,considering_departure=0;
+        std::string reason;
+    };
+    // Does not simulate a tick, teleport an NPC, create a foreign approval,
+    // move a child, or independently change immigration population records.
+    // Boarding, when queued, is executed only by the native world step.
+    HostVoluntaryDepartureReport supervise_voluntary_migration(
+        const HostVoluntaryDepartureSchedule& schedule,
+        FailPoint fail=FailPoint::None);
+    // EXIT-01B: consent-to-receive an eligible single adult who has a real
+    // current source-pressure witness. A permit is not a voyage or transfer.
+    struct VoluntaryImmigrationAdmission {
+        std::uint64_t event_id=0,exit_pressure_event_id=0;
+        // Zero is reserved for recorded legacy EXIT-01B permits, issued
+        // before any personal-history requirement existed.
+        std::uint64_t personal_outlook_event_id=0;
+        std::uint64_t world_generation=0,npc_id=0,transport_id=0;
+        EntityId origin=0,destination=0,ferry=0;
+        PlayerId original_owner=0,receiving_owner=0;
+    };
+    // Host is responsible for authentication of receiving_owner (not merely
+    // passing an arbitrary owner ID as a substitute for a real player action).
+    VoluntaryImmigrationAdmission record_voluntary_immigration_admission(
+        std::uint64_t event_id,std::uint64_t exit_pressure_event_id,
+        EntityId origin,EntityId destination,EntityId ferry,
+        std::uint64_t npc_id,std::uint64_t transport_id,
+        PlayerId receiving_owner);
+    // Ensures exact admitted manifest and real still-stressed source before
+    // forwarding an embark command to the existing physical voyage engine.
+    bool submit_voluntary_immigration_boarding(
+        std::uint64_t admission_event_id,const Command& embark,
+        FailPoint fail=FailPoint::None);
+    // Reuses HostSettleMigrant and the original atomic ART02/ECON03 commit.
+    // Supports only independent adults without dependent household claims.
+    void step_with_voluntary_immigration(
+        std::uint64_t admission_event_id,const SocietyMigrationPlan& plan,
+        FailPoint fail=FailPoint::None);
+    bool verified_voluntary_immigration(std::uint64_t admission_event_id) const;
+    // CONFLICT-01B1: actual ship destruction + a real NPC's delivered GRSM
+    // interpretation produces a subjective, directed diplomatic revision.
+    // The incident's real attacker owner is independently reconstructed;
+    // admiration, grievance and blame are BELIEFS, not adjudicated crimes.
+    colony_conflict::RelationRevision assess_colony_relationship_revision(
+        EntityId source_colony,std::uint64_t knowledge_id) const;
+    colony_conflict::RelationRevision record_colony_relationship_revision(
+        std::uint64_t revision_event_id,EntityId source_colony,
+        std::uint64_t knowledge_id);
+    // Latest audited relationship from this colony toward one foreign owner.
+    // Not an automatic attack authorization or reciprocal treaty.
+    colony_conflict::RelationRevision colony_relationship(
+        EntityId source_colony,PlayerId foreign_owner) const;
+    // D2a: register ART02-authenticated, actually resident child into the
+    // replayable world occupancy ledger. Separate from declaring evacuation.
+    bool submit_host_dependent_registration(const Command& command,
+        const std::string& family_scope,std::uint64_t family_seed,
+        FailPoint fail=FailPoint::None);
+    void step_with_dependent_registration(FailPoint fail=FailPoint::None);
+
+
+
+
     // q6e3b: only the trusted host can queue a rescue from a child-occupied
     // ferry. The paired atomic effect MUST execute the due command.
     bool submit_host_dependent_rescue_action(const Command& command,
@@ -459,7 +812,20 @@ public:
                                      std::uint64_t command_id, FailPoint fail = FailPoint::None);
     bool submit_testing_crew_loss(EntityId colony_ship, std::int64_t count,
                                   std::uint64_t command_id, FailPoint fail = FailPoint::None);
+    // SPACE-04B: atomically migrate the SAME original world to v119 before
+    // its first genuine 3-axis physical tick; no parallel ship ledger.
+    void enable_native_3d_physics(FailPoint fail = FailPoint::None);
+    // SPACE-04C: imports all immutable original system origins and commits
+    // the v120 native high-order physical state in the same original journal.
+    void enable_native_galactic_physics(const std::string& native_sqlite,
+        FailPoint fail=FailPoint::None);
+    // SPACE-04D: durable v121 exact 3D native probe and discovery upgrade.
+    void enable_native_3d_probes(FailPoint fail=FailPoint::None);
     void step(FailPoint fail = FailPoint::None);
+    // The only leased-worker route to the original tick writer. Rejects stale
+    // authority *inside* the same SQLite BEGIN IMMEDIATE as world commit.
+    void step_as_cell_worker(const NativeCellWorkerTick& token,
+                             FailPoint fail = FailPoint::None);
     // TRUSTED HOST only; executes one due terminal ferry incident and commits
     // world snapshot, ART02 deaths, ECON03 population and receipts atomically.
     // For other ticks call step(); non-enrolled regions are refused.
@@ -530,6 +896,299 @@ public:
     void step_with_atomic_split_rescue(const SplitRescueIntentPlan& plan,
         std::uint64_t command_id,FailPoint fail=FailPoint::None);
     void steps(std::uint64_t n);
+    void configure_probe_report_tick_ms(std::uint64_t tick_ms);
+    void ensure_physical_celestial_systems();
+    // S6-C: original-world one-writer migration to immutable v127 planetary
+    // envelopes. Old worlds gain exactly ZERO new water/soil/mineral/volatiles.
+    // Recovered-copy/rollback uses the same Store::commit as other migrations.
+    void ensure_planetary_genesis_manifest(
+        FailPoint fail=FailPoint::None);
+    void ensure_physical_planetary_environment(FailPoint fail=FailPoint::None);
+    void ensure_planetary_source_custody(FailPoint fail=FailPoint::None);
+    void ensure_planetary_ecology(FailPoint fail=FailPoint::None);
+    // v135 immutable generated original atmosphere, no oxygen stock creation.
+    // Refuses corrupt or half-migrated legacy physical catalogues.
+    void ensure_planetary_atmosphere_manifest(FailPoint fail=FailPoint::None);
+    void ensure_ship_frame_registry();
+    void ensure_visited_local_regions();
+    void ensure_local_environment_profiles();
+    // Authenticated-host-only entrypoint: pending request is journaled at
+    // departure. Completion uses this exact record, never client coordinates.
+    bool begin_celestial_transit(PlayerId authenticated_owner, EntityId ship,
+        std::uint64_t destination_body, std::uint64_t request_id,
+        FailPoint fail=FailPoint::None);
+    // The host advances this after elapsed committed world ticks. Replay
+    // is idempotent: a completed request never moves the ship twice.
+    bool complete_celestial_transit(std::uint64_t request_id,
+        FailPoint fail=FailPoint::None);
+    // A zero pilot requests deterministic assignment of a real
+    // qualified available NPC; the assigned identity is journaled.
+    // FLIGHT-01: unified, mission-neutral NPC flight service using the
+    // SAME original physical departure and arrival helpers as manual host
+    // transit; every change is one existing-world SQLite transaction.
+    bool queue_npc_flight(PlayerId owner,EntityId ship,std::uint64_t pilot,
+        std::uint64_t destination_body,std::uint64_t flight_order_id,
+        std::uint64_t transit_request_id,
+        NpcFlightPurpose purpose=NpcFlightPurpose::General,
+        FailPoint fail=FailPoint::None);
+    // FLIGHT-02: same flight registry and native pilot; one real local
+    // thrust/undock/dock sequence via the original ship command journal.
+    bool queue_npc_station_docking(PlayerId owner,EntityId ship,
+        std::uint64_t pilot,EntityId station,std::uint64_t flight_id,
+        NpcFlightPurpose purpose=NpcFlightPurpose::General,
+        FailPoint fail=FailPoint::None);
+    bool queue_npc_ship_rendezvous(PlayerId owner,EntityId ship,
+        std::uint64_t pilot,EntityId target_ship,std::uint64_t flight_id,
+        NpcFlightPurpose purpose=NpcFlightPurpose::General,
+        FailPoint fail=FailPoint::None);
+    bool register_player_person(PlayerId owner,EntityId aboard,
+        FailPoint fail=FailPoint::None);
+    bool register_player_at_station(PlayerId owner,EntityId station,
+        FailPoint fail=FailPoint::None);
+    bool station_player_action(PlayerId owner,EntityId station,EntityId ship,
+        StationPlayerAction action,std::int64_t dx,std::int64_t dz,
+        std::uint64_t receipt,FailPoint fail=FailPoint::None);
+    // S6-F4: one original SQLite transaction per explicit player transport
+    // transition. No native walking, visual teleport or model-created passenger.
+    bool planetary_player_shuttle_action(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,PlanetaryPlayerAction action,
+        std::uint64_t receipt,FailPoint fail=FailPoint::None);
+    // One original SQLite commit, no second native avatar authority.
+    bool planetary_surface_move(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,std::uint64_t npc_id,
+        std::int64_t dx_mm,std::int64_t dz_mm,std::uint64_t receipt,
+        FailPoint fail=FailPoint::None);
+    // One world STEP + one verified jump/wait receipt in the SAME SQLite commit.
+    bool planetary_surface_vertical_action(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,bool jump,std::uint64_t receipt,
+        FailPoint fail=FailPoint::None);
+    // Physically debits/returns only pre-existing site oxygen and spent CO2.
+    bool planetary_surface_oxygen_action(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,bool return_to_site,std::uint64_t receipt,
+        FailPoint fail=FailPoint::None);
+    bool planetary_surface_suit_action(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,Simulation::OriginalSuitAction action,
+        std::uint64_t receipt,FailPoint fail=FailPoint::None);
+    bool planetary_surface_treatment(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,std::uint64_t receipt,
+        FailPoint fail=FailPoint::None);
+    // One original SQLite world step, immutable dock movement receipt and
+    // original NPC custody mutation in one atomic transaction. Host only.
+    bool station_dock_worker_transfer(PlayerId owner,EntityId ship,
+        EntityId station,std::uint64_t npc_id,bool disembark,
+        std::uint64_t receipt,FailPoint fail=FailPoint::None);
+    bool station_visitor_transfer(PlayerId owner,EntityId receiver,
+        EntityId station,std::uint64_t npc_id,std::uint64_t voyage,
+        bool ashore,std::uint64_t receipt,
+        FailPoint fail=FailPoint::None);
+    bool grant_player_rescue_consent(PlayerId owner,EntityId receiver,
+        std::uint64_t consent_id,FailPoint fail=FailPoint::None);
+    bool revoke_player_rescue_consent(PlayerId owner,std::uint64_t consent_id,
+        FailPoint fail=FailPoint::None);
+    bool complete_player_rescue(PlayerId owner,EntityId receiver,
+        std::uint64_t flight_id,std::uint64_t transfer_receipt,
+        FailPoint fail=FailPoint::None);
+    bool cancel_npc_flight(PlayerId owner,std::uint64_t flight_order_id,
+        FailPoint fail=FailPoint::None);
+    // Real finite resource collection, committed atomically before publication.
+    // PLAY-13D.3: atomic source-backed player site actions. These reuse
+    // Simulation's exact geography and the existing world SQLite journal.
+    bool build_planetary_site(PlayerId owner,EntityId ship,std::uint64_t body,
+        std::uint16_t latitude,std::uint16_t longitude,FailPoint fail=FailPoint::None);
+    bool build_planetary_site(PlayerId owner,EntityId ship,std::uint64_t body,
+        std::uint16_t latitude,std::uint16_t longitude,
+        std::uint64_t first_npc,std::uint64_t second_npc,
+        FailPoint fail=FailPoint::None);
+    bool build_planetary_shuttle(PlayerId owner,EntityId ship,const PlanetarySiteKey& key,FailPoint fail=FailPoint::None);
+    // WO3-E v115: host-only reconciliation of existing v86-v108 legal
+    // planetary addresses. Requires a copied SQLite commit; never invents
+    // beds, shuttle arrivals, child custody, or independent consent.
+    bool host_import_legacy_planetary_residences(PlayerId host_principal,
+        std::uint64_t request_id,FailPoint fail=FailPoint::None);
+    // WO3-B: original-world atomic physical module handoff and finite
+    // owner-approved site construction. Uncommitted failures leave no effect.
+    bool transfer_planetary_housing_module(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,bool load,FailPoint fail=FailPoint::None);
+    bool start_planetary_housing(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,std::uint64_t order_id,
+        FailPoint fail=FailPoint::None);
+    bool set_planetary_housing_pause(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,bool pause,
+        FailPoint fail=FailPoint::None);
+    bool start_planetary_surface_utility(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,std::uint64_t order_id,
+        std::uint64_t qualified_supervisor,FailPoint fail=FailPoint::None);
+    bool pause_planetary_surface_utility(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,bool pause,FailPoint fail=FailPoint::None);
+    bool handover_planetary_surface_utility(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,std::uint64_t previous,
+        std::uint64_t replacement,std::uint64_t request_id,
+        FailPoint fail=FailPoint::None);
+    bool start_planetary_service_build(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,bool annex,std::uint64_t order_id,
+        std::uint64_t supervisor,FailPoint fail=FailPoint::None);
+    bool pause_planetary_service_build(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,bool annex,bool paused,
+        FailPoint fail=FailPoint::None);
+    bool handover_planetary_service_build(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,bool annex,std::uint64_t previous,
+        std::uint64_t replacement,std::uint64_t request_id,
+        FailPoint fail=FailPoint::None);
+    bool start_planetary_production_build(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,bool farm,std::uint64_t order_id,
+        std::uint64_t qualified_supervisor,FailPoint fail=FailPoint::None);
+    bool pause_planetary_production_build(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,bool farm,bool pause,
+        FailPoint fail=FailPoint::None);
+    bool handover_planetary_production_build(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,bool farm,std::uint64_t previous,
+        std::uint64_t replacement,std::uint64_t request_id,
+        FailPoint fail=FailPoint::None);
+    // One physical, ART02 and regional-census legal household movement.
+    // No change is visible until all three authorities commit together.
+    bool commit_planetary_household_settlement(
+        const PlanetaryHouseholdSettlementPlan& plan,
+        FailPoint fail=FailPoint::None);
+    bool book_planetary_household_return(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,std::uint64_t guardian,
+        std::uint64_t request_id,FailPoint fail=FailPoint::None);
+    bool settle_planetary_founder(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,std::uint64_t npc_id,
+        std::uint64_t request_id,bool voluntary_consent_attested,
+        FailPoint fail=FailPoint::None);
+    bool settle_planetary_visitor(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,std::uint64_t npc_id,
+        std::uint64_t request_id,bool voluntary_consent_attested,
+        FailPoint fail=FailPoint::None);
+    bool depart_planetary_visitor(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,std::uint64_t npc_id,
+        std::uint64_t request_id,bool voluntary_consent_attested,
+        FailPoint fail=FailPoint::None);
+    // Player's finite local logistics work board. NPC fulfillment advances
+    // only within the existing atomic world step; no parallel job database.
+    // One atomic construction admission: the same committed world debits
+    // four manufactured modules and records their embodied structural mass.
+    bool start_shipyard_construction(PlayerId owner,EntityId colony,
+        std::uint64_t order_id,std::array<std::uint64_t,2> workers,
+        FailPoint fail=FailPoint::None);
+    bool assign_shipyard_builders(PlayerId owner,std::uint64_t order_id,
+        std::array<std::uint64_t,2> replacement,
+        FailPoint fail=FailPoint::None);
+    // One committed six-module debit + real assembly order; only
+    // Simulation::step can subsequently mint the physical hull entity.
+    bool queue_shipyard_freighter(PlayerId owner,std::uint64_t yard_id,
+        std::uint64_t build_id,FailPoint fail=FailPoint::None);
+    // SQLite-atomic named NPC and finite-material transfer at an actual berth.
+    bool commission_shipyard_freighter(PlayerId owner,std::uint64_t build_id,
+        std::array<std::uint64_t,2> crew,std::int64_t provisions_kg_each,
+        FailPoint fail=FailPoint::None);
+    // Two-party v93 customer order; supplier independently accepts, customer
+    // physically pays six modules at the yard and later takes the real hull.
+    bool post_shipyard_customer_order(PlayerId customer,EntityId customer_ship,
+        std::uint64_t yard_id,std::uint64_t build_id,std::uint64_t order_id,
+        FailPoint fail=FailPoint::None);
+    bool accept_shipyard_customer_order(PlayerId supplier,std::uint64_t order_id,
+        FailPoint fail=FailPoint::None);
+    bool fund_shipyard_customer_order(PlayerId customer,std::uint64_t order_id,
+        FailPoint fail=FailPoint::None);
+    bool deliver_shipyard_customer_order(PlayerId customer,std::uint64_t order_id,
+        FailPoint fail=FailPoint::None);
+    // WORK-01A authorized delegation, not a second inventory or job engine.
+    bool delegate_customer_ship_order(PlayerId owner,EntityId colony_ship,
+        std::uint64_t id,std::uint64_t customer_contract,
+        std::array<std::uint64_t,2> commissioning_crew,
+        std::int64_t provisions_kg_each,std::uint64_t requires_directive=0,
+        FailPoint fail=FailPoint::None);
+    // WORK-01C: one SQLite-atomic owner delegation of a previously
+    // posted native shuttle job or preplanned sealed freight leg.
+    bool delegate_transport_work_order(PlayerId owner,EntityId origin,
+        std::uint64_t directive_id,WorkTaskKind kind,
+        std::uint64_t source_order,std::uint64_t requires_directive=0,
+        FailPoint fail=FailPoint::None);
+    bool cancel_work_directive(PlayerId owner,std::uint64_t directive,
+        FailPoint fail=FailPoint::None);
+    bool post_local_delivery_order(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& site,ShuttleCargo cargo,
+        std::int64_t kilograms,std::uint64_t order_id,
+        FailPoint fail=FailPoint::None);
+    bool cancel_local_delivery_order(PlayerId owner,std::uint64_t order_id,
+        FailPoint fail=FailPoint::None);
+    // Exactly one canonical SQLite commit per real sealed-carrier stock transfer.
+    // One atomic player work-order posting + real carrier assignment. The
+    // host will only load the hull once its planetary pickup has completed.
+    bool post_intercolony_work_order(PlayerId owner,EntityId origin,
+        const PlanetarySiteKey& site,ShuttleCargo cargo,
+        std::int64_t kilograms,std::uint64_t order_id,
+        EntityId carrier,EntityId destination,FailPoint fail=FailPoint::None);
+    bool load_intercolony_freight(PlayerId owner,std::uint64_t order_id,
+        EntityId carrier,EntityId destination,FailPoint fail=FailPoint::None);
+    bool deliver_intercolony_freight(PlayerId owner,std::uint64_t order_id,
+        FailPoint fail=FailPoint::None);
+    bool load_planetary_shuttle(PlayerId owner,EntityId ship,const PlanetarySiteKey& key,bool water,std::int64_t kg,FailPoint fail=FailPoint::None);
+    bool unload_planetary_shuttle(PlayerId owner,EntityId ship,const PlanetarySiteKey& key,bool water,std::int64_t kg,FailPoint fail=FailPoint::None);
+    bool load_planetary_shuttle(PlayerId owner,EntityId ship,const PlanetarySiteKey& key,ShuttleCargo cargo,std::int64_t kg,FailPoint fail=FailPoint::None);
+    bool unload_planetary_shuttle(PlayerId owner,EntityId ship,const PlanetarySiteKey& key,ShuttleCargo cargo,std::int64_t kg,FailPoint fail=FailPoint::None);
+    bool load_planetary_geology_shuttle(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,PlanetaryResource resource,
+        std::int64_t kg,std::uint64_t request_id,FailPoint fail=FailPoint::None);
+    bool unload_planetary_geology_shuttle(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,PlanetaryResource resource,
+        std::int64_t kg,std::uint64_t request_id,FailPoint fail=FailPoint::None);
+    bool assign_planetary_shuttle_pilot(PlayerId owner,EntityId ship,const PlanetarySiteKey& key,std::uint64_t npc,FailPoint fail=FailPoint::None);
+    // ART02-backed atomic household booking. Birth parentage and every
+    // original physical dependent are checked against authoritative SQLite
+    // under the writer lock, not accepted from a client-supplied roster.
+    bool book_planetary_shuttle_family(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,std::uint64_t guardian,
+        std::uint64_t co_parent,const std::vector<std::uint64_t>& children,
+        std::uint64_t request_id,FailPoint fail=FailPoint::None);
+    bool release_planetary_shuttle_family(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,FailPoint fail=FailPoint::None);
+    bool book_planetary_shuttle_passenger(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,std::uint64_t npc,bool board,
+        FailPoint fail=FailPoint::None);
+    bool assign_planetary_shuttle_visitor_duty(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,std::uint64_t npc,bool assign,
+        FailPoint fail=FailPoint::None);
+    bool transfer_planetary_shuttle_visitor(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,std::uint64_t npc,bool reboard,
+        FailPoint fail=FailPoint::None);
+    bool launch_planetary_shuttle(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,std::uint64_t request_id,bool ascend,
+        FailPoint fail=FailPoint::None);
+    bool equip_planetary_site(PlayerId owner,EntityId ship,std::uint64_t body,
+        std::uint16_t latitude,std::uint16_t longitude,bool farm,FailPoint fail=FailPoint::None);
+    bool supply_planetary_site(PlayerId owner,EntityId ship,std::uint64_t body,
+        std::uint16_t latitude,std::uint16_t longitude,bool water,std::int64_t kg,
+        FailPoint fail=FailPoint::None);
+    // Owner-controlled remote work directive: no ship inventory teleportation.
+    bool set_planetary_workforce_policy(PlayerId owner,std::uint64_t body,
+        std::uint16_t latitude,std::uint16_t longitude,std::uint8_t policy,
+        FailPoint fail=FailPoint::None);
+    bool support_planetary_crew(PlayerId owner,EntityId ship,std::uint64_t body,
+        std::uint16_t latitude,std::uint16_t longitude,bool oxygen,std::int64_t kg,
+        FailPoint fail=FailPoint::None);
+    bool cultivate_planetary_site(PlayerId owner,EntityId ship,std::uint64_t body,
+        std::uint16_t latitude,std::uint16_t longitude,std::int64_t batches,
+        FailPoint fail=FailPoint::None);
+    bool extract_planetary_site(PlayerId owner,EntityId ship,std::uint64_t body,
+        std::uint16_t latitude,std::uint16_t longitude,bool water,std::int64_t kg,
+        FailPoint fail=FailPoint::None);
+    // Same existing SQLite writer, exact origin, durable request ID and
+    // rollback. Authenticated owner comes from the native host principal.
+    bool extract_planetary_regional_source(
+        PlayerId owner,EntityId ship,std::uint64_t body,
+        std::uint16_t latitude,std::uint16_t longitude,
+        PlanetaryResource resource,std::uint8_t water_phase,
+        std::int64_t kg,std::uint64_t worker,std::uint64_t request_id,
+        FailPoint fail=FailPoint::None);
+    bool retrieve_planetary_site(PlayerId owner,EntityId ship,std::uint64_t body,
+        std::uint16_t latitude,std::uint16_t longitude,bool food,std::int64_t kg,
+        FailPoint fail=FailPoint::None);
+    bool install_oasis_extractor(PlayerId owner,EntityId ship,
+        std::uint64_t body,FailPoint fail=FailPoint::None);
+    bool collect_oasis_resource(PlayerId owner,EntityId ship,std::uint64_t body,
+        bool water,std::int64_t kilograms,FailPoint fail=FailPoint::None);
     const Simulation& world() const noexcept { return world_; }
     std::int64_t resource_origin() const noexcept { return resource_origin_; }
     std::uint64_t generation() const noexcept { return generation_; }
@@ -628,6 +1287,13 @@ public:
     // worker. It accepts a real Mine command; a completion is recorded later,
     // atomically with the executed command's actual ore-transfer incident.
     // Merely sharing a ship or witnessing a mine is never execution proof.
+    // SHIP-STATUS-04: trusted autonomous NPC operator, same physical
+    // HackConfuse command and world writer. The calling host must bind
+    // owner to original colony governance/session approval (not user input).
+    // Observed contact grants awareness, NEVER a legal right to attack.
+    bool submit_npc_cyber_attack(PlayerId owner,EntityId attacking_ship,
+        std::uint64_t pilot_npc,std::uint64_t observer_npc,EntityId target,
+        std::uint64_t command_id,FailPoint fail=FailPoint::None);
     bool submit_npc_mining_work(std::uint64_t npc_id, EntityId ship,EntityId rock,
           std::int64_t amount,std::uint64_t command_id,FailPoint fail=FailPoint::None);
     // Named, host-attested fabrication using existing real ship machinery,
@@ -649,6 +1315,23 @@ public:
 
 
 private:
+    // Only friend fp3d::InteriorMovement can reach this path. The original
+    // acceptance and step journals stay separate. The seat revision is checked
+    // under the command acceptance writer lock; the host must immediately
+    // execute or refuse an interrupted pending command on restart.
+    bool submit_cockpit_flight_checked(
+        const Command& command,std::uint64_t expected_seat_sequence,
+        FailPoint fail=FailPoint::None);
+    bool submit_with_cell_worker(const Command& command,
+                                 const NativeCellWorkerTick* token,
+                                 FailPoint fail);
+    // Trusted on-foot controller attaches its already-validated pose receipt
+    // to the ORIGINAL world snapshot/STEP/journal transaction; not public IPC.
+    void step_with_cell_worker(const NativeCellWorkerTick* token,
+                               FailPoint fail,
+                               const std::function<void(sqlite3*,std::uint64_t)>& trusted_interior_effect={},
+                               const std::function<void(Simulation&)>& trusted_station_mutation={});
+
     // Only the trusted regional production bridge may attach a physical
     // inventory escrow effect to this canonical world command.
     void settle_constructed_stock(const Command&,

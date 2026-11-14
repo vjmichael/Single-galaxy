@@ -1,4 +1,5 @@
 #include "galaxy/ClientContract.hpp"
+#include "galaxy/ShipSensorProfile.hpp"
 
 #include <algorithm>
 #include <charconv>
@@ -39,29 +40,67 @@ bool same(const AutoMining& a, const AutoMining& b) {
 // Owner-specific interest projection. No remote-system entities, inventories,
 // market inventories, or another owner's private hangars/wallets cross the wire.
 // owner=0 preserves the legacy single-system public test contract.
-ClientProjection project(const Simulation& world, PlayerId owner = 0) {
+ClientProjection project(const Simulation& world, PlayerId owner = 0, EntityId focus_ship = 0) {
     ClientProjection p;
     p.tick = world.tick();p.system_id = world.system_id();
+    EntityId viewer_ship=0;
     if(owner) {
-        bool found=false;
-        for(const auto& [id,e]:world.entities()) {
-            (void)id;
-            if(e.type==EntityType::Ship && e.owner_id==owner) {
-                p.system_id=e.system_id;found=true;break;
+        if(focus_ship) {
+            const auto* focus=world.find(focus_ship);
+            if(!focus || focus->type!=EntityType::Ship ||
+               focus->owner_id!=owner)
+                throw std::invalid_argument("fleet camera cannot focus foreign or missing ship");
+            viewer_ship=focus_ship;
+            p.system_id=focus->system_id;
+        }else {
+            for(const auto& [id,e]:world.entities()) {
+                if(e.type==EntityType::Ship && e.owner_id==owner) {
+                    viewer_ship=id;
+                    p.system_id=e.system_id;
+                    break;
+                }
             }
         }
-        if(!found)throw std::invalid_argument("viewer owns no ship");
+        if(!viewer_ship)throw std::invalid_argument("viewer owns no ship");
     }
     for(const auto& [id,e] : world.entities()) {
         if(e.system_id!=p.system_id)continue;
-        p.entities.emplace(id,e);
+        // PLAY-13C.3: the viewer's ship defines one local physical region.
+        // No remote celestial frame may leak via snapshot, delta or inventory.
+        // owner=0 retains the legacy public test adapter semantics.
+        if(viewer_ship && !world.same_local_frame(viewer_ship,id))continue;
+        Entity presented=e;
+        if(viewer_ship && e.type==EntityType::Ship &&
+           e.owner_id!=owner && id!=viewer_ship){
+            const auto* observer=world.find(viewer_ship);
+            if(!observer)throw std::runtime_error(
+                "viewer observation vessel vanished");
+            const auto radius=ship_sensors::detection_range_mm(
+                world,*observer,e);
+            const auto dx=e.position.x-observer->position.x;
+            const auto dy=e.position.y-observer->position.y;
+            if(dx < -radius || dx>radius || dy < -radius || dy>radius ||
+               static_cast<std::uint64_t>(dx*dx+dy*dy)>
+               static_cast<std::uint64_t>(radius*radius))
+                continue;
+            // This is a perceived foreign hull track, not a verified owner
+            // or access to its private cargo. No hail -> anonymous.
+            presented.owner_id=0;
+            presented.cargo=0;
+            presented.ore=0;
+        }
+        p.entities.emplace(id,presented);
         if(e.type==EntityType::Ship && e.dock_state!=DockState::InSpace)
             p.docks.emplace(id,DockTelemetry{e.dock_state,e.dock_station,e.transition_ticks});
         if(e.type==EntityType::Ship && e.jump_state!=ShipJumpState::Ready)
             p.jumps.emplace(id,JumpTelemetry{e.jump_state,e.pending_gate,e.jump_ticks});
     }
-    for(const auto& [id,j]:world.active_mining())
-        if(p.entities.count(id) && p.entities.count(j.target))p.mining.emplace(id,j);
+    for(const auto& [id,j]:world.active_mining()) {
+        const auto* worker=world.find(id);
+        if(p.entities.count(id) && p.entities.count(j.target) &&
+           (!owner || (worker && worker->owner_id==owner)))
+            p.mining.emplace(id,j);
+    }
     for(const auto& [key,h]:world.hangars())
         if(p.entities.count(key.first) && (!owner || key.second==owner))p.hangars.emplace(key,h);
     for(const auto& [id,m]:world.markets())
@@ -81,7 +120,7 @@ void validate_projection(const ClientProjection& p) {
     for (const auto& [id,e] : p.entities) {
         if (id == 0 || id != e.id || e.system_id != p.system_id ||
             static_cast<unsigned>(e.type) > 4 || e.ore < 0 || e.cargo < 0 || e.cargo_capacity < 0 ||
-            (e.type == EntityType::Ship && (e.owner_id == 0 || e.cargo_capacity == 0 || e.cargo > e.cargo_capacity || e.ore != 0)) ||
+            (e.type == EntityType::Ship && (e.cargo_capacity == 0 || e.cargo > e.cargo_capacity || e.ore != 0)) ||
             (e.type == EntityType::Asteroid && (e.owner_id != 0 || e.cargo != 0 || e.cargo_capacity != 0)) ||
             (e.type == EntityType::Wreck && (e.owner_id == 0 || e.ore != 0 || e.cargo_capacity == 0 || e.cargo > e.cargo_capacity)) ||
             ((e.type == EntityType::Station || e.type == EntityType::Stargate) &&
@@ -211,8 +250,8 @@ std::uint64_t projection_hash(const ClientProjection& p) {
     return fnv(out.str());
 }
 
-ServerViewBridge::ServerViewBridge(const Simulation& world, std::uint64_t stream_id, PlayerId viewer_owner)
-    : previous_(project(world,viewer_owner)), viewer_owner_(viewer_owner), stream_id_(stream_id),
+ServerViewBridge::ServerViewBridge(const Simulation& world, std::uint64_t stream_id, PlayerId viewer_owner, EntityId focus_ship)
+    : previous_(project(world,viewer_owner,focus_ship)), viewer_owner_(viewer_owner), focus_ship_(focus_ship), stream_id_(stream_id),
       command_cursor_(world.events().size()), activity_cursor_(world.activity_events().size()) {
     if(stream_id==0) throw std::invalid_argument("stream_id must be nonzero");
     (void)projection_hash(previous_);
@@ -247,7 +286,7 @@ ViewFrame ServerViewBridge::after_committed_step(const Simulation& world) {
        world.events().size()<command_cursor_ || world.activity_events().size()<activity_cursor_ ||
        sequence_==std::numeric_limits<std::uint64_t>::max())
         throw std::runtime_error("observation must follow one committed tick");
-    ClientProjection now=project(world,viewer_owner_);
+    ClientProjection now=project(world,viewer_owner_,focus_ship_);
     // System transfer is a complete authority/view change. Emit a new full
     // snapshot at the same stream epoch, with strictly increasing sequence.
     if(now.system_id!=previous_.system_id) {
@@ -343,7 +382,16 @@ ViewFrame ServerViewBridge::after_committed_step(const Simulation& world) {
         Change c; c.kind=ChangeKind::CommandResult; c.command=world.events()[i]; f.changes.push_back(c);
     }
     for(std::size_t i=activity_cursor_;i<world.activity_events().size();++i) {
-        Change c; c.kind=ChangeKind::Activity; c.activity=world.activity_events()[i]; f.changes.push_back(c);
+        const auto& activity=world.activity_events()[i];
+        // Spatial activity outside both the previous and current visible
+        // region is never a local player's event. Retain despawn notices for
+        // a previously visible target even after the entity was deleted.
+        if(viewer_owner_ &&
+           !previous_.entities.count(activity.actor) &&
+           !previous_.entities.count(activity.target) &&
+           !now.entities.count(activity.actor) &&
+           !now.entities.count(activity.target))continue;
+        Change c; c.kind=ChangeKind::Activity; c.activity=activity; f.changes.push_back(c);
     }
     f.projection_hash=projection_hash(now);
     // Do not advance bridge state if unable to construct a valid bounded frame.

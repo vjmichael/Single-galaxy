@@ -2,6 +2,7 @@
 
 #include <sqlite3.h>
 #include <algorithm>
+#include <set>
 #include <cstring>
 #include <limits>
 #include <stdexcept>
@@ -198,6 +199,42 @@ NpcAppearanceStore::NpcAppearanceStore(const std::string& path,std::string scope
                 throw std::runtime_error("unsupported existing family census constraint");
             }
         }
+        // WO3-E: an unoccupied, physically built planet is a real ZERO
+        // population destination. Older ART02 schemas require >=1 initial
+        // population; migrate that constraint transactionally without ever
+        // inventing a founding census member.
+        {
+            std::string ddl;
+            {
+                Statement schema(db_,"SELECT sql FROM sqlite_master "
+                    "WHERE type='table' AND name='npc_family_census'");
+                if(schema.step()!=SQLITE_ROW)
+                    throw std::runtime_error("missing family census schema");
+                ddl=reinterpret_cast<const char*>(sqlite3_column_text(schema.s,0));
+            }
+            if(ddl.find("initial_population>=1")!=std::string::npos){
+                sql_exec(db_,"BEGIN IMMEDIATE");
+                try {
+                    sql_exec(db_,"ALTER TABLE npc_family_census "
+                                 "RENAME TO npc_family_census_pre_planet_zero");
+                    sql_exec(db_,"CREATE TABLE npc_family_census("
+                        "scope TEXT NOT NULL, settlement TEXT NOT NULL,"
+                        "initial_population INTEGER NOT NULL CHECK(initial_population>=0),"
+                        "current_population INTEGER NOT NULL CHECK(current_population>=0),"
+                        "revision INTEGER NOT NULL CHECK(revision>=0),"
+                        "last_tick INTEGER NOT NULL CHECK(last_tick>=0),"
+                        "PRIMARY KEY(scope,settlement))");
+                    sql_exec(db_,"INSERT INTO npc_family_census SELECT * "
+                        "FROM npc_family_census_pre_planet_zero");
+                    sql_exec(db_,"DROP TABLE npc_family_census_pre_planet_zero");
+                    sql_exec(db_,"COMMIT");
+                }catch(...){
+                    sqlite3_exec(db_,"ROLLBACK",nullptr,nullptr,nullptr);
+                    throw;
+                }
+            }else if(ddl.find("initial_population>=0")==std::string::npos)
+                throw std::runtime_error("unsupported ART02 initial census constraint");
+        }
         sql_exec(db_,"CREATE TABLE IF NOT EXISTS npc_family_people("
             "scope TEXT NOT NULL,npc_id TEXT NOT NULL,settlement TEXT NOT NULL,"
             "born_tick INTEGER NOT NULL CHECK(born_tick>=0),"
@@ -363,7 +400,7 @@ NpcFamilyCensus read_census(sqlite3* db, const std::string& scope,std::uint64_t 
     r.current_population=static_cast<std::uint64_t>(sqlite3_column_int64(q.s,1));
     r.revision=static_cast<std::uint64_t>(sqlite3_column_int64(q.s,2));
     r.last_tick=static_cast<std::uint64_t>(sqlite3_column_int64(q.s,3));
-    if(!r.initial_population||r.initial_population>kMaxCensus||
+    if(r.initial_population>kMaxCensus||
        r.current_population>kMaxCensus)
         throw std::runtime_error("family census corrupt");
     return r;
@@ -371,7 +408,7 @@ NpcFamilyCensus read_census(sqlite3* db, const std::string& scope,std::uint64_t 
 } // namespace
 
 void NpcAppearanceStore::register_settlement(std::uint64_t settlement, std::uint64_t population){
-    if(!settlement||!population||population>kMaxCensus)
+    if(!settlement||population>kMaxCensus)
         throw std::invalid_argument("invalid family settlement baseline");
     begin();
     try {
@@ -795,6 +832,82 @@ std::vector<NpcMoveRecord> NpcAppearanceStore::record_guardian_household_moves(
         target.text(2,scope_);target.text(3,decimal(destination));target.step();
         if(sqlite3_changes(db_)!=1)throw std::runtime_error("household target revision conflict");
         moved.push_back({event,npc,origin,destination,tick,a,b});
+    }
+    return moved;
+}
+} // namespace galaxy
+
+namespace galaxy {
+std::vector<NpcMoveRecord> NpcAppearanceStore::record_complete_colony_moves(
+    const std::vector<std::pair<std::uint64_t,std::uint64_t>>& members,
+    std::uint64_t origin,std::uint64_t destination,std::uint64_t tick,
+    std::uint64_t source_revision,std::uint64_t destination_revision,
+    const std::function<bool(std::uint64_t,std::uint64_t,std::uint64_t)>& authorize){
+    if(!borrowed_transaction_ || !origin || !destination || origin==destination ||
+       !tick || !authorize || members.empty() || members.size()>16)
+        throw std::invalid_argument("complete colony requires bounded world-owned transaction");
+    const auto src=read_census(db_,scope_,origin),dst=read_census(db_,scope_,destination);
+    if(src.revision!=source_revision || dst.revision!=destination_revision ||
+       src.current_population!=members.size() ||
+       dst.current_population>kMaxCensus-members.size() ||
+       tick<src.last_tick || tick<dst.last_tick)
+        throw std::runtime_error("whole-family census count/revision/tick mismatch");
+    std::set<std::uint64_t> ids,events;
+    for(const auto& [id,event]:members){
+        if(!id || !event || !ids.insert(id).second || !events.insert(event).second ||
+           current_residence(id)!=origin || !authorize(id,origin,destination))
+            throw std::runtime_error("incomplete or unauthorized world-family movement");
+        Statement dead(db_,"SELECT 1 FROM npc_family_deaths WHERE scope=? AND npc_id=?");
+        dead.text(1,scope_);dead.text(2,decimal(id));
+        if(dead.step()==SQLITE_ROW)
+            throw std::runtime_error("family movement includes recorded dead person");
+        Statement prior(db_,"SELECT 1 FROM npc_family_moves WHERE scope=? AND event_id=?");
+        prior.text(1,scope_);prior.text(2,decimal(event));
+        if(prior.step()==SQLITE_ROW)
+            throw std::runtime_error("duplicate family movement event");
+    }
+    // Caller has proved source-wide closure. Independently reject any
+    // original ART02 child still resident there but missing from the batch.
+    Statement births(db_,"SELECT child_id FROM npc_family_births WHERE scope=?");
+    births.text(1,scope_);
+    while(births.step()==SQLITE_ROW){
+        const auto id=parse_u64(sqlite3_column_text(births.s,0));
+        if(current_residence(id)==origin && !ids.count(id))
+            throw std::runtime_error("whole-family batch would strand a born dependent");
+    }
+    std::vector<NpcMoveRecord> moved;
+    moved.reserve(members.size());
+    for(std::size_t i=0;i<members.size();++i){
+        const auto [id,event]=members[i];
+        const auto a=source_revision+i+1,b=destination_revision+i+1;
+        Statement insert(db_,"INSERT INTO npc_family_moves "
+            "(scope,event_id,npc_id,origin,destination,tick,origin_revision,destination_revision) "
+            "VALUES(?,?,?,?,?,?,?,?)");
+        insert.text(1,scope_);insert.text(2,decimal(event));insert.text(3,decimal(id));
+        insert.text(4,decimal(origin));insert.text(5,decimal(destination));
+        if(sqlite3_bind_int64(insert.s,6,static_cast<sqlite3_int64>(tick))!=SQLITE_OK ||
+           sqlite3_bind_int64(insert.s,7,static_cast<sqlite3_int64>(a))!=SQLITE_OK ||
+           sqlite3_bind_int64(insert.s,8,static_cast<sqlite3_int64>(b))!=SQLITE_OK)
+            throw std::runtime_error("whole-family move timestamp/revision bind refused");
+        insert.step();
+        Statement from(db_,"UPDATE npc_family_census SET current_population=current_population-1,"
+            "revision=revision+1,last_tick=? WHERE scope=? AND settlement=? AND revision=? "
+            "AND current_population>0");
+        if(sqlite3_bind_int64(from.s,1,static_cast<sqlite3_int64>(tick))!=SQLITE_OK ||
+           sqlite3_bind_int64(from.s,4,static_cast<sqlite3_int64>(a-1))!=SQLITE_OK)
+            throw std::runtime_error("whole-family source revision bind refused");
+        from.text(2,scope_);from.text(3,decimal(origin));from.step();
+        if(sqlite3_changes(db_)!=1)
+            throw std::runtime_error("whole-family source census CAS refused");
+        Statement to(db_,"UPDATE npc_family_census SET current_population=current_population+1,"
+            "revision=revision+1,last_tick=? WHERE scope=? AND settlement=? AND revision=?");
+        if(sqlite3_bind_int64(to.s,1,static_cast<sqlite3_int64>(tick))!=SQLITE_OK ||
+           sqlite3_bind_int64(to.s,4,static_cast<sqlite3_int64>(b-1))!=SQLITE_OK)
+            throw std::runtime_error("whole-family receiver revision bind refused");
+        to.text(2,scope_);to.text(3,decimal(destination));to.step();
+        if(sqlite3_changes(db_)!=1)
+            throw std::runtime_error("whole-family receiver census CAS refused");
+        moved.push_back({event,id,origin,destination,tick,a,b});
     }
     return moved;
 }
