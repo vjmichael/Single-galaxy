@@ -12,8 +12,10 @@ int main(){
     Simulation w(0x330B);
     const auto ship=w.add_colony_ship(7,{0,0},24,3);
     const auto rock=w.add_geological_asteroid({25000,0},AsteroidClass::Metallic,10,900);
-    const auto near=w.add_geological_asteroid({42000,0},AsteroidClass::Silicate,8,1100);
-    const auto distant=w.add_geological_asteroid({1450000,0},AsteroidClass::Carbonaceous,7,1100);
+    // Real original asteroid_mass_tonnes() admits physical radii >=10 m.
+    // Preserve actual silicate/carbonaceous types and 50 m scanner geometry.
+    const auto near=w.add_geological_asteroid({42000,0},AsteroidClass::Silicate,12,1100);
+    const auto distant=w.add_geological_asteroid({1450000,0},AsteroidClass::Carbonaceous,14,1100);
     w.enable_native_galactic_physics({{1,galactic::Point{{0,100000},{0,100000},{0,100000}}}});
     w.enable_station_ore_provenance();
     w.enable_ship_mining_equipment();

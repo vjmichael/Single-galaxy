@@ -2,9 +2,10 @@
 """Authenticated original-world ore collection through a genuine native pilot."""
 from pathlib import Path
 import subprocess,sys,tempfile,time
+from contextlib import ExitStack
 seed,host=map(Path,sys.argv[1:3])
 assert seed.is_file() and host.is_file()
-with tempfile.TemporaryDirectory() as folder:
+with tempfile.TemporaryDirectory() as folder, ExitStack() as owned:
     db=Path(folder)/"world.sqlite"
     built=subprocess.run([str(seed),str(db)],capture_output=True,text=True,timeout=25)
     assert built.returncode==0,(built.stdout,built.stderr)
@@ -12,11 +13,24 @@ with tempfile.TemporaryDirectory() as folder:
     assert len(identity)==5 and identity[0]=="GROUP3-ORE-FIXTURE",identity
     station,ship,rock,ore=map(int,identity[1:])
     assert ore>1
+    def stop_owned(child):
+        if child.poll() is None:
+            child.kill()
+        child.wait(timeout=10)
+        for stream in (child.stdin,child.stdout,child.stderr):
+            if stream is not None: stream.close()
+    def read_onboard(child,session,req,ship):
+        row=child.stdout.readline().strip().split("|")
+        assert len(row)==17 and row[:5]==["ONBOARD","1",session,str(req),str(ship)],row
+        return row
     def start():
         c=subprocess.Popen([str(host),str(db)],stdin=subprocess.PIPE,
            stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,bufsize=1)
+        owned.callback(stop_owned,c)
         pose=c.stdout.readline().strip().split("|")
         state=c.stdout.readline().strip().split("|")
+        onboard=read_onboard(c,pose[2],0,ship)
+        assert onboard[5:7]==state[7:9],onboard
         contact=c.stdout.readline().strip().split("|")
         nav=c.stdout.readline().strip().split("|")
         assert pose[:2]==["POSE","1"] and int(pose[10])==ship,pose
@@ -31,6 +45,8 @@ with tempfile.TemporaryDirectory() as folder:
         assert result[0] in ("ACK","SHIP","DENY"),(query,result)
         rock_state=None
         if result[0]=="SHIP":
+            onboard=read_onboard(c,session,request,ship)
+            assert onboard[5:7]==result[7:9],onboard
             rock_state=c.stdout.readline().strip().split("|")
             nav=c.stdout.readline().strip().split("|")
             assert rock_state[0] in ("ROCK","ROCKNONE"),rock_state

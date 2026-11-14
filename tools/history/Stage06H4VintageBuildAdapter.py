@@ -92,6 +92,35 @@ def patched(path):
                     'if(dependent.guardian_id==npc_id)return false;',
                     'v111 only has guardian_id; no co-guardian exists in this snapshot schema',edits)
             text=split_auto(text,edits)
+        if era=='v118-family-custody':
+            # A real original host child registration runs on the SAME
+            # physically occupied ship in a planet-anchored local frame.
+            # The early v118 blanket anchored-ship action filter erroneously
+            # refuses even this same-ship trusted actor==target command.
+            # Keep every original issuer, guardian, vessel and child check:
+            # only allow this one same-ship host action to reach them.
+            text=replace_one(text,
+                ('                c.action!=Action::Mine &&\n'
+                 '                c.action!=Action::StartMining &&\n'
+                 '                c.action!=Action::StopMining){'),
+                ('                c.action!=Action::Mine &&\n'
+                 '                c.action!=Action::StartMining &&\n'
+                 '                c.action!=Action::StopMining &&\n'
+                 '                !(c.action==Action::HostRegisterDependent &&\n'
+                 '                  c.actor==c.target && c.issuer==kServerAuthority)){'),
+                'real same-ship host child registration reaches strict guardian checks',edits)
+            # Original v117+ serializer/parser already accounts for two real
+            # planetary service projects, each consuming four embodied ore.
+            # The v118 total-matter validator omitted both from its exact
+            # sum, wrongly rejecting real built projects at source.
+            text=replace_one(text,
+                ('                                   std::int64_t(site.utility_phase!=0)) ||\n'
+                 '           site.embodied_ore>std::numeric_limits<std::int64_t>::max()-total)'),
+                ('                                   std::int64_t(site.utility_phase!=0)+\n'
+                 '                                   std::int64_t(site.service_projects[0].phase!=0)+\n'
+                 '                                   std::int64_t(site.service_projects[1].phase!=0)) ||\n'
+                 '           site.embodied_ore>std::numeric_limits<std::int64_t>::max()-total)'),
+                'exact genuine v118 service-project embodied ore mass and overflow check',edits)
         if era=='v111-planet-housing':
             # Original v111's planetary-site loader permits the real
             # consumed two-module housing/utility phases, but its FINAL
@@ -315,10 +344,10 @@ def patched(path):
                 '            CHECK(w.world().life_support(freighter)->'+material+'_kg==250);',
                 '            CHECK(w.world().life_support(freighter)->'+material+'_kg==350);',
                 'verify original commission actually received 350kg '+material,edits)
-        # The original test later completes source order 77006 after 77003
-        # and 77005. The shuttle can hold only the LATEST original ascent
-        # receipt, which is the native source-derived request for 77006.
-        # Preserve the exact receipt check; never accept a nonzero guess.
+        # The original farm scenario's most recent physical ascent is
+        # request 81005 (after 81003). The extraction scenario's most
+        # recent ascent is the native courier completion for 77007.
+        # Both must match their exact original immutable receipt IDs.
         # The native original later completes 77007 after 77003, 77005
         # and 77006. Its physical shuttle stores only the latest ascent
         # receipt: source-derived 0x10000000000000|(77007<<1)|1.
@@ -326,6 +355,29 @@ def patched(path):
             '(0x10000000000000ULL | (77003ULL<<1) | 1ULL)))',
             '(0x10000000000000ULL | (77007ULL<<1) | 1ULL)))',
             'exact latest original native 77007 shuttle ascent receipt',edits)
+        text=replace_one(text,
+            '.ascent_receipt==(farming?81003:',
+            '.ascent_receipt==(farming?81005:',
+            'farm original latest true ascent 81005 rather than stale 81003',edits)
+        # The source load_planetary_shuttle() explicitly allows orbital
+        # loading at phase==0 FROM the owned ship's life_support inventory.
+        # In this original manufactured case the ship has real nutrients;
+        # prove the positive finite transfer AND exact reversal, and still
+        # prohibit ground-to-orbit material teleportation.
+        text=replace_one(text,
+            ('            CHECK(!w.load_planetary_shuttle(7,ship,key,\n'
+             '                ShuttleCargo::Nutrients,500)); // still docked in orbit'),
+            ('            if(manufactured) {\n'
+             '                const auto native_before=w.world().canonical_state();\n'
+             '                const auto before_ship=w.world().life_support(ship)->nutrients_kg;\n'
+             '                CHECK(before_ship>=500);\n'
+             '                CHECK(w.load_planetary_shuttle(7,ship,key,ShuttleCargo::Nutrients,500));\n'
+             '                CHECK(w.world().life_support(ship)->nutrients_kg==before_ship-500);\n'
+             '                CHECK(w.unload_planetary_shuttle(7,ship,key,ShuttleCargo::Nutrients,500));\n'
+             '                CHECK(w.world().canonical_state()==native_before);\n'
+             '            } else CHECK(!w.load_planetary_shuttle(7,ship,key,\n'
+             '                ShuttleCargo::Nutrients,500));'),
+            'source-correct physical orbital ship inventory transfer and exact inverse',edits)
         # Original v92 already has canonical legal homes. The source v85/86
         # migration must not be called on a v92 snapshot; keep all original
         # residence identity and forged-home refusal assertions unchanged.

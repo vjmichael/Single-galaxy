@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """True C++ child stdio + original SQLite mining, not a client-side oracle."""
 import subprocess,sys,tempfile,time
+from contextlib import ExitStack
 from pathlib import Path
 seed,host=map(Path,sys.argv[1:3])
 assert seed.is_file() and host.is_file()
-with tempfile.TemporaryDirectory() as folder:
+with tempfile.TemporaryDirectory() as folder, ExitStack() as owned:
     db=Path(folder)/"world.sqlite"
     made=subprocess.run([str(seed),str(db)],text=True,capture_output=True,timeout=25)
     assert made.returncode==0,(made.stdout,made.stderr)
@@ -12,12 +13,25 @@ with tempfile.TemporaryDirectory() as folder:
     assert identity[0]=="04B-FIXTURE" and len(identity)==5,identity
     station,ship,rock,ore=map(int,identity[1:])
     assert ore>50
+    def stop_owned(child):
+        if child.poll() is None:
+            child.kill()
+        child.wait(timeout=10)
+        for stream in (child.stdin,child.stdout,child.stderr):
+            if stream is not None: stream.close()
+    def read_onboard(child,session,req,ship):
+        row=child.stdout.readline().strip().split("|")
+        assert len(row)==17 and row[:5]==["ONBOARD","1",session,str(req),str(ship)],row
+        return row
     def start():
         child=subprocess.Popen([str(host),str(db)],stdin=subprocess.PIPE,
                                stdout=subprocess.PIPE,stderr=subprocess.PIPE,
                                text=True,bufsize=1)
+        owned.callback(stop_owned,child)
         pose=child.stdout.readline().strip().split("|")
         state=child.stdout.readline().strip().split("|")
+        onboard=read_onboard(child,pose[2],0,ship)
+        assert onboard[5:7]==state[7:9],onboard
         contact=child.stdout.readline().strip().split("|")
         nav=child.stdout.readline().strip().split("|")
         assert len(nav)==11 and nav[:5]==["NAV","1",pose[2],"0",str(ship)],nav
@@ -33,6 +47,8 @@ with tempfile.TemporaryDirectory() as folder:
         assert result[0] in ("ACK","SHIP","DENY"),result
         contact=None
         if result[0]=="SHIP":
+            onboard=read_onboard(child,session,req,ship)
+            assert onboard[5:7]==result[7:9],onboard
             contact=child.stdout.readline().strip().split("|")
             assert contact[0] in ("ROCK","ROCKNONE"),contact
             assert contact[2]==session and int(contact[3])==req,contact
