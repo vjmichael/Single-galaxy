@@ -182,6 +182,30 @@ def patched(path):
             ('                if (ev.result == Outcome::Applied && ev.transferred > 0 &&\n'
              '                    due_commands.at(ev.command_id).action != Action::SurveyLocal) {'),
             'exclude actual SurveyLocal information count from physical transfer ledger only',edits)
+    if path=='src/Persistence.cpp' and era=='pre-v109-original-v92':
+        # The source v100 DeploySurveyProbe actually transfers ONE finite
+        # probe from the existing hull inventory to a newly created probe ID.
+        # The historical writer's resource-ledger whitelist accidentally
+        # omits this original action. Retain the physical debit and execute
+        # receipt, with a genuine source/destination rather than suppressing
+        # the positive material transfer or inventing inventory.
+        text=replace_one(text,
+            ('                         cmd->second.action != Action::FabricateModule &&\n'
+             '                         cmd->second.action != Action::ConstructOutpost &&'),
+            ('                         cmd->second.action != Action::FabricateModule &&\n'
+             '                         cmd->second.action != Action::DeploySurveyProbe &&\n'
+             '                         cmd->second.action != Action::ConstructOutpost &&'),
+            'v100 allow genuine one-probe physical transfer in finite material ledger',edits)
+        text=replace_one(text,
+            '                    if (cmd->second.action == Action::Mine) {',
+            ('                    if (cmd->second.action == Action::DeploySurveyProbe) {\n'
+             '                        if(ev.transferred!=1 || cmd->second.target!=0)\n'
+             '                            throw std::runtime_error("invalid physical survey-probe transfer");\n'
+             '                        ledger.text(4,"ship-probes:"+std::to_string(cmd->second.actor));\n'
+             '                        ledger.text(5,"deployed-probe:"+std::to_string(cmd->second.id));\n'
+             '                        ledger.i64(6,1);ledger.text(7,"survey_probe_deployed_unit");\n'
+             '                    } else if (cmd->second.action == Action::Mine) {'),
+            'original consumed probe and deployed one-use probe ID journal movement',edits)
     if path=='src/DockWorkforce.cpp' and era in ('v128-planetary-resource','v135-medical-atmosphere'):
         text=split_auto(text,edits)
     if path=='src/CyberIncidentJournal.cpp' and era in ('v111-planet-housing','v118-family-custody'):
