@@ -141,6 +141,31 @@ def patched(path):
             ('    seed.enable_individual_workforce();\n'
              '    seed.provision_starter_exploration_scanner(ship);'),
             'original crew identity before versioned scanner',edits)
+        if era=='v118-family-custody':
+            # The native trade-training API requires a real Habitat worker
+            # assigned at the powered site, not an available ship crewmember.
+            # Use accepted original AssignHabitatResidents commands; retain
+            # every original training, certification and crew-return check.
+            text=replace_one(text,
+                '    act(w,ship,291,Action::AssignHabitatResidents,orbital,-2);',
+                ('    act(w,ship,291,Action::AssignHabitatResidents,orbital,-2);\\n'
+                 '    act(w,ship,299,Action::AssignHabitatResidents,orbital,4);'),
+                'native habitat placement for independently trained workers',edits)
+            old=('n.location==ship && n.role==NpcRole::Ship &&\\n'
+                 '            w.world().npc_available_for_duty(id)) {')
+            new=('n.location==orbital && n.role==NpcRole::Habitat &&\\n'
+                 '            w.world().npc_available_for_duty(id)) {')
+            if text.count(old)!=2:
+                raise RuntimeError('expected precisely two original eligible novice selections')
+            text=text.replace(old,new)
+            edits.append('choose two physically present original habitat workers')
+            text=replace_one(text,
+                ('    CHECK(w.world().workshop_trade_certified(\\n'
+                 '        trained_visitor,WorkshopTrade::Shape));'),
+                ('    CHECK(w.world().workshop_trade_certified(\\n'
+                 '        trained_visitor,WorkshopTrade::Shape));\\n'
+                 '    act(w,ship,324,Action::AssignHabitatResidents,orbital,-4);'),
+                'return certified original workers to ship before actual crew selection',edits)
     if path=='tests/Stage06FinitePlanetaryGenesisTests.cpp' and era in ('v128-planetary-resource','v135-medical-atmosphere'):
         wrong=('        CHECK(!seed.scan_planetary_region_source(\n'
                '            7,ship,body,first.first,second.second==first.second?\n'
