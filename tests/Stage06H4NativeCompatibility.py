@@ -40,6 +40,17 @@ def main(args):
            'original and observer Git SHAs are not exact')
     demand(SHA256.fullmatch(m.get('observer_binary_sha256','')),
            'observer library hash not attested')
+    adapter=m.get('historical_compiler_adapter')
+    demand(isinstance(adapter,dict) and
+           adapter.get('schema')=='SG-S6H4-VINTAGE-SHADOW-COMPILER-01' and
+           adapter.get('historical_commit')==args.source_sha and
+           adapter.get('original_git_unchanged') is True and
+           adapter.get('no_synthetic_snapshot_versions') is True and
+           adapter.get('no_data_schema_rewrite') is True,
+           'compiler adapter original source provenance missing')
+    demand(m.get('pristine_historical_executable') is
+           (not adapter.get('compiled_using_adapter')),
+           'pristine historical binary flag contradicts compiler provenance')
     binaries=m.get('native_test_binary_sha256')
     demand(isinstance(binaries,dict) and binaries and
            all(SHA256.fullmatch(v or '') for v in binaries.values()),
@@ -107,6 +118,8 @@ def main(args):
        'original_source_commit':args.source_sha,
        'original_observer_commit':m['observer_head_commit'],
        'historical_native_tests_successful':True,
+       'historical_compiler_adapter':adapter,
+       'historical_kernel_pristine_binary':not adapter['compiled_using_adapter'],
        'original_passed_test_names':observed_tests,
        'original_junit_sha256':digest(junit),
        'original_binary_hashes_independently_rechecked':observed_binaries,
