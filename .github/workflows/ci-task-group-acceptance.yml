@@ -11,7 +11,7 @@ on:
         description: 'Completed acceptance task group'
         required: true
         type: choice
-        options: [SGDX03, INT03-NATIVE, INT03-H4]
+        options: [SGDX03, INT03-NATIVE, INT03-H4, INT04-NATIVE]
       pr_number:
         description: 'SGDX03 only; leave blank for main-anchored INT03-NATIVE'
         required: false
@@ -61,7 +61,7 @@ jobs:
             // It names the prior source SHA; the final event commit SHA
             // (manifest-only child) is independently checked and used by
             // EVERY native Linux/Windows historical producer job.
-            if (req.task_group === 'INT03-H4') {
+            if (req.task_group === 'INT03-H4' || req.task_group === 'INT04-NATIVE') {
               if (context.eventName !== 'push' || context.ref !== 'refs/heads/main' ||
                   req.pr_number !== 0 || req.schema !== 'SG-CI-GATE-01' ||
                   !/^[0-9a-f]{40}$/.test(String(req.source_sha)))
@@ -567,7 +567,7 @@ jobs:
   main-int03-native:
     # MANUAL ONLY; not an automatic PR/push group gate. Successful subset
     # evidence does NOT certify full original historical v86-v135 compatibility.
-    if: needs.validate.outputs.group == 'INT03-NATIVE' || needs.validate.outputs.group == 'INT03-H4'
+    if: needs.validate.outputs.group == 'INT03-NATIVE' || needs.validate.outputs.group == 'INT03-H4' || needs.validate.outputs.group == 'INT04-NATIVE'
     needs: validate
     name: INT03 original-world SQLite native subset (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
@@ -606,18 +606,63 @@ jobs:
         shell: bash
         env:
           SG_INT03_SOURCE_SHA: ${{ needs.validate.outputs.sha }}
+          SG_INT04_TASK_GROUP: ${{ needs.validate.outputs.group }}
         run: |
           set -euo pipefail
+          EXTRA=()
+          if [ "${SG_INT04_TASK_GROUP}" = 'INT04-NATIVE' ]; then EXTRA+=(--int04-group); fi
           if [ -n "${SG_INT03_TOOLCHAIN:-}" ]; then
             python scripts/INT03MainNativeAcceptance.py \
               --expected-sha "$SG_INT03_SOURCE_SHA" \
               --evidence-dir build/int03-main-native \
-              --toolchain "$SG_INT03_TOOLCHAIN"
+              --toolchain "$SG_INT03_TOOLCHAIN" "${EXTRA[@]}"
           else
             python scripts/INT03MainNativeAcceptance.py \
               --expected-sha "$SG_INT03_SOURCE_SHA" \
-              --evidence-dir build/int03-main-native
+              --evidence-dir build/int03-main-native "${EXTRA[@]}"
           fi
+      - name: Original Godot Stage6 / Group3 source contract, native import and scripts (Linux)
+        if: needs.validate.outputs.group == 'INT04-NATIVE' && runner.os == 'Linux'
+        timeout-minutes: 18
+        shell: bash
+        run: |
+          set -euo pipefail
+          python desktop_godot/tests/test_authorized_input_contract.py
+          python desktop_godot/tests/test_station_visual_contract.py
+          python desktop_godot/tests/test_native_asteroid_contact_contract.py
+          mkdir -p build/int03-main-native/godot "$RUNNER_TEMP/int04-godot" desktop_godot/native
+          curl --fail --location --retry 3 --retry-delay 5 --connect-timeout 20 --max-time 180 \
+            -o "$RUNNER_TEMP/int04-godot/godot.zip" \
+            https://github.com/godotengine/godot-builds/releases/download/4.7.2-stable/Godot_v4.7.2-stable_linux.x86_64.zip
+          echo "cadd3204e728a35d3f13adb7fd0d7902636b79f6b95c40c265eb73b6c35329e4  $RUNNER_TEMP/int04-godot/godot.zip" | sha256sum -c -
+          python3 -m zipfile -e "$RUNNER_TEMP/int04-godot/godot.zip" "$RUNNER_TEMP/int04-godot"
+          G="$RUNNER_TEMP/int04-godot/Godot_v4.7.2-stable_linux.x86_64"
+          chmod +x "$G"
+          "$G" --version
+          cp build/int03-main-native/current/galaxy_desktop_player_host \
+            build/int03-main-native/current/galaxy_desktop_station_host desktop_godot/native/
+          timeout --signal=TERM --kill-after=8s 100s "$G" --headless --path desktop_godot --editor --quit \
+            2>&1 | tee build/int03-main-native/godot/desktop-import.log
+          timeout --signal=TERM --kill-after=8s 100s "$G" --headless --path godot/stage6 --editor --quit \
+            2>&1 | tee build/int03-main-native/godot/planet-import.log
+          for test in native_player_protocol_smoke.gd native_station_refinery_protocol_smoke.gd group3_mining_native_protocol_smoke.gd; do
+            timeout --signal=TERM --kill-after=8s 110s "$G" --headless --path desktop_godot \
+              --script "res://tests/$test" 2>&1 | tee "build/int03-main-native/godot/$test.log"
+          done
+          for file in build/int03-main-native/godot/*.log; do
+            if grep -E 'SCRIPT ERROR:|ERROR: Failed to load script|Parse Error:' "$file"; then
+              echo "Real original Godot source import/script failure: $file" >&2
+              exit 1
+            fi
+          done
+      - name: Original Windows Godot/planet/Group3 script contract verification
+        if: needs.validate.outputs.group == 'INT04-NATIVE' && runner.os == 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          python desktop_godot/tests/test_authorized_input_contract.py
+          python desktop_godot/tests/test_station_visual_contract.py
+          python desktop_godot/tests/test_native_asteroid_contact_contract.py
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -628,13 +673,14 @@ jobs:
             build/int03-main-native/*receipt.json
             build/int03-main-native/original-producer-env.txt
             build/int03-main-native/historical-original-v85.sqlite
+            build/int03-main-native/godot/*.log
           if-no-files-found: warn
 
 
   int03-h4-producers:
     # Batch historical original native source matrix. No new branch or
     # standalone workflow: exact same main request HEAD for all eight cases.
-    if: needs.validate.outputs.group == 'INT03-H4'
+    if: needs.validate.outputs.group == 'INT03-H4' || needs.validate.outputs.group == 'INT04-NATIVE'
     needs: validate
     name: INT03/H4 source-produced ${{ matrix.era }}
     runs-on: ubuntu-24.04
