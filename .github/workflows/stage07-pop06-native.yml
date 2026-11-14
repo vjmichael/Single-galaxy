@@ -1,0 +1,107 @@
+name: Stage 7 POP-06 authenticated civic policy and original governance native
+
+on:
+  push:
+    branches: [sg/stage7-pop06-civic-policy-20261113]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: stage07-pop06-native-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  civic-law:
+    name: Original one-use civic policy and SQLite recovery (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2022]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - name: Verify pinned original source
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test -z "$(git status --porcelain)"
+          mkdir -p stage07-pop06-evidence
+          printf '%s\n' "$GITHUB_SHA" > stage07-pop06-evidence/source-sha.txt
+      - name: Linux SQLite toolchain
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ninja-build libsqlite3-dev
+      - name: Windows SQLite toolchain
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $root=$env:VCPKG_INSTALLATION_ROOT
+          if(-not $root){$root='C:\vcpkg'}
+          & (Join-Path $root 'vcpkg.exe') install sqlite3:x64-windows --classic
+          if($LASTEXITCODE -ne 0){throw 'Native Windows SQLite SDK provisioning failed'}
+          "SG_TOOLCHAIN=$(Join-Path $root 'scripts\buildsystems\vcpkg.cmake')" >> $env:GITHUB_ENV
+          (Join-Path $root 'installed\x64-windows\bin') >> $env:GITHUB_PATH
+      - name: Build original social diary, governance and physical economy
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "$RUNNER_OS" = Windows ]; then
+            cmake -S . -B build/stage07-pop06 -G 'Visual Studio 17 2022' -A x64 \
+              "-DCMAKE_TOOLCHAIN_FILE=$SG_TOOLCHAIN" -DBUILD_TESTING=ON
+          else
+            cmake -S . -B build/stage07-pop06 -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
+          fi
+          cmake --build build/stage07-pop06 --target \
+            galaxy_stage07_society_economy_tests \
+            galaxy_colony_conflict01b3_governance_tests \
+            galaxy_colony_exit01d_bounded_tests \
+            galaxy_wo2_industry_workforce_tests --config Release --parallel 4
+      - name: Require original governor and independent same-world policy tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          ctest --test-dir build/stage07-pop06 -C Release --output-on-failure \
+            --output-junit "$PWD/stage07-pop06-evidence/native-tests.xml" \
+            -R '^(galaxy_stage07_society_economy|galaxy_stage07_civic_policy|galaxy_colony_conflict01b3_governance|galaxy_colony_exit01d_bounded|galaxy_wo2_industry_workforce)$' \
+            --timeout 180 | tee stage07-pop06-evidence/native-ctest.log
+          python - <<'PY'
+          from pathlib import Path
+          import hashlib, xml.etree.ElementTree as ET
+          actual=list(ET.parse('stage07-pop06-evidence/native-tests.xml').iter('testcase'))
+          required={'galaxy_stage07_society_economy','galaxy_stage07_civic_policy',
+                    'galaxy_colony_conflict01b3_governance',
+                    'galaxy_colony_exit01d_bounded','galaxy_wo2_industry_workforce'}
+          assert len(actual)==len(required) and {c.get('name') for c in actual}==required
+          assert all(c.find(x) is None for c in actual for x in ('failure','error','skipped'))
+          with open('stage07-pop06-evidence/receipts.txt','w') as receipt:
+              receipt.write('exact_head='+Path('stage07-pop06-evidence/source-sha.txt').read_text().strip()+'\n')
+              for name in sorted(required):
+                  receipt.write('original_native_pass='+name+'\n')
+              for exe in ['galaxy_stage07_society_economy_tests',
+                          'galaxy_colony_conflict01b3_governance_tests',
+                          'galaxy_colony_exit01d_bounded_tests',
+                          'galaxy_wo2_industry_workforce_tests']:
+                  artifact=next(p for p in Path('build/stage07-pop06').rglob(exe+'*')
+                                if p.is_file() and p.suffix in ('','.exe'))
+                  receipt.write('exe_sha256:'+exe+'='+hashlib.sha256(artifact.read_bytes()).hexdigest()+'\n')
+              receipt.write('physical_or_installed_acceptance=not_run\n')
+          PY
+      - name: Retain exact original source and test receipts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage07-pop06-native-${{ matrix.os }}-${{ github.sha }}
+          path: |
+            stage07-pop06-evidence/
+            build/stage07-pop06/Testing/Temporary/LastTest.log
+            build/stage07-pop06/Testing/Temporary/LastTestsFailed.log
+          retention-days: 21
