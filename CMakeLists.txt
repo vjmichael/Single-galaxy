@@ -2830,3 +2830,12 @@ if(BUILD_TESTING)
     galaxy_stage07_household_lifecycle_migration PROPERTIES TIMEOUT 180
     LABELS "stage07;original-world;household-lifecycle;sqlite;recovery")
 endif()
+
+# Stage 7 POP-03 source-only staging: the original WO2 industrial workforce
+# remains the sole real worker/skill/supply authority; no new production path.
+if(BUILD_TESTING)
+  add_test(NAME galaxy_stage07_delegated_labor
+    COMMAND galaxy_wo2_industry_workforce_tests)
+  set_tests_properties(galaxy_stage07_delegated_labor PROPERTIES TIMEOUT 180
+    LABELS "stage07;original-world;delegated-labor;sqlite;real-production")
+endif()
