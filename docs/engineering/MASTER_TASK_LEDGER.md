@@ -20,7 +20,7 @@ As-of-audit refs: `main` = `443f31e31fe2f51fcdd0230451403eafdea211a7`; current S
 
 **Group INT-02 — authoritative source consolidation [ACTIVE: all 15 divergent heads now have reviewed source dispositions; missing browser, mining, and original family recovery coverage ported on main; original native group acceptance OPEN].** In the existing reviewed line, establish a deterministic file/domain ownership map for canonical kernel/SQLite, historical migrations, workers, native gameplay/Godot, and Stage7. Distinguish historic shared ancestor content from actual unique changes; audit the 136 main-only commits. Decide and document only the minimum merge/cherry-pick/content reconciliation necessary. Preserve all original native tests and main CI controls. Do not resolve conflicts by overwriting the later complete system with an older copy.
 
-**Group INT-03 — converge core and historical native source [PENDING].** Reconcile canonical Simulation/Persistence/CMake, worker/process-custody, original Stage6 H1/H2/H3/H4 and WO1–WO5, historical v86–v135 original SQLite/restore tests and one-writer source authority onto `main` without new PRs.
+**Group INT-03 — converge core and historical native source [ACTIVE: H4 original producer provenance hardened; exact-main native subset runner/manual gate staged; v86–v135 source-produced historical corpus and real OS acceptance OPEN].** Reconcile canonical Simulation/Persistence/CMake, worker/process-custody, original Stage6 H1/H2/H3/H4 and WO1–WO5, historical v86–v135 original SQLite/restore tests and one-writer source authority onto `main` without new PRs.
 
 **Group INT-04 — converge playable Godot, ship/station and planetary source [PENDING].** Reconcile old FP3D/Godot chain, Group2 integration, Group3 ship/fitting, VIS-01 and S6 planetary work against that same canonical kernel. Preserve genuine boarding, docking, movement, mining and save recovery. Review all asset provenance and avoid inventing physical Radeon results.
 
@@ -169,7 +169,7 @@ This disposition is a **functional source/coverage decision**, not a claim that 
 | --- | --- | --- | --- |
 | INT-01 PR inventory and authority map | **Complete**; 114 exact ancestry checks, 151 path-delta rows | **NOT RUN; documentation/source audit group** | No |
 | INT-02 authoritative source / unique fork reconciliation | **15 divergent heads source-reviewed and dispositioned; genuine missing browser/mining/family tests ported directly to `main` through `81063fe`; exact-head native acceptance outstanding** | **NOT REQUESTED: existing workflow only supports `SGDX03` and an exact PR head, not main-only INT-02** | No |
-| INT-03 original core, WO and H4 integration | Pending | End-of-group batch only; not requested | No |
+| INT-03 original core, WO and H4 integration | **ACTIVE:** historical test/SQLite provenance strengthened; exact-main 10-case native subset lane staged; genuine six failed source-era cases unresolved | **NOT REQUESTED:** manual Windows/Linux runner prepared, no exact-head execution; v86–v135 H4 full corpus open | No |
 | INT-04 Godot/planetary/station integration | Pending | End-of-group batch only; not requested | No |
 | INT-05 Stage7 POP integration | Pending | End-of-group batch only; not requested | No |
 | INT-06 consolidated native acceptance | Pending | **Only after preceding integration groups complete** | No |
