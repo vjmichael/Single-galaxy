@@ -40,6 +40,25 @@ NAMES = (
 )
 
 
+INT04_TARGETS = (
+    'galaxy_stage6_authorized_landing_tests',
+    'galaxy_group3_asteroid_survey_tests',
+    'galaxy_group3_native_mining_seed',
+    'galaxy_group3_station_custody_tests',
+    'galaxy_group3_station_identity_tests',
+    'galaxy_group3_original_resource_seed',
+    'galaxy_desktop_player_host',
+    'galaxy_desktop_station_host',
+)
+INT04_NAMES = (
+    'galaxy_stage6_authorized_landing',
+    'galaxy_group3_original_asteroid_survey',
+    'galaxy_group3_native_mining_pipe',
+    'galaxy_group3_original_station_custody',
+    'galaxy_group3_station_material_identity',
+    'galaxy_group3_original_ore_pilot_pipe',
+)
+
 def run(*cmd, cwd=None, env=None):
     print('+', ' '.join(map(str, cmd)), flush=True)
     return subprocess.run(list(map(str, cmd)), cwd=cwd, env=env, check=True)
@@ -81,10 +100,10 @@ def built(build, target, windows):
         target + ('.exe' if windows else ''))
 
 
-def read_native_junit(path):
+def read_native_junit(path, expected):
     cases = list(ET.parse(path).iter('testcase'))
     names = [case.get('name') for case in cases]
-    require(len(cases) == len(NAMES) and set(names) == set(NAMES) and
+    require(len(cases) == len(expected) and set(names) == set(expected) and
             len(names) == len(set(names)),
             'genuine CTest cases missing, renamed, unexpected or duplicated')
     require(all(case.find('failure') is None and case.find('error') is None and
@@ -95,6 +114,10 @@ def read_native_junit(path):
 
 def main(args):
     require(len(NAMES) == 10 and len(TARGETS) == 8, 'original suite inventory drift')
+    names_required = NAMES + (INT04_NAMES if args.int04_group else ())
+    targets_required = TARGETS + (INT04_TARGETS if args.int04_group else ())
+    require(len(INT04_NAMES)==6 and len(INT04_TARGETS)==8,
+            'INT04 native inventory changed unexpectedly')
     if args.check_contract:
         print('INT03 contract: 8 original C++ targets and 10 exact native/SQLite/fixture CTests;'
               ' source-produced historical v86-v135 remains UNACCEPTED')
@@ -116,7 +139,7 @@ def main(args):
     run('python', root / 'tests/Stage06H4ProvenanceContractsTests.py')
     configure(root, build, windows=windows, toolchain=args.toolchain)
     run('cmake', '--build', build, '--config', 'Release', '--parallel', '2',
-        '--target', *TARGETS)
+        '--target', *targets_required)
     run('git', 'cat-file', '-e', V85_COMMIT + '^{commit}', cwd=root)
     run('git', 'worktree', 'add', '--detach', native, V85_COMMIT, cwd=root)
     require(capture('git', 'rev-parse', 'HEAD', cwd=native) == V85_COMMIT,
@@ -146,12 +169,12 @@ def main(args):
         selected[key] = val
     require(capture('git', 'rev-parse', 'HEAD', cwd=root) == args.expected_sha,
             'main SHA advanced during original producer execution')
-    ctest = '|'.join(re.escape(n) for n in NAMES)
+    ctest = '|'.join(re.escape(n) for n in names_required)
     junit = artifact / ('int03-windows-junit.xml' if windows else 'int03-linux-junit.xml')
     run('ctest', '--test-dir', build, '-C', 'Release', '--no-tests=error',
         '--output-on-failure', '--timeout', '600', '--output-junit', junit,
         '-R', '^(' + ctest + ')$', env=selected)
-    names = read_native_junit(junit)
+    names = read_native_junit(junit, names_required)
     provenance = json.loads(manifest.read_text(encoding='utf-8'))
     require(provenance.get('producer_source_commit') == V85_COMMIT and
             provenance.get('archived_artifact') is False and
@@ -166,6 +189,9 @@ def main(args):
                   original_ctest_junit_sha256=digest(junit),
                   h4_v86_to_v135_corpus_accepted=False,
                   full_int03_accepted=False,
+                  int04_group_requested=bool(args.int04_group),
+                  int04_native_group_passed=bool(args.int04_group),
+                  int04_required_ctests=list(INT04_NAMES) if args.int04_group else [],
                   installed_windows_or_gpu_accepted=False)
     (artifact / 'int03-native-subset-receipt.json').write_text(
         json.dumps(report, indent=2, sort_keys=True) + '\n', encoding='utf-8')
@@ -175,6 +201,7 @@ def main(args):
 if __name__ == '__main__':
     p = argparse.ArgumentParser()
     p.add_argument('--check-contract', action='store_true')
+    p.add_argument('--int04-group', action='store_true')
     p.add_argument('--expected-sha')
     p.add_argument('--toolchain')
     p.add_argument('--evidence-dir', default='build/int03-main-evidence')
