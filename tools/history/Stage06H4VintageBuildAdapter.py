@@ -172,6 +172,40 @@ def patched(path):
              '                        std::to_string(tick)+" generation="+std::to_string(g)+\n'
              '                        " kind="+std::to_string(kind));'),
             'audit actual original tick transition separately from same-tick host state commit',edits)
+        # Original kind=2 journals include both actual simulation ticks and
+        # same-tick host-only mutations. A native step() cannot replay the
+        # latter without an independently authenticated host operation.
+        # Reject it explicitly; never reconstruct from invented snapshot data.
+        text=replace_one(text,
+            ('                    } else if (kind == 2) {\n'
+             '                        sim.step();\n'
+             '                    } else throw std::runtime_error("recovery: invalid journal kind");'),
+            ('                    } else if (kind == 2) {\n'
+             '                        if(static_cast<std::uint64_t>(sqlite3_column_int64(journal.get(),4))==sim.tick())\n'
+             '                            throw std::runtime_error("recovery: same-tick host mutation lacks replayable source operation");\n'
+             '                        sim.step();\n'
+             '                    } else throw std::runtime_error("recovery: invalid journal kind");'),
+            'reject unreplayable original host operation without data fabrication',edits)
+        text=replace_one(text,
+            ('        bool found = false;\n'
+             '        while (cp.row()) {'),
+            ('        bool found = false;\n'
+             '        std::string s6h4_last_replay_error="no trusted earlier snapshot";\n'
+             '        while (cp.row()) {'),
+            'retain exact original recovery failure stage',edits)
+        text=replace_one(text,
+            ('            } catch (const std::exception&) {\n'
+             '                // Try another retained checkpoint. Never guess around missing operations.\n'
+             '            }'),
+            ('            } catch (const std::exception& s6h4_error) {\n'
+             '                s6h4_last_replay_error=s6h4_error.what();\n'
+             '                // Try another retained checkpoint. Never guess around missing operations.\n'
+             '            }'),
+            'preserve actual original historical native replay refusal',edits)
+        text=replace_one(text,
+            '        if (!found) throw std::runtime_error("recovery: cannot verify latest state; refusing repair");',
+            ('        if (!found) throw std::runtime_error("recovery: cannot verify latest state; refusing repair: "+s6h4_last_replay_error);'),
+            'fail-closed recovery outputs exact original replay error',edits)
     if path=='src/Persistence.cpp' and era=='pre-v109-original-v92':
         # SurveyLocal's positive transferred count represents real SURVEY
         # discoveries, not removed or deposited finite matter. Keep it in
@@ -242,10 +276,21 @@ def patched(path):
         # and 77005. The shuttle can hold only the LATEST original ascent
         # receipt, which is the native source-derived request for 77006.
         # Preserve the exact receipt check; never accept a nonzero guess.
+        # The native original later completes 77007 after 77003, 77005
+        # and 77006. Its physical shuttle stores only the latest ascent
+        # receipt: source-derived 0x10000000000000|(77007<<1)|1.
         text=replace_one(text,
             '(0x10000000000000ULL | (77003ULL<<1) | 1ULL)))',
-            '(0x10000000000000ULL | (77006ULL<<1) | 1ULL)))',
-            'assert last genuine completed native delivery ascent receipt',edits)
+            '(0x10000000000000ULL | (77007ULL<<1) | 1ULL)))',
+            'exact latest original native 77007 shuttle ascent receipt',edits)
+        # Original v92 already has canonical legal homes. The source v85/86
+        # migration must not be called on a v92 snapshot; keep all original
+        # residence identity and forged-home refusal assertions unchanged.
+        text=replace_one(text,
+            '        upgraded_residence.upgrade_legal_residence_snapshot_format();',
+            ('        if(!manufactured)upgraded_residence.upgrade_legal_residence_snapshot_format();\n'
+             '        else CHECK(upgraded_residence.canonical_state()==visitor_state);'),
+            'preserve real manufactured v92 legal address without fake v85',edits)
     if path=='tests/SHIPSTATUS02_AuthoritativePersistenceTests.cpp' and era=='pre-v109-original-v92':
         # First repair original pre-v109 genesis ordering, then
         # register an authentic native frame on that same ship.
