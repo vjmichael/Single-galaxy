@@ -11,13 +11,13 @@ on:
         description: 'Completed acceptance task group'
         required: true
         type: choice
-        options: [SGDX03]
+        options: [SGDX03, INT03-NATIVE]
       pr_number:
-        description: 'Same-repository PR number whose current head is to be accepted'
-        required: true
+        description: 'SGDX03 only; leave blank for main-anchored INT03-NATIVE'
+        required: false
         type: string
       source_sha:
-        description: 'Exact 40-character current PR head SHA'
+        description: 'Exact 40-character current PR head (SGDX03) or main head (INT03-NATIVE) SHA'
         required: true
         type: string
 
@@ -32,7 +32,7 @@ concurrency:
 
 jobs:
   validate:
-    name: Authenticate task-group request and pin exact current PR head
+    name: Authenticate original PR or exact main task-group source SHA
     runs-on: ubuntu-slim
     timeout-minutes: 8
     outputs:
@@ -42,7 +42,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - id: resolve
-        name: Reject unstaged group, stale source SHA, or foreign PR
+        name: Reject stale source SHA, unauthorized main group or foreign PR
         uses: actions/github-script@v7
         with:
           script: |
@@ -56,8 +56,35 @@ jobs:
               : JSON.parse(fs.readFileSync('ci/task-group-request.json', 'utf8'));
             if (req.schema && req.schema !== 'SG-CI-GATE-01')
               throw new Error('Unrecognized task-group request schema');
+            // INT03-NATIVE is ONLY a manual main-head candidate. It cannot
+            // close the separately unverified original v86-v135 H4 corpus.
+            // The historical SGDX03 PR gate below remains unchanged.
+            if (req.task_group === 'INT03-NATIVE') {
+              if (context.eventName !== 'workflow_dispatch' ||
+                  context.ref !== 'refs/heads/main' ||
+                  req.pr_number !== 0)
+                throw new Error('INT03-NATIVE requires manual main dispatch without PR number');
+              if (!/^[0-9a-f]{40}$/.test(String(req.source_sha)))
+                throw new Error('INT03-NATIVE requires exact main source SHA');
+              const {data: main} = await github.rest.repos.getBranch({
+                ...context.repo, branch: 'main'
+              });
+              if (main.commit.sha !== req.source_sha || context.sha !== req.source_sha)
+                throw new Error('INT03-NATIVE stale SHA: dispatch and current main must match');
+              core.setOutput('sha', req.source_sha);
+              core.setOutput('group', req.task_group);
+              core.setOutput('pr_number', '');
+              await core.summary.addHeading('Main-only original native H4 subset')
+                .addTable([
+                  [{data:'Field',header:true},{data:'Exact value',header:true}],
+                  ['Source branch', 'main'], ['Task group', req.task_group],
+                  ['Source SHA', req.source_sha],
+                  ['Full v86-v135 H4 corpus', 'NOT ACCEPTED by this subset gate']
+                ]).write();
+              return;
+            }
             if (req.task_group !== 'SGDX03')
-              throw new Error('Only SGDX03 is configured; require explicit group gate review for other work');
+              throw new Error('Unsupported task-group gate');
             if (!Number.isSafeInteger(Number(req.pr_number)) || Number(req.pr_number) <= 0)
               throw new Error('Invalid PR number');
             if (!/^[0-9a-f]{40}$/.test(String(req.source_sha)))
@@ -109,6 +136,7 @@ jobs:
             }
 
   linux-native:
+    if: needs.validate.outputs.group == 'SGDX03'
     needs: validate
     name: Linux C++ 3D, SGDX custody, SQLite, live Godot
     runs-on: ubuntu-24.04
@@ -226,6 +254,7 @@ jobs:
             build/fp3d-env01/godot-logs/*.stderr
           if-no-files-found: warn
   windows-native:
+    if: needs.validate.outputs.group == 'SGDX03'
     needs: validate
     name: Windows MSVC C++ 3D, SGDX Job Object, MDMP, live Godot
     runs-on: windows-2022
@@ -495,3 +524,70 @@ jobs:
             throw ("SGDX03 Windows group NOT ACCEPTED: " + ($failed -join ", "))
           }
           Write-Host 'All Windows native, Godot, packaged ZIP and windowed gates PASS'
+
+
+  main-int03-native:
+    # MANUAL ONLY; not an automatic PR/push group gate. Successful subset
+    # evidence does NOT certify full original historical v86-v135 compatibility.
+    if: needs.validate.outputs.group == 'INT03-NATIVE'
+    needs: validate
+    name: INT03 original-world SQLite native subset (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 95
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2022]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.validate.outputs.sha }}
+          fetch-depth: 0 # original historical source commit worktree required
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Linux native build prerequisites
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libsqlite3-dev ninja-build
+      - name: Windows original SQLite toolchain
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $vcpkg=$env:VCPKG_INSTALLATION_ROOT
+          if(-not $vcpkg){$vcpkg='C:\vcpkg'}
+          & (Join-Path $vcpkg 'vcpkg.exe') install sqlite3:x64-windows --classic
+          if($LASTEXITCODE -ne 0){throw 'Original Windows SQLite dependency install failed'}
+          "SG_INT03_TOOLCHAIN=$(Join-Path $vcpkg 'scripts\buildsystems\vcpkg.cmake')" >> $env:GITHUB_ENV
+          (Join-Path $vcpkg 'installed\x64-windows\bin') >> $env:GITHUB_PATH
+      - name: Genuine original native and source-pinned v85 SQLite acceptance
+        shell: bash
+        env:
+          SG_INT03_SOURCE_SHA: ${{ needs.validate.outputs.sha }}
+        run: |
+          set -euo pipefail
+          if [ -n "${SG_INT03_TOOLCHAIN:-}" ]; then
+            python scripts/INT03MainNativeAcceptance.py \
+              --expected-sha "$SG_INT03_SOURCE_SHA" \
+              --evidence-dir build/int03-main-native \
+              --toolchain "$SG_INT03_TOOLCHAIN"
+          else
+            python scripts/INT03MainNativeAcceptance.py \
+              --expected-sha "$SG_INT03_SOURCE_SHA" \
+              --evidence-dir build/int03-main-native
+          fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: int03-main-subset-${{ matrix.os }}-${{ needs.validate.outputs.sha }}
+          path: |
+            build/int03-main-native/*junit.xml
+            build/int03-main-native/*producer.json
+            build/int03-main-native/*receipt.json
+            build/int03-main-native/original-producer-env.txt
+            build/int03-main-native/historical-original-v85.sqlite
+          if-no-files-found: warn

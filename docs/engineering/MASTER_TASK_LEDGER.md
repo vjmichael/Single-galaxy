@@ -146,6 +146,12 @@ This disposition is a **functional source/coverage decision**, not a claim that 
 - The script outputs an explicit **subset receipt** with `full_int03_accepted=false` and `h4_v86_to_v135_corpus_accepted=false`, even if all those tests eventually pass. No full historical v86–v135 producer acceptance is fabricated. It is ready for a **future manual main-only task-group lane**; no workflow was dispatched as part of development.
 - Developer policy remains: use the single master ledger, one main, no new PRs, preserve six original registered workflows, and launch one combined Windows/Linux native gate only at the feature-complete group boundary.
 
+### INT-03 existing main workflow: owner-triggered exact-SHA native candidate (2026-11-14)
+
+- In the **same existing** `.github/workflows/ci-task-group-acceptance.yml`, registered a new *manual-only* `INT03-NATIVE` selector. It rejects PR numbers, non-main dispatch, non-40-hex source SHAs and any difference among the **requested SHA, dispatch event SHA and live current main commit**. The historical `SGDX03` PR-only admission, existing request-manifest push path and its Windows/Linux jobs remain intact; the new job never runs for a source commit or an SGDX03 request.
+- Its Windows/Linux original-native matrix checks out the exact detached `main` SHA, builds original native C++ and genuine source-produced v85 SQLite through `scripts/INT03MainNativeAcceptance.py`, enforces ten actual named CTests, and retains source/producer/database/executable SHA and SQLite/JUnit receipts. It **does not run automatically** and reports only a native subset even if eventual results pass.
+- This is a **prepared gate, not a requested/accepted gate**: no workflow dispatch, no original Windows/Linux results. The old v86-v135 producer matrix still has six failed cases; no assertion of full INT-03 acceptance or installation until original producer fixes and grouped original native evidence are complete. Exactly six workflow files remain under `.github/workflows/`.
+
 ## P1 — remaining feature backlog, AFTER convergence is underway
 
 - **POP-10B positive genuine reciprocal barter:** actual two-direction manufactured goods, independent original-source/carrier/receiver approvals, physical pickup, carrier travel/unload, bilateral settlement, original SQLite recovery. Source authorization exists but complete positive two-way native proof is open.
