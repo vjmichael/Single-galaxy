@@ -16,6 +16,7 @@ import subprocess
 import shutil
 import tempfile
 import xml.etree.ElementTree as ET
+from Stage06H4ProvenanceChecks import verified_ctest_selection, verify_corpus_summary, verify_source_record
 
 SHA40=re.compile(r'^[0-9a-f]{40}$')
 SHA256=re.compile(r'^[0-9a-f]{64}$')
@@ -38,7 +39,10 @@ def main(args):
            'source modified or synthetic version permitted')
     demand(m.get('original_source_commit')==args.source_sha and
            SHA40.fullmatch(args.source_sha) and
-           SHA40.fullmatch(m.get('observer_head_commit','')),
+           SHA40.fullmatch(m.get('observer_head_commit','')) and
+           (args.current_sha is None or
+            (SHA40.fullmatch(args.current_sha) and
+             m.get('observer_head_commit')==args.current_sha)),
            'original and observer Git SHAs are not exact')
     demand(SHA256.fullmatch(m.get('observer_binary_sha256','')),
            'observer library hash not attested')
@@ -60,16 +64,7 @@ def main(args):
     junit=Path(args.test_junit).resolve(strict=True)
     xml=ET.parse(junit)
     cases=list(xml.iter('testcase'))
-    demand(bool(cases) and all(
-           case.find('failure') is None and
-           case.find('error') is None and
-           case.find('skipped') is None for case in cases),
-           'original native JUnit has missing, failed, errored or skipped cases')
-    observed_tests=[case.get('name') for case in cases]
-    demand(all(isinstance(name,str) and name for name in observed_tests),
-           'original native JUnit contains unnamed test cases')
-    demand(m.get('original_executed_test_names'),
-           'original historical native CTest filter missing')
+    observed_tests=verified_ctest_selection(m.get('original_executed_test_names'),cases)
     observer=Path(args.observer).resolve(strict=True)
     demand(digest(observer)==m['observer_binary_sha256'],
            'observer bytes do not match original attestation')
@@ -78,14 +73,14 @@ def main(args):
         original=Path(binary).resolve(strict=True)
         demand(original.is_file(),'original native binary missing')
         observed_binaries[original.name]=digest(original)
-    demand(observed_binaries==binaries,
-           'original producer executable bytes do not match attestation')
+    demand(len(observed_binaries)==len(args.producer_executables) and
+           observed_binaries==binaries,
+           'original native executable names or bytes do not match attestation')
     consumer=Path(args.consumer).resolve(strict=True)
     demand(consumer.is_file() and consumer.stat().st_size>0,
            'current genuine native recovery executable missing')
     records=m.get('verified_native_sqlite_records')
-    demand(isinstance(records,list) and records,
-           'no original source-produced database to verify')
+    verify_corpus_summary(m,records)
     directory=Path(args.capture_dir).resolve(strict=True)
     seen=set(); accepted=[]
     for record in records:
@@ -102,7 +97,8 @@ def main(args):
         seen.add(filename)
         demand(digest(native)==claimed,'original emitted bytes do not match')
         with sqlite3.connect(native.as_uri()+'?mode=ro&immutable=1',uri=True) as db:
-            demand(db.execute('PRAGMA integrity_check').fetchone()==('ok',),
+            verify_source_record(record,db)
+            demand(db.execute('PRAGMA integrity_check').fetchone()==('ok',)
                    'original SQLite file damaged')
             row=db.execute('SELECT state FROM snapshots ORDER BY generation DESC LIMIT 1').fetchone()
             match=HEAD.match(row[0]) if row and isinstance(row[0],bytes) else None
@@ -151,6 +147,7 @@ if __name__=='__main__':
     for arg in ('manifest','capture-dir','source-sha','consumer','output'):
         p.add_argument('--'+arg,required=True)
     p.add_argument('--test-junit',required=True)
+    p.add_argument('--current-sha',help='Exact current observer main SHA when supplied')
     p.add_argument('--observer',required=True)
     p.add_argument('--producer-executables',nargs='+',required=True)
     p.add_argument('--timeout-seconds',type=int,default=120)

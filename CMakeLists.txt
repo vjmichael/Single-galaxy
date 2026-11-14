@@ -2065,6 +2065,17 @@ if(BUILD_TESTING)
       ${CMAKE_COMMAND} -E false)
   endif()
   set_tests_properties(galaxy_wo3_historical_sqlite_import PROPERTIES TIMEOUT 300)
+  # INT-03: fail-closed provenance tests are pure fixtures; only a genuine
+  # original native producer plus replay can satisfy historical acceptance.
+  if(Python3_Interpreter_FOUND)
+    add_test(NAME galaxy_stage06h4_provenance_contracts
+      COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/Stage06H4ProvenanceContractsTests.py)
+  else()
+    add_test(NAME galaxy_stage06h4_provenance_contracts
+      COMMAND ${CMAKE_COMMAND} -E false)
+  endif()
+  set_tests_properties(galaxy_stage06h4_provenance_contracts PROPERTIES TIMEOUT 30)
   # S6-H4 genuine native SQLite WAL plus pinned original v85 producer.
   add_executable(galaxy_stage06h4_historical_recovery_tests
     tests/Stage06H4HistoricalRecoveryTests.cpp)
