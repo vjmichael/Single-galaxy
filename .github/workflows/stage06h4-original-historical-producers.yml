@@ -255,7 +255,7 @@ jobs:
                   # from the unmodified original negative checks. The snapshot
                   # version changes only through real source migration APIs.
                   version='135' if era=='v135-medical-atmosphere' else '128'
-                  promotion=('certified.enable_physical_planetary_environment();\\n'
+                  promotion=('certified.enable_physical_planetary_environment();\n'
                              '            CHECK(certified.s6h4_attest_original_atmosphere());'
                              if version=='135' else
                              'certified.enable_physical_planetary_environment();')
