@@ -2804,3 +2804,17 @@ if(BUILD_TESTING AND Python3_Interpreter_FOUND)
       $<TARGET_FILE:galaxy_desktop_player_host>)
   set_tests_properties(galaxy_group3_original_ore_pilot_pipe PROPERTIES TIMEOUT 180)
 endif()
+
+# Stage 7 POP-01: the first original population/household source-backed gate.
+# No cloned NPC registry: one canonical Simulation and independent SQLite copy.
+if(BUILD_TESTING)
+  add_executable(galaxy_stage07_population_household_tests
+    tests/Stage07PopulationHouseholdTests.cpp)
+  target_link_libraries(galaxy_stage07_population_household_tests
+    PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_stage07_population_households
+    COMMAND galaxy_stage07_population_household_tests)
+  set_tests_properties(galaxy_stage07_population_households PROPERTIES
+    TIMEOUT 120
+    LABELS "stage07;original-world;population;households;sqlite;recovery")
+endif()
