@@ -40,7 +40,12 @@ int main(int argc,char** argv){
        {2500,0},AsteroidClass::Metallic,10,5000);
    seed.enable_individual_workforce();
    seed.enable_station_ore_provenance();
-   seed.enable_native_galactic_physics({{1,galactic::Point{{0,100000},{0,100000},{0,100000}}}});
+   // POP-07 exact-head repair: station ore/workforce initialization has
+   // already pinned the original galactic system registry. Replaying its
+   // actual immutable origin is valid; introducing another one is forbidden.
+   CHECK(seed.native_galactic_physics());
+   CHECK(seed.galactic_system_origins().count(1)==1);
+   seed.enable_native_galactic_physics(seed.galactic_system_origins());
    PersistentWorld world(db,std::move(seed));
    for(std::uint64_t cmd_id=57098;cmd_id<=57100;++cmd_id){
      Command mine{};mine.id=cmd_id;mine.sequence=mine.id;

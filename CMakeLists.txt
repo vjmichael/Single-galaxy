@@ -2879,3 +2879,20 @@ if(BUILD_TESTING)
     PROPERTIES TIMEOUT 180
     LABELS "stage07;original-sqlite;exclusive-labor;recovery")
 endif()
+
+# POP-08: one named citizen -> source-backed native vital transfer, original
+# physical freight refusal and a separately approved original legal epoch.
+# Original WO4/WO5 tests remain independent; no shadow commerce inventory.
+if(BUILD_TESTING)
+  add_executable(galaxy_stage07_resident_economy_tests
+    tests/Stage07ResidentEconomyTests.cpp)
+  target_link_libraries(galaxy_stage07_resident_economy_tests
+    PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_stage07_resident_economy
+    COMMAND galaxy_stage07_resident_economy_tests)
+  add_test(NAME galaxy_stage07_resident_legal_consequence
+    COMMAND galaxy_stage07_resident_economy_tests)
+  set_tests_properties(galaxy_stage07_resident_economy
+    galaxy_stage07_resident_legal_consequence PROPERTIES TIMEOUT 180
+    LABELS "stage07;real-resident;original-economic-transfer;governance;sqlite-recovery")
+endif()
