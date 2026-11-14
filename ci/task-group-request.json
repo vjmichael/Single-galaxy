@@ -1,7 +1,7 @@
 {
   "schema": "SG-CI-GATE-01",
   "task_group": "INT04-NATIVE",
-  "source_sha": "8c76867b476034bcc07223c7cdf7d17d8f5f3302",
+  "source_sha": "c02ad7353d1eb096e935a183d19685702391d040",
   "pr_number": 0,
-  "note": "OWNER-AUTHORIZED ONE AFFECTED GROUP RERUN after source-grounded repairs to failed original run #43629805211 at previous SHA 20718528bb9b5e97ccaef73374b5a8566a48d55e. Verify unchanged main exact SHA for full original 8 H4 producer scenarios, genuine original pre-v109 v85 SQLite source, v111/v118 authenticated journal and resource custody, preserved v128/v135, both Windows/Linux 16 strict CTests incl Group3 authorized ONBOARD frames, native owned process cleanup and real Godot 4.7.2 Stage6/Group3 import on Linux. Fail on any historical native CTest, SHA provenance, SQLite read/restart, Windows/Linux or Godot error. No alternative CI reruns or new branches. Full 50-version corpus and installed Radeon physical acceptance remain OPEN absent independent evidence."
+  "note": "One owner-directed consolidated INT04 original source acceptance after grouped repairs of exact run #43631449774. One immutable main candidate for original source-produced H4 eight cases (including v85 true original SQLite, fail-closed v111/v118 host witnesses, v128/v135), Linux and Windows 16 original source/SQLite/Group3/Stage6 native CTests, original session-scoped owner equipment commands with nonreserved IDs, exact 15m native mining, original ONBOARD/ROCK/NAV pairing, and hosted Linux Godot 4.7.2 Stage6 planet/transfer/recovery + Group3 player/mining/station scripts. Preserve source Git SHA identities, all actual version headers, authentic SQLite journal hashes, native Windows/Linux and original receipt artifacts. No additional branches, PR, per-fix CI or fabricated historical worlds. Full v86–v135 50-version coverage and installed physical Windows/R9700 remain separate OPEN release gates; do not claim them from hosted acceptance."
 }
