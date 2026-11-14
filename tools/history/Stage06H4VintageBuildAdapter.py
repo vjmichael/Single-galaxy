@@ -223,6 +223,29 @@ def patched(path):
              '                sample.provision_oasis_reserve_genesis(body.id,8000,4000);\n'
              '                const auto source=sample.planetary_oasis_source_region(7,ship,body.id);'),
             'pre-v109 scout must fund real finite oasis genesis before locating source',edits)
+    if path=='tests/PLAY13D_RegionalFacilitiesTests.cpp' and era=='pre-v109-original-v92':
+        # The SHIP01C scenario commissions from finite stock with 250 kg
+        # each of food/water/oxygen, but original v92's reader correctly
+        # rejects a 750-kg life-support record (requires >= 1000 kg).
+        # Transfer 350 kg of each real finite supply instead; preserve all
+        # original commission, crew, cargo, resource-mass and restart checks.
+        text=replace_one(text,
+            '            CHECK(w.commission_shipyard_freighter(7,92001,operating,250));',
+            '            CHECK(w.commission_shipyard_freighter(7,92001,operating,350));',
+            'source-funded manufactured freighter legal life-support minimum',edits)
+        for material in ('food','water','oxygen'):
+            text=replace_one(text,
+                '            CHECK(w.world().life_support(freighter)->'+material+'_kg==250);',
+                '            CHECK(w.world().life_support(freighter)->'+material+'_kg==350);',
+                'verify original commission actually received 350kg '+material,edits)
+        # The original test later completes source order 77006 after 77003
+        # and 77005. The shuttle can hold only the LATEST original ascent
+        # receipt, which is the native source-derived request for 77006.
+        # Preserve the exact receipt check; never accept a nonzero guess.
+        text=replace_one(text,
+            '(0x10000000000000ULL | (77003ULL<<1) | 1ULL)))',
+            '(0x10000000000000ULL | (77006ULL<<1) | 1ULL)))',
+            'assert last genuine completed native delivery ascent receipt',edits)
     if path=='tests/SHIPSTATUS02_AuthoritativePersistenceTests.cpp' and era=='pre-v109-original-v92':
         # First repair original pre-v109 genesis ordering, then
         # register an authentic native frame on that same ship.
