@@ -54,7 +54,20 @@ int main(){
         world.establish_colony_conflict_agenda(
             3050,b,leader,colony_conflict::Agenda::Cooperative);
         CHECK(world.colony_governance(b).leader_id==leader);
-        CHECK(agency.establish(world,territory,8,b,4001));
+        const bool agency_admitted=agency.establish(
+            world,territory,8,b,4001);
+        if(!agency_admitted){
+            const auto gov=world.colony_governance(b);
+            std::cerr<<"STATUS07J exact original admission diag: gov="
+                     <<gov.event_id<<" leader="<<gov.leader_id
+                     <<" leader_duty="<<world.world().npc_available_for_duty(gov.leader_id)
+                     <<" incumbent="<<agency.active(world,8,b).event_id
+                     <<" territory="<<territory.history().size()
+                     <<" crew="<<world.world().npc_records().size()
+                     <<" tick="<<world.world().tick()
+                     <<" generation="<<world.generation()<<"\n";
+        }
+        CHECK(agency_admitted);
         CHECK(!agency.establish(world,territory,8,b,4002));
         const auto appointment=agency.active(world,8,b);
         CHECK(appointment.owner==8&&appointment.colony==b);
