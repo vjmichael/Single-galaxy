@@ -176,6 +176,19 @@ def patched(path):
         text=split_auto(text,edits)
     if path=='src/CyberIncidentJournal.cpp' and era in ('v111-planet-housing','v118-family-custody'):
         text=split_auto(text,edits)
+    if path=='tests/PLAY13D_RegionalFacilitiesTests.cpp' and era=='pre-v109-original-v92':
+        # The historic oasis locator only lists physically funded source
+        # regions, but its scouting fixture had not provisioned its sample
+        # world's genuine deterministic source. Supply exactly the same
+        # finite original-genesis quantities used by scenario(), and still
+        # require a source-derived geographic cell with a native prospect.
+        text=replace_one(text,
+            ('                if(!sample.celestial_oasis_prospect(body.id)->candidate)continue;\n'
+             '                const auto source=sample.planetary_oasis_source_region(7,ship,body.id);'),
+            ('                if(!sample.celestial_oasis_prospect(body.id)->candidate)continue;\n'
+             '                sample.provision_oasis_reserve_genesis(body.id,8000,4000);\n'
+             '                const auto source=sample.planetary_oasis_source_region(7,ship,body.id);'),
+            'pre-v109 scout must fund real finite oasis genesis before locating source',edits)
     if path=='tests/SHIPSTATUS02_AuthoritativePersistenceTests.cpp' and era=='pre-v109-original-v92':
         # First repair original pre-v109 genesis ordering, then
         # register an authentic native frame on that same ship.
@@ -382,6 +395,7 @@ candidates={'CMakeLists.txt','src/Simulation.cpp','src/DockWorkforce.cpp',
             'tests/Stage06EcologyIndustryTests.cpp',
             'tests/Stage06PhysicalEnvironmentTests.cpp',
             'tests/SHIPSTATUS02_AuthoritativePersistenceTests.cpp',
+            'tests/PLAY13D_RegionalFacilitiesTests.cpp',
             'tests/WO3PlanetaryUtilityTests.cpp'}
 for parent in ('src','include','tests'):
     for entry in (original/parent).iterdir():
