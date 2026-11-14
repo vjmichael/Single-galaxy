@@ -1,4 +1,5 @@
 #include "galaxy/Stage07SocietyEconomy.hpp"
+#include "galaxy/Stage07CivicPolicy.hpp"
 #include "galaxy/RegionalModeAuthority.hpp"
 #include <chrono>
 #include <filesystem>
@@ -76,6 +77,42 @@ int main(){
                 }
             }
             CHECK(observed_named_npc!=0);
+            // POP-06: a genuine recorded resident can request a
+            // *noncoercive* constitutional policy review. Its original
+            // elected/appointed leadership remains authoritative, and only
+            // separately approved owner custody can commit the legal epoch.
+            auto petition=stage7::propose_civic_reconciliation(
+                w,7,home,observed_named_npc);
+            CHECK(petition.has_value());
+            CHECK(petition->leader==1 &&
+                  petition->personal_event==
+                    w.colony_personal_outlook(home,observed_named_npc)->event_id);
+            CHECK(!stage7::approve_civic_motion(
+                w,*petition,7,99101,false).has_value());
+            CHECK(!stage7::approve_civic_motion(
+                w,*petition,8,99101,true).has_value());
+            CHECK(w.colony_governance(home).policy==
+                  colony_conflict::DiplomaticPolicy::Pragmatic);
+            const auto epoch=stage7::approve_civic_motion(
+                w,*petition,7,99101,true);
+            CHECK(epoch.has_value() && epoch->event_id==99101 &&
+                  epoch->ordinal==1 && epoch->leader_id==1 &&
+                  epoch->policy==colony_conflict::DiplomaticPolicy::Reconciliatory);
+            CHECK(w.colony_governance(home).policy==
+                  colony_conflict::DiplomaticPolicy::Pragmatic);
+            // One generation can carry one legal change; never a second
+            // opaque AI-approved epoch or an immediate effective mutation.
+            refuse([&]{(void)stage7::approve_civic_motion(
+                w,*petition,7,99102,true);});
+            w.step();
+            CHECK(w.colony_governance(home).event_id==99101 &&
+                  w.colony_governance(home).leader_id==1 &&
+                  w.colony_governance(home).policy==
+                    colony_conflict::DiplomaticPolicy::Reconciliatory);
+            CHECK(!stage7::approve_civic_motion(
+                w,*petition,7,99103,true).has_value());
+            CHECK(!stage7::propose_civic_reconciliation(
+                w,7,home,observed_named_npc).has_value()); // no-op denied
             original_generation=w.generation();
         }
         {
@@ -85,7 +122,10 @@ int main(){
             CHECK(reopened.colony_personal_outlook(home,observed_named_npc).has_value());
             const auto facts=stage7::assess_original_society(reopened,7,home);
             CHECK(facts.population.named_living==12);
-            CHECK(facts.effective_governance.leader_id==1);
+            CHECK(facts.effective_governance.leader_id==1 &&
+                  facts.effective_governance.event_id==99101 &&
+                  facts.effective_governance.policy==
+                    colony_conflict::DiplomaticPolicy::Reconciliatory);
         }
         PersistentWorld::recover_copy(path,saved);
         {
@@ -93,8 +133,11 @@ int main(){
             CHECK(copy.generation()==original_generation);
             CHECK(copy.world().total_material_kg()==original_mass);
             CHECK(copy.colony_personal_outlook(home,observed_named_npc).has_value());
-            CHECK(stage7::assess_original_society(copy,7,home)
-                  .population.named_living==12);
+            const auto facts=stage7::assess_original_society(copy,7,home);
+            CHECK(facts.population.named_living==12 &&
+                  facts.effective_governance.event_id==99101 &&
+                  facts.effective_governance.policy==
+                    colony_conflict::DiplomaticPolicy::Reconciliatory);
         }
         fs::remove(saved);fs::remove(path);
         std::cout<<"STAGE7 POP04 genuine autonomous social observation, finite economic "

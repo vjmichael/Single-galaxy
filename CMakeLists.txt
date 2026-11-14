@@ -2851,3 +2851,12 @@ if(BUILD_TESTING)
   set_tests_properties(galaxy_stage07_society_economy PROPERTIES TIMEOUT 180
     LABELS "stage07;autonomous-society;actual-economy;original-law;sqlite;recovery")
 endif()
+
+// Stage 7 POP-06: original citizen social diary, independently authorized
+// immutable legal-policy epoch, one-generation delay and SQLite recovery.
+if(BUILD_TESTING)
+  add_test(NAME galaxy_stage07_civic_policy
+    COMMAND galaxy_stage07_society_economy_tests)
+  set_tests_properties(galaxy_stage07_civic_policy PROPERTIES TIMEOUT 180
+    LABELS "stage07;real-npc;original-owner-consent;constitutional-epoch;sqlite;replay-denial")
+endif()
