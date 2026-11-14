@@ -5,6 +5,7 @@
 // the station host. In-flight cargo receipts are reconciled, never replayed.
 #include "galaxy/Persistence.hpp"
 #include "galaxy/WO2IndustryWorkforce.hpp"
+#include "galaxy/Stage07DutyExclusivity.hpp"
 #include <sqlite3.h>
 #include <algorithm>
 #include <cstdint>
@@ -132,15 +133,28 @@ class Ledger {
     if(!home || home->owner_id!=owner ||
        home->dock_state!=DockState::Docked ||
        home->dock_station!=station)return false;
-    // An expired shift can be renewed without claiming a second worker.
-    {Statement expire(db_,"DELETE FROM dock_staff_v1 WHERE npc_id=? AND shift_end_tick<=?");
-     expire.bind(1,npc_id);expire.bind(2,sim.tick());expire.next();}
-    Statement s(db_,"INSERT OR IGNORE INTO dock_staff_v1 "
-                    "(npc_id,station,owner,assigned_tick,shift_end_tick) VALUES(?,?,?,?,?)");
-    s.bind(1,npc_id);s.bind(2,station);s.bind(3,owner);
-    s.bind(4,sim.tick());s.bind(5,sim.tick()+256);
-    if(s.next()!=SQLITE_DONE)throw std::runtime_error("dock assignment SQL");
-    return sqlite3_changes(db_)==1;
+    if(sim.tick()>std::numeric_limits<std::uint64_t>::max()-256)return false;
+    // POP-05: a stale world could have booked workshop/medical labor since
+    // the dock roster was rendered. One original world snapshot + dock write
+    // are checked under the same SQLite writer lock as PersistentWorld.
+    exec("BEGIN IMMEDIATE");
+    try {
+      if(!stage7::original_snapshot_matches(db_,sim) ||
+         workforce02::already_on_named_duty(sim,npc_id,sim.tick())) {
+        exec("ROLLBACK");return false;
+      }
+      // An expired shift can renew only if the original identity is free.
+      {Statement expire(db_,"DELETE FROM dock_staff_v1 WHERE npc_id=? AND shift_end_tick<=?");
+       expire.bind(1,npc_id);expire.bind(2,sim.tick());expire.next();}
+      Statement s(db_,"INSERT OR IGNORE INTO dock_staff_v1 "
+                      "(npc_id,station,owner,assigned_tick,shift_end_tick) VALUES(?,?,?,?,?)");
+      s.bind(1,npc_id);s.bind(2,station);s.bind(3,owner);
+      s.bind(4,sim.tick());s.bind(5,sim.tick()+256);
+      if(s.next()!=SQLITE_DONE)throw std::runtime_error("dock assignment SQL");
+      const bool admitted=sqlite3_changes(db_)==1;
+      exec("COMMIT");
+      return admitted;
+    }catch(...){exec("ROLLBACK");throw;}
   }
   // An explicit owner-approved renewal is bounded to four native shifts
   // since original assignment. No model or background service can renew a
@@ -156,23 +170,33 @@ class Ledger {
     if(!ship||ship->owner_id!=owner ||
        ship->dock_station!=station||ship->dock_state!=DockState::Docked)
         return false;
-    Statement q(db_,"SELECT assigned_tick,shift_end_tick FROM dock_staff_v1 "
-                    "WHERE npc_id=? AND station=? AND owner=?");
-    q.bind(1,npc_id);q.bind(2,station);q.bind(3,owner);
-    if(q.next()!=SQLITE_ROW)return false;
-    const auto assigned=q.number(0),ending=q.number(1),now=sim.tick();
-    if(now<assigned||now>=ending||now-assigned>=1024 ||
-       assigned>std::numeric_limits<std::uint64_t>::max()-1024 ||
-       now>std::numeric_limits<std::uint64_t>::max()-256)return false;
-    const auto cap=assigned+1024;
-    const auto next=std::min(now+256,cap);
-    if(next<=ending)return false;
-    Statement update(db_,"UPDATE dock_staff_v1 SET shift_end_tick=? "
-                         "WHERE npc_id=? AND station=? AND owner=? "
-                         "AND shift_end_tick=?");
-    update.bind(1,next);update.bind(2,npc_id);update.bind(3,station);
-    update.bind(4,owner);update.bind(5,ending);update.next();
-    return sqlite3_changes(db_)==1;
+    exec("BEGIN IMMEDIATE");
+    try {
+      if(!stage7::original_snapshot_matches(db_,sim) ||
+         workforce02::already_on_named_duty(sim,npc_id,sim.tick())) {
+        exec("ROLLBACK");return false;
+      }
+      Statement q(db_,"SELECT assigned_tick,shift_end_tick FROM dock_staff_v1 "
+                      "WHERE npc_id=? AND station=? AND owner=?");
+      q.bind(1,npc_id);q.bind(2,station);q.bind(3,owner);
+      if(q.next()!=SQLITE_ROW){exec("ROLLBACK");return false;}
+      const auto assigned=q.number(0),ending=q.number(1),now=sim.tick();
+      if(now<assigned||now>=ending||now-assigned>=1024 ||
+         assigned>std::numeric_limits<std::uint64_t>::max()-1024 ||
+         now>std::numeric_limits<std::uint64_t>::max()-256) {
+        exec("ROLLBACK");return false;
+      }
+      const auto cap=assigned+1024;
+      const auto next=std::min(now+256,cap);
+      if(next<=ending){exec("ROLLBACK");return false;}
+      Statement update(db_,"UPDATE dock_staff_v1 SET shift_end_tick=? "
+                           "WHERE npc_id=? AND station=? AND owner=? "
+                           "AND shift_end_tick=?");
+      update.bind(1,next);update.bind(2,npc_id);update.bind(3,station);
+      update.bind(4,owner);update.bind(5,ending);update.next();
+      const bool renewed=sqlite3_changes(db_)==1;
+      exec("COMMIT");return renewed;
+    }catch(...){exec("ROLLBACK");throw;}
   }
   // Completed original-world material receipts are independent of these
   // compact queue rows. Archive only terminal jobs, keeping immutable unit
