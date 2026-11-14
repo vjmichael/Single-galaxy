@@ -24,7 +24,8 @@ jobs:
           - era: v100-source-authentic-cyber
             source_sha: 23bad9be38936d61b8c29b5be5f3900bec87fa6d
             targets: galaxy_ship_status02_authoritative_tests
-            test_regex: '^galaxy_ship_status02_authoritative
+            test_regex: '^galaxy_ship_status02_authoritative$'
+          - era: v111-planet-housing
             source_sha: 44619e9b186f99fa836ae9494a88137f3f2bf3f5
             targets: 'galaxy_wo3_planetary_housing_tests galaxy_wo3_planetary_utility_tests'
             test_regex: '^galaxy_wo3_planetary_(housing|utility)$'
