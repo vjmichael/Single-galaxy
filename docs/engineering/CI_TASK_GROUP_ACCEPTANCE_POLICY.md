@@ -130,3 +130,21 @@ The owner-directed repository-level workflow retirement completed successfully:
   later merges. Any deliberate re-enablement must be treated as a separate
   reviewed task-group change, with restricted event triggers.
 
+## INT-01 source convergence: workflow registration safety
+
+On 2026-11-13, the authoritative default branch held exactly six controlled
+GitHub workflow YAMLs, while the inherited native/Stage7 candidate still
+contained 93 historical specialist workflow YAMLs. Importing all 93 into
+`.github/workflows` during convergence could accidentally restore automatic
+per-commit `push` or `pull_request` runs. **Retain the current main task-group
+workflows and both exact-SHA `ci/` request manifests**, and retain the specialist
+recipes in their existing source history until their group owner explicitly
+reviews and selectively adapts them. Do not activate one workflow per old PR.
+
+The source/PR ancestry and fork-only file audit is frozen in
+[PR_CONVERGENCE_INVENTORY_20261113.tsv](PR_CONVERGENCE_INVENTORY_20261113.tsv)
+and [INT01_SOURCE_RECONCILIATION_20261113.tsv](INT01_SOURCE_RECONCILIATION_20261113.tsv).
+Audit and merge work is **not** a CI group boundary. The only selected acceptance
+execution occurs after an entire integration group reaches its defined ready
+state. Source fixes between group runs use local bounded checks, not CI.
+

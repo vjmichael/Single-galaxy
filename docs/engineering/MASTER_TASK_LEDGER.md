@@ -1,6 +1,6 @@
 # Single-Galaxy master task ledger — authoritative priorities
 
-**Owner-directed priority reset: 2026-11-13 (America/Phoenix).** This file on `main` is the ONE priority order for EvEmu / Single-Galaxy. Branch-specific milestone backlogs (including `docs/engineering/FEATURE_FIRST_BACKLOG_20261113.md` in Stage 7) are subordinate execution history, not competing master priorities. The binding acceptance policy remains [CI_TASK_GROUP_ACCEPTANCE_POLICY.md](CI_TASK_GROUP_ACCEPTANCE_POLICY.md). The exact 114-PR snapshot is [PR_CONVERGENCE_INVENTORY_20261113.tsv](PR_CONVERGENCE_INVENTORY_20261113.tsv).
+**Owner-directed priority reset: 2026-11-13 (America/Phoenix).** This file on `main` is the ONE priority order for EvEmu / Single-Galaxy. Branch-specific milestone backlogs (including `docs/engineering/FEATURE_FIRST_BACKLOG_20261113.md` in Stage 7) are subordinate execution history, not competing master priorities. The binding acceptance policy remains [CI_TASK_GROUP_ACCEPTANCE_POLICY.md](CI_TASK_GROUP_ACCEPTANCE_POLICY.md). The audited 114-PR ancestry snapshot is [PR_CONVERGENCE_INVENTORY_20261113.tsv](PR_CONVERGENCE_INVENTORY_20261113.tsv) and the file-level divergence evidence is [INT01_SOURCE_RECONCILIATION_20261113.tsv](INT01_SOURCE_RECONCILIATION_20261113.tsv).
 
 ## Non-negotiable operating rules
 
@@ -16,9 +16,9 @@ Snapshot: **114 open PRs, all draft; 0 target `main`**. These are **113 distinct
 
 As-of-audit refs: `main` = `443f31e31fe2f51fcdd0230451403eafdea211a7`; current Stage 7 POP-10 = `bace7988b5ecfb495a650a7c407d110a2e2b44e5` (draft PR #135 on #134 lineage); Godot Group 3 = PR #133 head `sg/group3-mining-industry-20261111`; earlier integrated Godot Group 2 = PR #130; Stage 6 planetary = PR #127. GitHub compare of `main` to the Stage7/Group3/planetary candidate heads reports `diverged` and common ancestor `b12e0e2e2278c17849f493b89288f9a725b8f233`. Stage7 was ~4,288 commits ahead of that ancestor and `main` had 136 independent later commits; GitHub's comparison file list is capped at 300 and **is not a full conflict/inventory audit**.
 
-**Group INT-01 — dependency and source inventory [ACTIVE, first group, no acceptance CI].** Preserve every open PR source SHA, base dependency, changed files/unique commits, original status and independent receipts. Use the complete TSV snapshot to collapse the stacked DAG into logical owned components. Identify exact common ancestor, current `main` unique changes, missing ancestors outside open PRs and already-superseded branches. Do not close PRs from a count alone. No new integration branch.
+**Group INT-01 — dependency and source inventory [COMPLETE; no acceptance CI requested].** Preserve every open PR source SHA, base dependency, changed files/unique commits, original status and independent receipts. Use the complete TSV snapshot to collapse the stacked DAG into logical owned components. Identify exact common ancestor, current `main` unique changes, missing ancestors outside open PRs and already-superseded branches. Do not close PRs from a count alone. No new integration branch.
 
-**Group INT-02 — choose authoritative source and reconcile main-only changes [NEXT].** In the existing reviewed line, establish a deterministic file/domain ownership map for canonical kernel/SQLite, historical migrations, workers, native gameplay/Godot, and Stage7. Distinguish historic shared ancestor content from actual unique changes; audit the 136 main-only commits. Decide and document only the minimum merge/cherry-pick/content reconciliation necessary. Preserve all original native tests and main CI controls. Do not resolve conflicts by overwriting the later complete system with an older copy.
+**Group INT-02 — choose authoritative source and reconcile main-only changes [ACTIVE NEXT].** In the existing reviewed line, establish a deterministic file/domain ownership map for canonical kernel/SQLite, historical migrations, workers, native gameplay/Godot, and Stage7. Distinguish historic shared ancestor content from actual unique changes; audit the 136 main-only commits. Decide and document only the minimum merge/cherry-pick/content reconciliation necessary. Preserve all original native tests and main CI controls. Do not resolve conflicts by overwriting the later complete system with an older copy.
 
 **Group INT-03 — converge core and historical native source [PENDING].** Reconcile canonical Simulation/Persistence/CMake, worker/process-custody, original Stage6 H1/H2/H3/H4 and WO1–WO5, historical v86–v135 original SQLite/restore tests and one-writer source authority onto `main` without new PRs.
 
@@ -27,6 +27,44 @@ As-of-audit refs: `main` = `443f31e31fe2f51fcdd0230451403eafdea211a7`; current S
 **Group INT-05 — converge Stage7 households/society/economy/justice [PENDING].** Bring the surviving reviewed POP-01–10 (existing draft PRs #134/#135), original resident identities, durable economies, authorized labor, two-way trade and due process into the converged source. Incomplete trade/justice features remain marked partial; don't call a proposal a physical execution or a review a criminal verdict.
 
 **Group INT-06 — final consolidated acceptance and main closeout [PENDING, NOT RUN].** Once the agreed integration source is assembled and reviewed at **one unchanged SHA**, run one selected Windows/Linux source-bound native acceptance with original simulations, process custody, SQLite/history, law/shipping, Godot and failure recovery; investigate the grouped failures and reconcile source before final release/merge judgment. Use the November 9 gate mechanism, record artifact hashes and exact SHA, then retire/supersede reviewed old draft PRs with recorded source equivalence. Only after this group is accepted should release and owner-PC installation be reconsidered. A passing hosted runner is never physical Windows acceptance.
+
+## INT-01 closeout — exact source ancestry and owner map (2026-11-13)
+
+**Status: COMPLETE as an inventory/provenance group; no native gate was requested and no application branches or PRs were created. Source integration into main remains INT-02 through INT-05, NOT a completed merge.** The pinned source comparison candidate is existing draft PR #135 head `bace7988b5ecfb495a650a7c407d110a2e2b44e5`. The original default-branch policy/docs head is `5fa31f6f3a5cc9f4a3cc62836e823e5ae4b67143` (after the priority reset). A future head move requires fresh blob/provenance checks; do not assume this is a live mirror.
+
+### Definitive ancestry results
+
+- **114 open draft PRs, 113 distinct head branches, nine terminal PR nodes.** Original #92 and #129 share the same WO5 head; a PR count is not a unique-commit count.
+- Individually verified each open PR's exact HEAD commit against candidate PR #135 through GitHub commit ancestry: **98 PR heads are strictly ancestral, one (#135) is identical, and 15 are divergent**. Zero failed/unknown comparisons. An ancestral commit is not independently accepted code, only already inherited Git history.
+- Candidate PR #135 contains **all** of Godot Group 3 PR #133 and FP3D Group 2 PR #130 as genuine ancestors; Group 3 is 672 commits behind PR #135. It also contains WO5, population, society, industrial and original Stage6 H-source paths. **Do not merge those inherited PRs separately.**
+- The 15 genuinely divergent heads are: planetary **#127**; equipped mining **#124**; station player **#119**; Godot input **#110**; optional browser FPS **#102**; browser parity **#96**; unified flight **#66**; carrier/planet survey **#50**; route coordination **#31**; family/guardian continuations **#8, #10, #11, #12, #14, #15**. Their unmerged commit counts are in the 114-row exact ancestry inventory; counts among family tips **overlap** and must never be summed as distinct work.
+- All major heads and default branch share the candidate's previously established common ancestor `b12e0e2e2278c17849f493b89288f9a725b8f233`. Relative to that anchor, the current default branch differs on **12 paths only**: six `.github/workflows` task-group/control YAMLs, two `ci/` request manifests, and four documentation/ledger paths. **No independent post-ancestor C++, SQL kernel or Godot source changes exist on current main.** One historical handoff document changed in both lines and should retain the current main priority override.
+- Complete blob-level comparison of each divergent fork against its **own actual merge base**, plus main against its common ancestor, is frozen in [INT01_SOURCE_RECONCILIATION_20261113.tsv](INT01_SOURCE_RECONCILIATION_20261113.tsv). This includes **151 fork-path delta rows across 85 distinct paths**, of which **77 distinct paths need a preserve/resolve decision** (not 77 necessarily missing functions). Each records original branch blob, merge-base blob, candidate blob and exact classification: `EXACT_IN_STAGE7`, `FORK_CHANGE_ABSENT`, `COLLIDING_ADDITION`, `BOTH_CHANGED_RECONCILE`.
+
+### Authoritative file/domain ownership during convergence
+
+| Domain | Canonical source candidate | Special fork preservation / conflict rule |
+| --- | --- | --- |
+| Original Simulation, PersistentWorld, SQLite, CMake | PR #135 candidate (includes later original WO/planet/Stage7 kernel) | `src/Simulation.cpp`, `src/Persistence.cpp`, `include/galaxy/Simulation.hpp` and `CMakeLists.txt` conflict with earlier forks. Merge at API/behavior level, never bulk-replace later kernel with an older file |
+| Native original shipping, workforce, medical, stage7 | PR #135 retained original source tests and three-owner custody | POP-10 has actual Windows+Linux 19/20 grouped evidence; original law-agency recovery remains open. Keep physical receipts, one-SQLite boundary and negative tests |
+| Stage6 planetary and landing | PR #135 baseline plus divergent PR #127 | Compare the distinct original landing/packet/test semantics and older `WO3PlanetaryHousingTests.cpp`, which is absent in one fork-relative source change. Retain independently verified functions, not duplicate planet simulators |
+| Godot playable client, ship/station/fitting/mining | PR #135 incorporates PR #133 / #130 | Evaluate PR #124's original equipped-mining smoke/build helpers and conflicting station/host APIs, #119/#110's alternative first-person/input tests, and #102/#96's optional browser-FPS/parity work. Do not overwrite newer native Godot with old experimental viewer source |
+| Families/guardian recovery and emigration | Current original source + divergent PRs #8, #10, #11, #12, #14, #15 and #31 | Legacy `include/galaxy/ColonyFamilyDeparture.hpp`, original atomic/physical/two-household tests and `VoluntaryRouteCoordinator.hpp`/test are fork-only; reconcile modern `ColonyFamilyDeparture.cpp`/Persistence and legal parent/child custody before importing/replacing |
+| Worker, H1/H2/H3 and historical H4 acceptance | Existing late PR #135 source/test recipes | Keep genuine OS process custody and old v86–v135 SQLite producer tests. Reconcile missing historical original cases in INT-03; no hosted/physical conflation |
+| CI policy, GitHub workflow registration, acceptance and ledger | **Current main is strictly authoritative** | Current main has only **six registered workflow files**, branch candidate has **93 historical/specialist workflow YAMLs**. Do not bulk-copy the 93 into `.github/workflows` on main: they may reactivate per-fix push/PR CI. Retain branch history; archive or rework recipes only deliberately at completed task-group boundary. Preserve both current main `ci/` request manifests and the [group-only policy](CI_TASK_GROUP_ACCEPTANCE_POLICY.md) |
+
+### INT-02 exact implementation order (NO new branch/PR, NO per-fix CI)
+
+1. Pin current `main` and PR #135 source SHAs, verify there is no intervening author or automation update, and plan a **main-preserving source merge** retaining those 12 current main path changes, especially all six workflows and both request manifests.
+2. Review the **15 divergent PR heads and 77 flagged paths** in the attached machine-readable exact-blob audit. Prioritize high-impact original family recovery, original Stage6 landing, and equipped mining; classify each as exact-equivalent, later-superseded, or must-port. Require independent evidence before marking an old PR superseded.
+3. Reconcile canonical `Simulation/Persistence/CMake` once, and preserve original unit/native/SQLite tests. Group application changes into INT-03 kernel/history, INT-04 Godot/planet, INT-05 society/economics; do not create a new integration branch.
+4. **Do not start acceptance merely for this ledger commit or one source repair.** Use `[skip ci]` on interim commits, bounded local validation, then one owner-authorized exact-head Windows/Linux acceptance **after each complete task group** and a final consolidated INT-06 run.
+5. When the code from each old PR is proven inherited or preserved on the same main source SHA and its group is accepted, close/supersede the stale draft PR with the exact main integration receipt. **No PR was closed or force-pushed by INT-01.**
+
+### Original native diagnostic frozen (NOT an acceptance closeout)
+
+At source `bace7988`, the historical Stage7 run [#43561525670](https://github.com/vjmichael/Single-galaxy/actions/runs/43561525670) completed on both native `windows-2022` and `ubuntu-24.04` with **19 of 20 original/additive tests passing** each; the same positive `galaxy_ship_status07j_law_agency` failed on independent original SQLite recovery with `recovery: cannot verify latest state; refusing repair`. The DOCK-03 registrations passed on both OSs. This is accepted as **a witnessed failure**, not a reason to run CI after each bug fix or to call Stage7 integrated. The former Stage7 hourly native-closeout automation remains paused.
+
 
 ## P1 — remaining feature backlog, AFTER convergence is underway
 
@@ -43,11 +81,11 @@ As-of-audit refs: `main` = `443f31e31fe2f51fcdd0230451403eafdea211a7`; current S
 
 | Group | Source status | End-of-group acceptance | Release |
 | --- | --- | --- | --- |
-| INT-01 PR inventory and authority map | **Active**; 114-row snapshot recorded | **NOT REQUESTED (documentation/source audit group)** | No |
-| INT-02 identify authoritative source and main-only deltas | Pending | Not requested | No |
+| INT-01 PR inventory and authority map | **Complete**; 114 exact ancestry checks, 151 path-delta rows | **NOT RUN; documentation/source audit group** | No |
+| INT-02 identify authoritative source and main-only deltas | **Next: source integration planning** | Not requested | No |
 | INT-03 original core, WO and H4 integration | Pending | End-of-group batch only; not requested | No |
 | INT-04 Godot/planetary/station integration | Pending | End-of-group batch only; not requested | No |
 | INT-05 Stage7 POP integration | Pending | End-of-group batch only; not requested | No |
 | INT-06 consolidated native acceptance | Pending | **Only after preceding integration groups complete** | No |
 
-**Current known partial native evidence (not final group acceptance):** Stage7 `bace798` exact-head Linux 19/20, law-agency original recovery failed with `recovery: cannot verify latest state; refusing repair`; Windows result still needs exact-run reconciliation. Earlier `66261c4` Linux 19/20 demonstrated the DOCK03 SQLite-cursor repair. These are diagnostics, **not a reason to trigger more CI now**. Existing Stage7 hourly native-closeout scheduled task was paused to prevent per-fix rerun churn.
+**Current known partial native evidence (not final group acceptance):** Stage7 `bace798` exact-head **Linux 19/20 and Windows 19/20**, same original law-agency recovery failure: `recovery: cannot verify latest state; refusing repair`. Both DOCK-03 registrations pass. No new CI requested. Earlier `66261c4` Linux 19/20 demonstrated the DOCK03 SQLite-cursor repair. These are diagnostics, **not a reason to trigger more CI now**. Existing Stage7 hourly native-closeout scheduled task was paused to prevent per-fix rerun churn.
