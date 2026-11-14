@@ -97,6 +97,20 @@ try{
             registration.execute_tick=world.world().tick()+1;
             CHECK(world.submit_host_dependent_registration(registration,scope,seed));
             world.step_with_dependent_registration();
+            if(i==0){
+                // INT-02: one registered native child cannot stand in for
+                // three ART02 births in an all-household departure claim.
+                colony_family::DeparturePlan partial{};
+                partial.source=source;partial.receiver=destination;
+                partial.family_scope=scope;partial.family_seed=seed;
+                partial.adult_ids={1,2};
+                for(std::size_t child_index=0;child_index<children.size();++child_index)
+                    partial.children.push_back({children[child_index],guardians[child_index]});
+                const auto audit=world.audit_colony_family_departure(partial);
+                CHECK(!audit.ready_for_transaction);
+                CHECK(audit.refusal.find("incomplete native physical registration")!=
+                      std::string::npos);
+            }
         }
         CHECK(world.world().npc_records().size()==4);
         CHECK(world.world().children_physically_aboard(source)==3);
