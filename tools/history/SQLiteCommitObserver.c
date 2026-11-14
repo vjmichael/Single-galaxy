@@ -80,11 +80,22 @@ static int commands(sqlite3* db){
     sqlite3_finalize(q);
     return n;
 }
+static int accepted_receipts(sqlite3* db){
+    sqlite3_stmt *q=NULL;
+    if(sqlite3_prepare_v2(db,"SELECT COUNT(*) FROM receipts",-1,&q,NULL)!=SQLITE_OK){
+        if(q)sqlite3_finalize(q);
+        return 0;
+    }
+    const int n=sqlite3_step(q)==SQLITE_ROW?sqlite3_column_int(q,0):0;
+    sqlite3_finalize(q);
+    return n;
+}
 static void observe(sqlite3* src){
     const char *root=getenv("SG_H4_CAPTURE_DIR");
     if(!root||!*root||strlen(root)>PATH_MAX-100)return;
     const int version=actual_version(src);
-    if(version<1||version>255||captured[version]||!allowed(version)||commands(src)<1)return;
+    if(version<1||version>255||captured[version]||!allowed(version)||
+       commands(src)<1||accepted_receipts(src)<1)return;
     captured[version]=1;
     char path[PATH_MAX],temporary[PATH_MAX];
     if(snprintf(path,sizeof(path),"%s/v%03d-pid%ld.sqlite",root,version,(long)getpid())>=(int)sizeof(path))return;
