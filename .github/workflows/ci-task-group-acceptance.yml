@@ -11,7 +11,7 @@ on:
         description: 'Completed acceptance task group'
         required: true
         type: choice
-        options: [SGDX03, INT03-NATIVE]
+        options: [SGDX03, INT03-NATIVE, INT03-H4]
       pr_number:
         description: 'SGDX03 only; leave blank for main-anchored INT03-NATIVE'
         required: false
@@ -56,6 +56,44 @@ jobs:
               : JSON.parse(fs.readFileSync('ci/task-group-request.json', 'utf8'));
             if (req.schema && req.schema !== 'SG-CI-GATE-01')
               throw new Error('Unrecognized task-group request schema');
+            // INT03-H4 is one explicit owner-approved group request on main.
+            // The request itself is the ONLY changed path in this event.
+            // It names the prior source SHA; the final event commit SHA
+            // (manifest-only child) is independently checked and used by
+            // EVERY native Linux/Windows historical producer job.
+            if (req.task_group === 'INT03-H4') {
+              if (context.eventName !== 'push' || context.ref !== 'refs/heads/main' ||
+                  req.pr_number !== 0 || req.schema !== 'SG-CI-GATE-01' ||
+                  !/^[0-9a-f]{40}$/.test(String(req.source_sha)))
+                throw new Error('INT03-H4 accepts one main-only explicit source request');
+              const {data: main} = await github.rest.repos.getBranch({
+                ...context.repo, branch: 'main'
+              });
+              const {data: accepted} = await github.rest.repos.getCommit({
+                ...context.repo, ref: context.sha
+              });
+              if (main.commit.sha !== context.sha ||
+                  context.payload.before !== req.source_sha ||
+                  accepted.parents.length !== 1 ||
+                  accepted.parents[0].sha !== req.source_sha)
+                throw new Error('INT03-H4 requires unchanged main and one source-pinned request commit');
+              if (accepted.files.length !== 1 ||
+                  accepted.files[0].filename !== 'ci/task-group-request.json')
+                throw new Error('INT03-H4 request commit modified gameplay/workflow source');
+              core.setOutput('sha', context.sha);
+              core.setOutput('group', req.task_group);
+              core.setOutput('pr_number', '');
+              await core.summary.addHeading('Exact unchanged main source H4 matrix')
+                .addTable([
+                  [{data:'Field',header:true},{data:'Exact value',header:true}],
+                  ['Task group', req.task_group],
+                  ['Base source SHA', req.source_sha],
+                  ['Acceptance HEAD SHA', context.sha],
+                  ['Git changes in acceptance HEAD', 'Manifest-only'],
+                  ['Original v86-v135 full corpus', 'PENDING real native evidence']
+                ]).write();
+              return;
+            }
             // INT03-NATIVE is ONLY a manual main-head candidate. It cannot
             // close the separately unverified original v86-v135 H4 corpus.
             // The historical SGDX03 PR gate below remains unchanged.
@@ -529,7 +567,7 @@ jobs:
   main-int03-native:
     # MANUAL ONLY; not an automatic PR/push group gate. Successful subset
     # evidence does NOT certify full original historical v86-v135 compatibility.
-    if: needs.validate.outputs.group == 'INT03-NATIVE'
+    if: needs.validate.outputs.group == 'INT03-NATIVE' || needs.validate.outputs.group == 'INT03-H4'
     needs: validate
     name: INT03 original-world SQLite native subset (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
@@ -591,3 +629,1174 @@ jobs:
             build/int03-main-native/original-producer-env.txt
             build/int03-main-native/historical-original-v85.sqlite
           if-no-files-found: warn
+
+
+  int03-h4-producers:
+    # Batch historical original native source matrix. No new branch or
+    # standalone workflow: exact same main request HEAD for all eight cases.
+    if: needs.validate.outputs.group == 'INT03-H4'
+    needs: validate
+    name: INT03/H4 source-produced ${{ matrix.era }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 70
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - era: pre-v109-original-v92
+            source_sha: 23bad9be38936d61b8c29b5be5f3900bec87fa6d
+            targets: galaxy_play13d_regional_facilities_tests
+            test_regex: '^(galaxy_play13d_regional_facilities|galaxy_ship01c_manufactured_freight)
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.validate.outputs.sha }}
+          fetch-depth: 0
+      - name: Prove fixed source SHA and create unmodified original checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = '${{ needs.validate.outputs.sha }}'
+          test -z "$(git status --porcelain --untracked-files=no)"
+          git cat-file -e '${{ matrix.source_sha }}^{commit}'
+          mkdir -p original-evidence
+          git worktree add --detach ../historical-native-${{ matrix.era }} '${{ matrix.source_sha }}'
+          HIST="$(realpath ../historical-native-${{ matrix.era }})"
+          test "$(git -C "$HIST" rev-parse HEAD)" = '${{ matrix.source_sha }}'
+          test -z "$(git -C "$HIST" status --porcelain --untracked-files=no)"
+          echo '${{ matrix.source_sha }}' > original-evidence/historical-source-sha.txt
+          echo '${{ needs.validate.outputs.sha }}' > original-evidence/observer-source-sha.txt
+      - name: Compile original game in SHA-attested shadow source, leave vintage Git pristine
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libsqlite3-dev ninja-build
+          HIST="$(realpath ../historical-native-${{ matrix.era }})"
+          cc -std=c11 -fPIC -shared -Wall -Wextra -Werror \
+            -o original-evidence/libsg_h4_observer.so \
+            tools/history/SQLiteCommitObserver.c -ldl -lsqlite3
+          ADAPTER="$PWD/original-evidence/source-adapter"
+          python3 tools/history/Stage06H4VintageBuildAdapter.py "$HIST" "$ADAPTER" \
+            original-evidence/source-adapter-provenance.json
+          test -z "$(git -C "$HIST" status --porcelain --untracked-files=no)"
+          cmake -S "$ADAPTER" -B original-evidence/build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON \
+            2>&1 | tee original-evidence/original-cmake-configure.log
+          cmake --build original-evidence/build --parallel 3 --target ${{ matrix.targets }} \
+            2>&1 | tee original-evidence/original-native-build.log
+      - name: Exact original native tests, genuine SQLite capture or hard failure
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p original-evidence/sqlite
+          export SG_H4_CAPTURE_DIR="$PWD/original-evidence/sqlite"
+          export SG_H4_CAPTURE_VERSIONS='86-135'
+          export LD_PRELOAD="$PWD/original-evidence/libsg_h4_observer.so"
+          ctest --test-dir original-evidence/build -N -R '${{ matrix.test_regex }}' \
+            | tee original-evidence/ctest-discovery.txt
+          grep -q 'Total Tests:' original-evidence/ctest-discovery.txt
+          if grep -q 'Total Tests: 0' original-evidence/ctest-discovery.txt; then
+            echo 'Original vintage CTest was not registered' >&2; exit 1
+          fi
+          ctest --test-dir original-evidence/build --output-on-failure \
+            --output-junit "$PWD/original-evidence/original-native-tests.xml" \
+            -j 1 -R '${{ matrix.test_regex }}' 2>&1 \
+            | tee original-evidence/native-original.log
+          test "${PIPESTATUS[0]}" = 0
+      - name: Verify original producer bytes, SQLite, JUnit and clean vintage Git
+        shell: bash
+        run: |
+          set -euo pipefail
+          HIST="$(realpath ../historical-native-${{ matrix.era }})"
+          test "$(git -C "$HIST" rev-parse HEAD)" = '${{ matrix.source_sha }}'
+          test -z "$(git -C "$HIST" status --porcelain --untracked-files=no)"
+          read -ra TARGETS <<< '${{ matrix.targets }}'
+          EXE=()
+          for target in "${TARGETS[@]}"; do
+            test -x "original-evidence/build/$target"
+            EXE+=("original-evidence/build/$target")
+          done
+          python3 tests/Stage06H4HistoricalNativeCorpus.py \
+            --source-sha '${{ matrix.source_sha }}' \
+            --current-sha '${{ needs.validate.outputs.sha }}' \
+            --source-clean --capture-dir original-evidence/sqlite \
+            --adapter-manifest original-evidence/source-adapter-provenance.json \
+            --observer original-evidence/libsg_h4_observer.so \
+            --output original-evidence/historical-corpus.json \
+            --test-names '${{ matrix.test_regex }}' \
+            --producer-executables "${EXE[@]}"
+      - name: Independent current-main canonical, WAL, rollback, recovery verifier
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = '${{ needs.validate.outputs.sha }}'
+          cmake -S . -B original-evidence/current -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DBUILD_TESTING=ON 2>&1 | tee original-evidence/modern-consumer-configure.log
+          cmake --build original-evidence/current --parallel 3 --target \
+            galaxy_stage06h4_historical_recovery_tests \
+            2>&1 | tee original-evidence/modern-consumer-build.log
+          read -ra TARGETS <<< '${{ matrix.targets }}'
+          EXE=()
+          for target in "${TARGETS[@]}"; do
+            EXE+=("original-evidence/build/$target")
+          done
+          python3 tests/Stage06H4NativeCompatibility.py \
+            --manifest original-evidence/historical-corpus.json \
+            --capture-dir original-evidence/sqlite \
+            --source-sha '${{ matrix.source_sha }}' \
+            --current-sha '${{ needs.validate.outputs.sha }}' \
+            --consumer original-evidence/current/galaxy_stage06h4_historical_recovery_tests \
+            --test-junit original-evidence/original-native-tests.xml \
+            --observer original-evidence/libsg_h4_observer.so \
+            --producer-executables "${EXE[@]}" \
+            --output original-evidence/vintage-to-current-recovery.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: int03-original-${{ matrix.era }}-${{ needs.validate.outputs.sha }}
+          path: |
+            original-evidence/historical-source-sha.txt
+            original-evidence/observer-source-sha.txt
+            original-evidence/historical-corpus.json
+            original-evidence/vintage-to-current-recovery.json
+            original-evidence/sqlite/*.sqlite
+            original-evidence/native-original.log
+            original-evidence/original-native-tests.xml
+            original-evidence/ctest-discovery.txt
+            original-evidence/original-cmake-configure.log
+            original-evidence/original-native-build.log
+            original-evidence/modern-consumer-configure.log
+            original-evidence/modern-consumer-build.log
+            original-evidence/source-adapter-provenance.json
+          if-no-files-found: warn
+          retention-days: 21
+
+          - era: v100-source-authentic-cyber
+            source_sha: 23bad9be38936d61b8c29b5be5f3900bec87fa6d
+            targets: galaxy_ship_status02_authoritative_tests
+            test_regex: '^galaxy_ship_status02_authoritative
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.validate.outputs.sha }}
+          fetch-depth: 0
+      - name: Prove fixed source SHA and create unmodified original checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = '${{ needs.validate.outputs.sha }}'
+          test -z "$(git status --porcelain --untracked-files=no)"
+          git cat-file -e '${{ matrix.source_sha }}^{commit}'
+          mkdir -p original-evidence
+          git worktree add --detach ../historical-native-${{ matrix.era }} '${{ matrix.source_sha }}'
+          HIST="$(realpath ../historical-native-${{ matrix.era }})"
+          test "$(git -C "$HIST" rev-parse HEAD)" = '${{ matrix.source_sha }}'
+          test -z "$(git -C "$HIST" status --porcelain --untracked-files=no)"
+          echo '${{ matrix.source_sha }}' > original-evidence/historical-source-sha.txt
+          echo '${{ needs.validate.outputs.sha }}' > original-evidence/observer-source-sha.txt
+      - name: Compile original game in SHA-attested shadow source, leave vintage Git pristine
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libsqlite3-dev ninja-build
+          HIST="$(realpath ../historical-native-${{ matrix.era }})"
+          cc -std=c11 -fPIC -shared -Wall -Wextra -Werror \
+            -o original-evidence/libsg_h4_observer.so \
+            tools/history/SQLiteCommitObserver.c -ldl -lsqlite3
+          ADAPTER="$PWD/original-evidence/source-adapter"
+          python3 tools/history/Stage06H4VintageBuildAdapter.py "$HIST" "$ADAPTER" \
+            original-evidence/source-adapter-provenance.json
+          test -z "$(git -C "$HIST" status --porcelain --untracked-files=no)"
+          cmake -S "$ADAPTER" -B original-evidence/build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON \
+            2>&1 | tee original-evidence/original-cmake-configure.log
+          cmake --build original-evidence/build --parallel 3 --target ${{ matrix.targets }} \
+            2>&1 | tee original-evidence/original-native-build.log
+      - name: Exact original native tests, genuine SQLite capture or hard failure
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p original-evidence/sqlite
+          export SG_H4_CAPTURE_DIR="$PWD/original-evidence/sqlite"
+          export SG_H4_CAPTURE_VERSIONS='86-135'
+          export LD_PRELOAD="$PWD/original-evidence/libsg_h4_observer.so"
+          ctest --test-dir original-evidence/build -N -R '${{ matrix.test_regex }}' \
+            | tee original-evidence/ctest-discovery.txt
+          grep -q 'Total Tests:' original-evidence/ctest-discovery.txt
+          if grep -q 'Total Tests: 0' original-evidence/ctest-discovery.txt; then
+            echo 'Original vintage CTest was not registered' >&2; exit 1
+          fi
+          ctest --test-dir original-evidence/build --output-on-failure \
+            --output-junit "$PWD/original-evidence/original-native-tests.xml" \
+            -j 1 -R '${{ matrix.test_regex }}' 2>&1 \
+            | tee original-evidence/native-original.log
+          test "${PIPESTATUS[0]}" = 0
+      - name: Verify original producer bytes, SQLite, JUnit and clean vintage Git
+        shell: bash
+        run: |
+          set -euo pipefail
+          HIST="$(realpath ../historical-native-${{ matrix.era }})"
+          test "$(git -C "$HIST" rev-parse HEAD)" = '${{ matrix.source_sha }}'
+          test -z "$(git -C "$HIST" status --porcelain --untracked-files=no)"
+          read -ra TARGETS <<< '${{ matrix.targets }}'
+          EXE=()
+          for target in "${TARGETS[@]}"; do
+            test -x "original-evidence/build/$target"
+            EXE+=("original-evidence/build/$target")
+          done
+          python3 tests/Stage06H4HistoricalNativeCorpus.py \
+            --source-sha '${{ matrix.source_sha }}' \
+            --current-sha '${{ needs.validate.outputs.sha }}' \
+            --source-clean --capture-dir original-evidence/sqlite \
+            --adapter-manifest original-evidence/source-adapter-provenance.json \
+            --observer original-evidence/libsg_h4_observer.so \
+            --output original-evidence/historical-corpus.json \
+            --test-names '${{ matrix.test_regex }}' \
+            --producer-executables "${EXE[@]}"
+      - name: Independent current-main canonical, WAL, rollback, recovery verifier
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = '${{ needs.validate.outputs.sha }}'
+          cmake -S . -B original-evidence/current -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DBUILD_TESTING=ON 2>&1 | tee original-evidence/modern-consumer-configure.log
+          cmake --build original-evidence/current --parallel 3 --target \
+            galaxy_stage06h4_historical_recovery_tests \
+            2>&1 | tee original-evidence/modern-consumer-build.log
+          read -ra TARGETS <<< '${{ matrix.targets }}'
+          EXE=()
+          for target in "${TARGETS[@]}"; do
+            EXE+=("original-evidence/build/$target")
+          done
+          python3 tests/Stage06H4NativeCompatibility.py \
+            --manifest original-evidence/historical-corpus.json \
+            --capture-dir original-evidence/sqlite \
+            --source-sha '${{ matrix.source_sha }}' \
+            --current-sha '${{ needs.validate.outputs.sha }}' \
+            --consumer original-evidence/current/galaxy_stage06h4_historical_recovery_tests \
+            --test-junit original-evidence/original-native-tests.xml \
+            --observer original-evidence/libsg_h4_observer.so \
+            --producer-executables "${EXE[@]}" \
+            --output original-evidence/vintage-to-current-recovery.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: int03-original-${{ matrix.era }}-${{ needs.validate.outputs.sha }}
+          path: |
+            original-evidence/historical-source-sha.txt
+            original-evidence/observer-source-sha.txt
+            original-evidence/historical-corpus.json
+            original-evidence/vintage-to-current-recovery.json
+            original-evidence/sqlite/*.sqlite
+            original-evidence/native-original.log
+            original-evidence/original-native-tests.xml
+            original-evidence/ctest-discovery.txt
+            original-evidence/original-cmake-configure.log
+            original-evidence/original-native-build.log
+            original-evidence/modern-consumer-configure.log
+            original-evidence/modern-consumer-build.log
+            original-evidence/source-adapter-provenance.json
+          if-no-files-found: warn
+          retention-days: 21
+
+          - era: v111-planet-housing
+            source_sha: 44619e9b186f99fa836ae9494a88137f3f2bf3f5
+            targets: 'galaxy_wo3_planetary_housing_tests galaxy_wo3_planetary_utility_tests'
+            test_regex: '^galaxy_wo3_planetary_(housing|utility)
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.validate.outputs.sha }}
+          fetch-depth: 0
+      - name: Prove fixed source SHA and create unmodified original checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = '${{ needs.validate.outputs.sha }}'
+          test -z "$(git status --porcelain --untracked-files=no)"
+          git cat-file -e '${{ matrix.source_sha }}^{commit}'
+          mkdir -p original-evidence
+          git worktree add --detach ../historical-native-${{ matrix.era }} '${{ matrix.source_sha }}'
+          HIST="$(realpath ../historical-native-${{ matrix.era }})"
+          test "$(git -C "$HIST" rev-parse HEAD)" = '${{ matrix.source_sha }}'
+          test -z "$(git -C "$HIST" status --porcelain --untracked-files=no)"
+          echo '${{ matrix.source_sha }}' > original-evidence/historical-source-sha.txt
+          echo '${{ needs.validate.outputs.sha }}' > original-evidence/observer-source-sha.txt
+      - name: Compile original game in SHA-attested shadow source, leave vintage Git pristine
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libsqlite3-dev ninja-build
+          HIST="$(realpath ../historical-native-${{ matrix.era }})"
+          cc -std=c11 -fPIC -shared -Wall -Wextra -Werror \
+            -o original-evidence/libsg_h4_observer.so \
+            tools/history/SQLiteCommitObserver.c -ldl -lsqlite3
+          ADAPTER="$PWD/original-evidence/source-adapter"
+          python3 tools/history/Stage06H4VintageBuildAdapter.py "$HIST" "$ADAPTER" \
+            original-evidence/source-adapter-provenance.json
+          test -z "$(git -C "$HIST" status --porcelain --untracked-files=no)"
+          cmake -S "$ADAPTER" -B original-evidence/build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON \
+            2>&1 | tee original-evidence/original-cmake-configure.log
+          cmake --build original-evidence/build --parallel 3 --target ${{ matrix.targets }} \
+            2>&1 | tee original-evidence/original-native-build.log
+      - name: Exact original native tests, genuine SQLite capture or hard failure
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p original-evidence/sqlite
+          export SG_H4_CAPTURE_DIR="$PWD/original-evidence/sqlite"
+          export SG_H4_CAPTURE_VERSIONS='86-135'
+          export LD_PRELOAD="$PWD/original-evidence/libsg_h4_observer.so"
+          ctest --test-dir original-evidence/build -N -R '${{ matrix.test_regex }}' \
+            | tee original-evidence/ctest-discovery.txt
+          grep -q 'Total Tests:' original-evidence/ctest-discovery.txt
+          if grep -q 'Total Tests: 0' original-evidence/ctest-discovery.txt; then
+            echo 'Original vintage CTest was not registered' >&2; exit 1
+          fi
+          ctest --test-dir original-evidence/build --output-on-failure \
+            --output-junit "$PWD/original-evidence/original-native-tests.xml" \
+            -j 1 -R '${{ matrix.test_regex }}' 2>&1 \
+            | tee original-evidence/native-original.log
+          test "${PIPESTATUS[0]}" = 0
+      - name: Verify original producer bytes, SQLite, JUnit and clean vintage Git
+        shell: bash
+        run: |
+          set -euo pipefail
+          HIST="$(realpath ../historical-native-${{ matrix.era }})"
+          test "$(git -C "$HIST" rev-parse HEAD)" = '${{ matrix.source_sha }}'
+          test -z "$(git -C "$HIST" status --porcelain --untracked-files=no)"
+          read -ra TARGETS <<< '${{ matrix.targets }}'
+          EXE=()
+          for target in "${TARGETS[@]}"; do
+            test -x "original-evidence/build/$target"
+            EXE+=("original-evidence/build/$target")
+          done
+          python3 tests/Stage06H4HistoricalNativeCorpus.py \
+            --source-sha '${{ matrix.source_sha }}' \
+            --current-sha '${{ needs.validate.outputs.sha }}' \
+            --source-clean --capture-dir original-evidence/sqlite \
+            --adapter-manifest original-evidence/source-adapter-provenance.json \
+            --observer original-evidence/libsg_h4_observer.so \
+            --output original-evidence/historical-corpus.json \
+            --test-names '${{ matrix.test_regex }}' \
+            --producer-executables "${EXE[@]}"
+      - name: Independent current-main canonical, WAL, rollback, recovery verifier
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = '${{ needs.validate.outputs.sha }}'
+          cmake -S . -B original-evidence/current -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DBUILD_TESTING=ON 2>&1 | tee original-evidence/modern-consumer-configure.log
+          cmake --build original-evidence/current --parallel 3 --target \
+            galaxy_stage06h4_historical_recovery_tests \
+            2>&1 | tee original-evidence/modern-consumer-build.log
+          read -ra TARGETS <<< '${{ matrix.targets }}'
+          EXE=()
+          for target in "${TARGETS[@]}"; do
+            EXE+=("original-evidence/build/$target")
+          done
+          python3 tests/Stage06H4NativeCompatibility.py \
+            --manifest original-evidence/historical-corpus.json \
+            --capture-dir original-evidence/sqlite \
+            --source-sha '${{ matrix.source_sha }}' \
+            --current-sha '${{ needs.validate.outputs.sha }}' \
+            --consumer original-evidence/current/galaxy_stage06h4_historical_recovery_tests \
+            --test-junit original-evidence/original-native-tests.xml \
+            --observer original-evidence/libsg_h4_observer.so \
+            --producer-executables "${EXE[@]}" \
+            --output original-evidence/vintage-to-current-recovery.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: int03-original-${{ matrix.era }}-${{ needs.validate.outputs.sha }}
+          path: |
+            original-evidence/historical-source-sha.txt
+            original-evidence/observer-source-sha.txt
+            original-evidence/historical-corpus.json
+            original-evidence/vintage-to-current-recovery.json
+            original-evidence/sqlite/*.sqlite
+            original-evidence/native-original.log
+            original-evidence/original-native-tests.xml
+            original-evidence/ctest-discovery.txt
+            original-evidence/original-cmake-configure.log
+            original-evidence/original-native-build.log
+            original-evidence/modern-consumer-configure.log
+            original-evidence/modern-consumer-build.log
+            original-evidence/source-adapter-provenance.json
+          if-no-files-found: warn
+          retention-days: 21
+
+          - era: v111-original-utility-only
+            source_sha: 44619e9b186f99fa836ae9494a88137f3f2bf3f5
+            targets: galaxy_wo3_planetary_utility_tests
+            test_regex: '^galaxy_wo3_planetary_utility
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.validate.outputs.sha }}
+          fetch-depth: 0
+      - name: Prove fixed source SHA and create unmodified original checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = '${{ needs.validate.outputs.sha }}'
+          test -z "$(git status --porcelain --untracked-files=no)"
+          git cat-file -e '${{ matrix.source_sha }}^{commit}'
+          mkdir -p original-evidence
+          git worktree add --detach ../historical-native-${{ matrix.era }} '${{ matrix.source_sha }}'
+          HIST="$(realpath ../historical-native-${{ matrix.era }})"
+          test "$(git -C "$HIST" rev-parse HEAD)" = '${{ matrix.source_sha }}'
+          test -z "$(git -C "$HIST" status --porcelain --untracked-files=no)"
+          echo '${{ matrix.source_sha }}' > original-evidence/historical-source-sha.txt
+          echo '${{ needs.validate.outputs.sha }}' > original-evidence/observer-source-sha.txt
+      - name: Compile original game in SHA-attested shadow source, leave vintage Git pristine
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libsqlite3-dev ninja-build
+          HIST="$(realpath ../historical-native-${{ matrix.era }})"
+          cc -std=c11 -fPIC -shared -Wall -Wextra -Werror \
+            -o original-evidence/libsg_h4_observer.so \
+            tools/history/SQLiteCommitObserver.c -ldl -lsqlite3
+          ADAPTER="$PWD/original-evidence/source-adapter"
+          python3 tools/history/Stage06H4VintageBuildAdapter.py "$HIST" "$ADAPTER" \
+            original-evidence/source-adapter-provenance.json
+          test -z "$(git -C "$HIST" status --porcelain --untracked-files=no)"
+          cmake -S "$ADAPTER" -B original-evidence/build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON \
+            2>&1 | tee original-evidence/original-cmake-configure.log
+          cmake --build original-evidence/build --parallel 3 --target ${{ matrix.targets }} \
+            2>&1 | tee original-evidence/original-native-build.log
+      - name: Exact original native tests, genuine SQLite capture or hard failure
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p original-evidence/sqlite
+          export SG_H4_CAPTURE_DIR="$PWD/original-evidence/sqlite"
+          export SG_H4_CAPTURE_VERSIONS='86-135'
+          export LD_PRELOAD="$PWD/original-evidence/libsg_h4_observer.so"
+          ctest --test-dir original-evidence/build -N -R '${{ matrix.test_regex }}' \
+            | tee original-evidence/ctest-discovery.txt
+          grep -q 'Total Tests:' original-evidence/ctest-discovery.txt
+          if grep -q 'Total Tests: 0' original-evidence/ctest-discovery.txt; then
+            echo 'Original vintage CTest was not registered' >&2; exit 1
+          fi
+          ctest --test-dir original-evidence/build --output-on-failure \
+            --output-junit "$PWD/original-evidence/original-native-tests.xml" \
+            -j 1 -R '${{ matrix.test_regex }}' 2>&1 \
+            | tee original-evidence/native-original.log
+          test "${PIPESTATUS[0]}" = 0
+      - name: Verify original producer bytes, SQLite, JUnit and clean vintage Git
+        shell: bash
+        run: |
+          set -euo pipefail
+          HIST="$(realpath ../historical-native-${{ matrix.era }})"
+          test "$(git -C "$HIST" rev-parse HEAD)" = '${{ matrix.source_sha }}'
+          test -z "$(git -C "$HIST" status --porcelain --untracked-files=no)"
+          read -ra TARGETS <<< '${{ matrix.targets }}'
+          EXE=()
+          for target in "${TARGETS[@]}"; do
+            test -x "original-evidence/build/$target"
+            EXE+=("original-evidence/build/$target")
+          done
+          python3 tests/Stage06H4HistoricalNativeCorpus.py \
+            --source-sha '${{ matrix.source_sha }}' \
+            --current-sha '${{ needs.validate.outputs.sha }}' \
+            --source-clean --capture-dir original-evidence/sqlite \
+            --adapter-manifest original-evidence/source-adapter-provenance.json \
+            --observer original-evidence/libsg_h4_observer.so \
+            --output original-evidence/historical-corpus.json \
+            --test-names '${{ matrix.test_regex }}' \
+            --producer-executables "${EXE[@]}"
+      - name: Independent current-main canonical, WAL, rollback, recovery verifier
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = '${{ needs.validate.outputs.sha }}'
+          cmake -S . -B original-evidence/current -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DBUILD_TESTING=ON 2>&1 | tee original-evidence/modern-consumer-configure.log
+          cmake --build original-evidence/current --parallel 3 --target \
+            galaxy_stage06h4_historical_recovery_tests \
+            2>&1 | tee original-evidence/modern-consumer-build.log
+          read -ra TARGETS <<< '${{ matrix.targets }}'
+          EXE=()
+          for target in "${TARGETS[@]}"; do
+            EXE+=("original-evidence/build/$target")
+          done
+          python3 tests/Stage06H4NativeCompatibility.py \
+            --manifest original-evidence/historical-corpus.json \
+            --capture-dir original-evidence/sqlite \
+            --source-sha '${{ matrix.source_sha }}' \
+            --current-sha '${{ needs.validate.outputs.sha }}' \
+            --consumer original-evidence/current/galaxy_stage06h4_historical_recovery_tests \
+            --test-junit original-evidence/original-native-tests.xml \
+            --observer original-evidence/libsg_h4_observer.so \
+            --producer-executables "${EXE[@]}" \
+            --output original-evidence/vintage-to-current-recovery.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: int03-original-${{ matrix.era }}-${{ needs.validate.outputs.sha }}
+          path: |
+            original-evidence/historical-source-sha.txt
+            original-evidence/observer-source-sha.txt
+            original-evidence/historical-corpus.json
+            original-evidence/vintage-to-current-recovery.json
+            original-evidence/sqlite/*.sqlite
+            original-evidence/native-original.log
+            original-evidence/original-native-tests.xml
+            original-evidence/ctest-discovery.txt
+            original-evidence/original-cmake-configure.log
+            original-evidence/original-native-build.log
+            original-evidence/modern-consumer-configure.log
+            original-evidence/modern-consumer-build.log
+            original-evidence/source-adapter-provenance.json
+          if-no-files-found: warn
+          retention-days: 21
+
+          - era: v118-family-custody
+            source_sha: d47e5cdb0532b615ffc99ffce23358a92ab05724
+            targets: 'galaxy_wo3_planetary_housing_tests galaxy_wo3_planetary_utility_tests'
+            test_regex: '^galaxy_wo3_planetary_(housing|utility)
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.validate.outputs.sha }}
+          fetch-depth: 0
+      - name: Prove fixed source SHA and create unmodified original checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = '${{ needs.validate.outputs.sha }}'
+          test -z "$(git status --porcelain --untracked-files=no)"
+          git cat-file -e '${{ matrix.source_sha }}^{commit}'
+          mkdir -p original-evidence
+          git worktree add --detach ../historical-native-${{ matrix.era }} '${{ matrix.source_sha }}'
+          HIST="$(realpath ../historical-native-${{ matrix.era }})"
+          test "$(git -C "$HIST" rev-parse HEAD)" = '${{ matrix.source_sha }}'
+          test -z "$(git -C "$HIST" status --porcelain --untracked-files=no)"
+          echo '${{ matrix.source_sha }}' > original-evidence/historical-source-sha.txt
+          echo '${{ needs.validate.outputs.sha }}' > original-evidence/observer-source-sha.txt
+      - name: Compile original game in SHA-attested shadow source, leave vintage Git pristine
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libsqlite3-dev ninja-build
+          HIST="$(realpath ../historical-native-${{ matrix.era }})"
+          cc -std=c11 -fPIC -shared -Wall -Wextra -Werror \
+            -o original-evidence/libsg_h4_observer.so \
+            tools/history/SQLiteCommitObserver.c -ldl -lsqlite3
+          ADAPTER="$PWD/original-evidence/source-adapter"
+          python3 tools/history/Stage06H4VintageBuildAdapter.py "$HIST" "$ADAPTER" \
+            original-evidence/source-adapter-provenance.json
+          test -z "$(git -C "$HIST" status --porcelain --untracked-files=no)"
+          cmake -S "$ADAPTER" -B original-evidence/build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON \
+            2>&1 | tee original-evidence/original-cmake-configure.log
+          cmake --build original-evidence/build --parallel 3 --target ${{ matrix.targets }} \
+            2>&1 | tee original-evidence/original-native-build.log
+      - name: Exact original native tests, genuine SQLite capture or hard failure
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p original-evidence/sqlite
+          export SG_H4_CAPTURE_DIR="$PWD/original-evidence/sqlite"
+          export SG_H4_CAPTURE_VERSIONS='86-135'
+          export LD_PRELOAD="$PWD/original-evidence/libsg_h4_observer.so"
+          ctest --test-dir original-evidence/build -N -R '${{ matrix.test_regex }}' \
+            | tee original-evidence/ctest-discovery.txt
+          grep -q 'Total Tests:' original-evidence/ctest-discovery.txt
+          if grep -q 'Total Tests: 0' original-evidence/ctest-discovery.txt; then
+            echo 'Original vintage CTest was not registered' >&2; exit 1
+          fi
+          ctest --test-dir original-evidence/build --output-on-failure \
+            --output-junit "$PWD/original-evidence/original-native-tests.xml" \
+            -j 1 -R '${{ matrix.test_regex }}' 2>&1 \
+            | tee original-evidence/native-original.log
+          test "${PIPESTATUS[0]}" = 0
+      - name: Verify original producer bytes, SQLite, JUnit and clean vintage Git
+        shell: bash
+        run: |
+          set -euo pipefail
+          HIST="$(realpath ../historical-native-${{ matrix.era }})"
+          test "$(git -C "$HIST" rev-parse HEAD)" = '${{ matrix.source_sha }}'
+          test -z "$(git -C "$HIST" status --porcelain --untracked-files=no)"
+          read -ra TARGETS <<< '${{ matrix.targets }}'
+          EXE=()
+          for target in "${TARGETS[@]}"; do
+            test -x "original-evidence/build/$target"
+            EXE+=("original-evidence/build/$target")
+          done
+          python3 tests/Stage06H4HistoricalNativeCorpus.py \
+            --source-sha '${{ matrix.source_sha }}' \
+            --current-sha '${{ needs.validate.outputs.sha }}' \
+            --source-clean --capture-dir original-evidence/sqlite \
+            --adapter-manifest original-evidence/source-adapter-provenance.json \
+            --observer original-evidence/libsg_h4_observer.so \
+            --output original-evidence/historical-corpus.json \
+            --test-names '${{ matrix.test_regex }}' \
+            --producer-executables "${EXE[@]}"
+      - name: Independent current-main canonical, WAL, rollback, recovery verifier
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = '${{ needs.validate.outputs.sha }}'
+          cmake -S . -B original-evidence/current -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DBUILD_TESTING=ON 2>&1 | tee original-evidence/modern-consumer-configure.log
+          cmake --build original-evidence/current --parallel 3 --target \
+            galaxy_stage06h4_historical_recovery_tests \
+            2>&1 | tee original-evidence/modern-consumer-build.log
+          read -ra TARGETS <<< '${{ matrix.targets }}'
+          EXE=()
+          for target in "${TARGETS[@]}"; do
+            EXE+=("original-evidence/build/$target")
+          done
+          python3 tests/Stage06H4NativeCompatibility.py \
+            --manifest original-evidence/historical-corpus.json \
+            --capture-dir original-evidence/sqlite \
+            --source-sha '${{ matrix.source_sha }}' \
+            --current-sha '${{ needs.validate.outputs.sha }}' \
+            --consumer original-evidence/current/galaxy_stage06h4_historical_recovery_tests \
+            --test-junit original-evidence/original-native-tests.xml \
+            --observer original-evidence/libsg_h4_observer.so \
+            --producer-executables "${EXE[@]}" \
+            --output original-evidence/vintage-to-current-recovery.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: int03-original-${{ matrix.era }}-${{ needs.validate.outputs.sha }}
+          path: |
+            original-evidence/historical-source-sha.txt
+            original-evidence/observer-source-sha.txt
+            original-evidence/historical-corpus.json
+            original-evidence/vintage-to-current-recovery.json
+            original-evidence/sqlite/*.sqlite
+            original-evidence/native-original.log
+            original-evidence/original-native-tests.xml
+            original-evidence/ctest-discovery.txt
+            original-evidence/original-cmake-configure.log
+            original-evidence/original-native-build.log
+            original-evidence/modern-consumer-configure.log
+            original-evidence/modern-consumer-build.log
+            original-evidence/source-adapter-provenance.json
+          if-no-files-found: warn
+          retention-days: 21
+
+          - era: v118-original-utility-only
+            source_sha: d47e5cdb0532b615ffc99ffce23358a92ab05724
+            targets: galaxy_wo3_planetary_utility_tests
+            test_regex: '^galaxy_wo3_planetary_utility
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.validate.outputs.sha }}
+          fetch-depth: 0
+      - name: Prove fixed source SHA and create unmodified original checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = '${{ needs.validate.outputs.sha }}'
+          test -z "$(git status --porcelain --untracked-files=no)"
+          git cat-file -e '${{ matrix.source_sha }}^{commit}'
+          mkdir -p original-evidence
+          git worktree add --detach ../historical-native-${{ matrix.era }} '${{ matrix.source_sha }}'
+          HIST="$(realpath ../historical-native-${{ matrix.era }})"
+          test "$(git -C "$HIST" rev-parse HEAD)" = '${{ matrix.source_sha }}'
+          test -z "$(git -C "$HIST" status --porcelain --untracked-files=no)"
+          echo '${{ matrix.source_sha }}' > original-evidence/historical-source-sha.txt
+          echo '${{ needs.validate.outputs.sha }}' > original-evidence/observer-source-sha.txt
+      - name: Compile original game in SHA-attested shadow source, leave vintage Git pristine
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libsqlite3-dev ninja-build
+          HIST="$(realpath ../historical-native-${{ matrix.era }})"
+          cc -std=c11 -fPIC -shared -Wall -Wextra -Werror \
+            -o original-evidence/libsg_h4_observer.so \
+            tools/history/SQLiteCommitObserver.c -ldl -lsqlite3
+          ADAPTER="$PWD/original-evidence/source-adapter"
+          python3 tools/history/Stage06H4VintageBuildAdapter.py "$HIST" "$ADAPTER" \
+            original-evidence/source-adapter-provenance.json
+          test -z "$(git -C "$HIST" status --porcelain --untracked-files=no)"
+          cmake -S "$ADAPTER" -B original-evidence/build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON \
+            2>&1 | tee original-evidence/original-cmake-configure.log
+          cmake --build original-evidence/build --parallel 3 --target ${{ matrix.targets }} \
+            2>&1 | tee original-evidence/original-native-build.log
+      - name: Exact original native tests, genuine SQLite capture or hard failure
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p original-evidence/sqlite
+          export SG_H4_CAPTURE_DIR="$PWD/original-evidence/sqlite"
+          export SG_H4_CAPTURE_VERSIONS='86-135'
+          export LD_PRELOAD="$PWD/original-evidence/libsg_h4_observer.so"
+          ctest --test-dir original-evidence/build -N -R '${{ matrix.test_regex }}' \
+            | tee original-evidence/ctest-discovery.txt
+          grep -q 'Total Tests:' original-evidence/ctest-discovery.txt
+          if grep -q 'Total Tests: 0' original-evidence/ctest-discovery.txt; then
+            echo 'Original vintage CTest was not registered' >&2; exit 1
+          fi
+          ctest --test-dir original-evidence/build --output-on-failure \
+            --output-junit "$PWD/original-evidence/original-native-tests.xml" \
+            -j 1 -R '${{ matrix.test_regex }}' 2>&1 \
+            | tee original-evidence/native-original.log
+          test "${PIPESTATUS[0]}" = 0
+      - name: Verify original producer bytes, SQLite, JUnit and clean vintage Git
+        shell: bash
+        run: |
+          set -euo pipefail
+          HIST="$(realpath ../historical-native-${{ matrix.era }})"
+          test "$(git -C "$HIST" rev-parse HEAD)" = '${{ matrix.source_sha }}'
+          test -z "$(git -C "$HIST" status --porcelain --untracked-files=no)"
+          read -ra TARGETS <<< '${{ matrix.targets }}'
+          EXE=()
+          for target in "${TARGETS[@]}"; do
+            test -x "original-evidence/build/$target"
+            EXE+=("original-evidence/build/$target")
+          done
+          python3 tests/Stage06H4HistoricalNativeCorpus.py \
+            --source-sha '${{ matrix.source_sha }}' \
+            --current-sha '${{ needs.validate.outputs.sha }}' \
+            --source-clean --capture-dir original-evidence/sqlite \
+            --adapter-manifest original-evidence/source-adapter-provenance.json \
+            --observer original-evidence/libsg_h4_observer.so \
+            --output original-evidence/historical-corpus.json \
+            --test-names '${{ matrix.test_regex }}' \
+            --producer-executables "${EXE[@]}"
+      - name: Independent current-main canonical, WAL, rollback, recovery verifier
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = '${{ needs.validate.outputs.sha }}'
+          cmake -S . -B original-evidence/current -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DBUILD_TESTING=ON 2>&1 | tee original-evidence/modern-consumer-configure.log
+          cmake --build original-evidence/current --parallel 3 --target \
+            galaxy_stage06h4_historical_recovery_tests \
+            2>&1 | tee original-evidence/modern-consumer-build.log
+          read -ra TARGETS <<< '${{ matrix.targets }}'
+          EXE=()
+          for target in "${TARGETS[@]}"; do
+            EXE+=("original-evidence/build/$target")
+          done
+          python3 tests/Stage06H4NativeCompatibility.py \
+            --manifest original-evidence/historical-corpus.json \
+            --capture-dir original-evidence/sqlite \
+            --source-sha '${{ matrix.source_sha }}' \
+            --current-sha '${{ needs.validate.outputs.sha }}' \
+            --consumer original-evidence/current/galaxy_stage06h4_historical_recovery_tests \
+            --test-junit original-evidence/original-native-tests.xml \
+            --observer original-evidence/libsg_h4_observer.so \
+            --producer-executables "${EXE[@]}" \
+            --output original-evidence/vintage-to-current-recovery.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: int03-original-${{ matrix.era }}-${{ needs.validate.outputs.sha }}
+          path: |
+            original-evidence/historical-source-sha.txt
+            original-evidence/observer-source-sha.txt
+            original-evidence/historical-corpus.json
+            original-evidence/vintage-to-current-recovery.json
+            original-evidence/sqlite/*.sqlite
+            original-evidence/native-original.log
+            original-evidence/original-native-tests.xml
+            original-evidence/ctest-discovery.txt
+            original-evidence/original-cmake-configure.log
+            original-evidence/original-native-build.log
+            original-evidence/modern-consumer-configure.log
+            original-evidence/modern-consumer-build.log
+            original-evidence/source-adapter-provenance.json
+          if-no-files-found: warn
+          retention-days: 21
+
+          - era: v128-planetary-resource
+            source_sha: eb448b6735a6e90b20480b3ac5065e06f30ae1ad
+            targets: 'galaxy_stage06_finite_planet_genesis_tests galaxy_stage06_seasonal_environment_tests'
+            test_regex: '^galaxy_stage06_(finite_planet_genesis|seasonal_environment)
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.validate.outputs.sha }}
+          fetch-depth: 0
+      - name: Prove fixed source SHA and create unmodified original checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = '${{ needs.validate.outputs.sha }}'
+          test -z "$(git status --porcelain --untracked-files=no)"
+          git cat-file -e '${{ matrix.source_sha }}^{commit}'
+          mkdir -p original-evidence
+          git worktree add --detach ../historical-native-${{ matrix.era }} '${{ matrix.source_sha }}'
+          HIST="$(realpath ../historical-native-${{ matrix.era }})"
+          test "$(git -C "$HIST" rev-parse HEAD)" = '${{ matrix.source_sha }}'
+          test -z "$(git -C "$HIST" status --porcelain --untracked-files=no)"
+          echo '${{ matrix.source_sha }}' > original-evidence/historical-source-sha.txt
+          echo '${{ needs.validate.outputs.sha }}' > original-evidence/observer-source-sha.txt
+      - name: Compile original game in SHA-attested shadow source, leave vintage Git pristine
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libsqlite3-dev ninja-build
+          HIST="$(realpath ../historical-native-${{ matrix.era }})"
+          cc -std=c11 -fPIC -shared -Wall -Wextra -Werror \
+            -o original-evidence/libsg_h4_observer.so \
+            tools/history/SQLiteCommitObserver.c -ldl -lsqlite3
+          ADAPTER="$PWD/original-evidence/source-adapter"
+          python3 tools/history/Stage06H4VintageBuildAdapter.py "$HIST" "$ADAPTER" \
+            original-evidence/source-adapter-provenance.json
+          test -z "$(git -C "$HIST" status --porcelain --untracked-files=no)"
+          cmake -S "$ADAPTER" -B original-evidence/build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON \
+            2>&1 | tee original-evidence/original-cmake-configure.log
+          cmake --build original-evidence/build --parallel 3 --target ${{ matrix.targets }} \
+            2>&1 | tee original-evidence/original-native-build.log
+      - name: Exact original native tests, genuine SQLite capture or hard failure
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p original-evidence/sqlite
+          export SG_H4_CAPTURE_DIR="$PWD/original-evidence/sqlite"
+          export SG_H4_CAPTURE_VERSIONS='86-135'
+          export LD_PRELOAD="$PWD/original-evidence/libsg_h4_observer.so"
+          ctest --test-dir original-evidence/build -N -R '${{ matrix.test_regex }}' \
+            | tee original-evidence/ctest-discovery.txt
+          grep -q 'Total Tests:' original-evidence/ctest-discovery.txt
+          if grep -q 'Total Tests: 0' original-evidence/ctest-discovery.txt; then
+            echo 'Original vintage CTest was not registered' >&2; exit 1
+          fi
+          ctest --test-dir original-evidence/build --output-on-failure \
+            --output-junit "$PWD/original-evidence/original-native-tests.xml" \
+            -j 1 -R '${{ matrix.test_regex }}' 2>&1 \
+            | tee original-evidence/native-original.log
+          test "${PIPESTATUS[0]}" = 0
+      - name: Verify original producer bytes, SQLite, JUnit and clean vintage Git
+        shell: bash
+        run: |
+          set -euo pipefail
+          HIST="$(realpath ../historical-native-${{ matrix.era }})"
+          test "$(git -C "$HIST" rev-parse HEAD)" = '${{ matrix.source_sha }}'
+          test -z "$(git -C "$HIST" status --porcelain --untracked-files=no)"
+          read -ra TARGETS <<< '${{ matrix.targets }}'
+          EXE=()
+          for target in "${TARGETS[@]}"; do
+            test -x "original-evidence/build/$target"
+            EXE+=("original-evidence/build/$target")
+          done
+          python3 tests/Stage06H4HistoricalNativeCorpus.py \
+            --source-sha '${{ matrix.source_sha }}' \
+            --current-sha '${{ needs.validate.outputs.sha }}' \
+            --source-clean --capture-dir original-evidence/sqlite \
+            --adapter-manifest original-evidence/source-adapter-provenance.json \
+            --observer original-evidence/libsg_h4_observer.so \
+            --output original-evidence/historical-corpus.json \
+            --test-names '${{ matrix.test_regex }}' \
+            --producer-executables "${EXE[@]}"
+      - name: Independent current-main canonical, WAL, rollback, recovery verifier
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = '${{ needs.validate.outputs.sha }}'
+          cmake -S . -B original-evidence/current -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DBUILD_TESTING=ON 2>&1 | tee original-evidence/modern-consumer-configure.log
+          cmake --build original-evidence/current --parallel 3 --target \
+            galaxy_stage06h4_historical_recovery_tests \
+            2>&1 | tee original-evidence/modern-consumer-build.log
+          read -ra TARGETS <<< '${{ matrix.targets }}'
+          EXE=()
+          for target in "${TARGETS[@]}"; do
+            EXE+=("original-evidence/build/$target")
+          done
+          python3 tests/Stage06H4NativeCompatibility.py \
+            --manifest original-evidence/historical-corpus.json \
+            --capture-dir original-evidence/sqlite \
+            --source-sha '${{ matrix.source_sha }}' \
+            --current-sha '${{ needs.validate.outputs.sha }}' \
+            --consumer original-evidence/current/galaxy_stage06h4_historical_recovery_tests \
+            --test-junit original-evidence/original-native-tests.xml \
+            --observer original-evidence/libsg_h4_observer.so \
+            --producer-executables "${EXE[@]}" \
+            --output original-evidence/vintage-to-current-recovery.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: int03-original-${{ matrix.era }}-${{ needs.validate.outputs.sha }}
+          path: |
+            original-evidence/historical-source-sha.txt
+            original-evidence/observer-source-sha.txt
+            original-evidence/historical-corpus.json
+            original-evidence/vintage-to-current-recovery.json
+            original-evidence/sqlite/*.sqlite
+            original-evidence/native-original.log
+            original-evidence/original-native-tests.xml
+            original-evidence/ctest-discovery.txt
+            original-evidence/original-cmake-configure.log
+            original-evidence/original-native-build.log
+            original-evidence/modern-consumer-configure.log
+            original-evidence/modern-consumer-build.log
+            original-evidence/source-adapter-provenance.json
+          if-no-files-found: warn
+          retention-days: 21
+
+          - era: v135-medical-atmosphere
+            source_sha: 8ccb4a37b76e6e1510ee3fa1751fc23a9cdbc685
+            targets: 'galaxy_stage06_physical_environment_tests galaxy_stage06_finite_planet_genesis_tests galaxy_stage06_ecology_industry_tests'
+            test_regex: '^galaxy_stage06_(physical_environment|finite_planet_genesis|ecology_industry)
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.validate.outputs.sha }}
+          fetch-depth: 0
+      - name: Prove fixed source SHA and create unmodified original checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = '${{ needs.validate.outputs.sha }}'
+          test -z "$(git status --porcelain --untracked-files=no)"
+          git cat-file -e '${{ matrix.source_sha }}^{commit}'
+          mkdir -p original-evidence
+          git worktree add --detach ../historical-native-${{ matrix.era }} '${{ matrix.source_sha }}'
+          HIST="$(realpath ../historical-native-${{ matrix.era }})"
+          test "$(git -C "$HIST" rev-parse HEAD)" = '${{ matrix.source_sha }}'
+          test -z "$(git -C "$HIST" status --porcelain --untracked-files=no)"
+          echo '${{ matrix.source_sha }}' > original-evidence/historical-source-sha.txt
+          echo '${{ needs.validate.outputs.sha }}' > original-evidence/observer-source-sha.txt
+      - name: Compile original game in SHA-attested shadow source, leave vintage Git pristine
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libsqlite3-dev ninja-build
+          HIST="$(realpath ../historical-native-${{ matrix.era }})"
+          cc -std=c11 -fPIC -shared -Wall -Wextra -Werror \
+            -o original-evidence/libsg_h4_observer.so \
+            tools/history/SQLiteCommitObserver.c -ldl -lsqlite3
+          ADAPTER="$PWD/original-evidence/source-adapter"
+          python3 tools/history/Stage06H4VintageBuildAdapter.py "$HIST" "$ADAPTER" \
+            original-evidence/source-adapter-provenance.json
+          test -z "$(git -C "$HIST" status --porcelain --untracked-files=no)"
+          cmake -S "$ADAPTER" -B original-evidence/build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON \
+            2>&1 | tee original-evidence/original-cmake-configure.log
+          cmake --build original-evidence/build --parallel 3 --target ${{ matrix.targets }} \
+            2>&1 | tee original-evidence/original-native-build.log
+      - name: Exact original native tests, genuine SQLite capture or hard failure
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p original-evidence/sqlite
+          export SG_H4_CAPTURE_DIR="$PWD/original-evidence/sqlite"
+          export SG_H4_CAPTURE_VERSIONS='86-135'
+          export LD_PRELOAD="$PWD/original-evidence/libsg_h4_observer.so"
+          ctest --test-dir original-evidence/build -N -R '${{ matrix.test_regex }}' \
+            | tee original-evidence/ctest-discovery.txt
+          grep -q 'Total Tests:' original-evidence/ctest-discovery.txt
+          if grep -q 'Total Tests: 0' original-evidence/ctest-discovery.txt; then
+            echo 'Original vintage CTest was not registered' >&2; exit 1
+          fi
+          ctest --test-dir original-evidence/build --output-on-failure \
+            --output-junit "$PWD/original-evidence/original-native-tests.xml" \
+            -j 1 -R '${{ matrix.test_regex }}' 2>&1 \
+            | tee original-evidence/native-original.log
+          test "${PIPESTATUS[0]}" = 0
+      - name: Verify original producer bytes, SQLite, JUnit and clean vintage Git
+        shell: bash
+        run: |
+          set -euo pipefail
+          HIST="$(realpath ../historical-native-${{ matrix.era }})"
+          test "$(git -C "$HIST" rev-parse HEAD)" = '${{ matrix.source_sha }}'
+          test -z "$(git -C "$HIST" status --porcelain --untracked-files=no)"
+          read -ra TARGETS <<< '${{ matrix.targets }}'
+          EXE=()
+          for target in "${TARGETS[@]}"; do
+            test -x "original-evidence/build/$target"
+            EXE+=("original-evidence/build/$target")
+          done
+          python3 tests/Stage06H4HistoricalNativeCorpus.py \
+            --source-sha '${{ matrix.source_sha }}' \
+            --current-sha '${{ needs.validate.outputs.sha }}' \
+            --source-clean --capture-dir original-evidence/sqlite \
+            --adapter-manifest original-evidence/source-adapter-provenance.json \
+            --observer original-evidence/libsg_h4_observer.so \
+            --output original-evidence/historical-corpus.json \
+            --test-names '${{ matrix.test_regex }}' \
+            --producer-executables "${EXE[@]}"
+      - name: Independent current-main canonical, WAL, rollback, recovery verifier
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = '${{ needs.validate.outputs.sha }}'
+          cmake -S . -B original-evidence/current -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DBUILD_TESTING=ON 2>&1 | tee original-evidence/modern-consumer-configure.log
+          cmake --build original-evidence/current --parallel 3 --target \
+            galaxy_stage06h4_historical_recovery_tests \
+            2>&1 | tee original-evidence/modern-consumer-build.log
+          read -ra TARGETS <<< '${{ matrix.targets }}'
+          EXE=()
+          for target in "${TARGETS[@]}"; do
+            EXE+=("original-evidence/build/$target")
+          done
+          python3 tests/Stage06H4NativeCompatibility.py \
+            --manifest original-evidence/historical-corpus.json \
+            --capture-dir original-evidence/sqlite \
+            --source-sha '${{ matrix.source_sha }}' \
+            --current-sha '${{ needs.validate.outputs.sha }}' \
+            --consumer original-evidence/current/galaxy_stage06h4_historical_recovery_tests \
+            --test-junit original-evidence/original-native-tests.xml \
+            --observer original-evidence/libsg_h4_observer.so \
+            --producer-executables "${EXE[@]}" \
+            --output original-evidence/vintage-to-current-recovery.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: int03-original-${{ matrix.era }}-${{ needs.validate.outputs.sha }}
+          path: |
+            original-evidence/historical-source-sha.txt
+            original-evidence/observer-source-sha.txt
+            original-evidence/historical-corpus.json
+            original-evidence/vintage-to-current-recovery.json
+            original-evidence/sqlite/*.sqlite
+            original-evidence/native-original.log
+            original-evidence/original-native-tests.xml
+            original-evidence/ctest-discovery.txt
+            original-evidence/original-cmake-configure.log
+            original-evidence/original-native-build.log
+            original-evidence/modern-consumer-configure.log
+            original-evidence/modern-consumer-build.log
+            original-evidence/source-adapter-provenance.json
+          if-no-files-found: warn
+          retention-days: 21
+
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.validate.outputs.sha }}
+          fetch-depth: 0
+      - name: Prove fixed source SHA and create unmodified original checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = '${{ needs.validate.outputs.sha }}'
+          test -z "$(git status --porcelain --untracked-files=no)"
+          git cat-file -e '${{ matrix.source_sha }}^{commit}'
+          mkdir -p original-evidence
+          git worktree add --detach ../historical-native-${{ matrix.era }} '${{ matrix.source_sha }}'
+          HIST="$(realpath ../historical-native-${{ matrix.era }})"
+          test "$(git -C "$HIST" rev-parse HEAD)" = '${{ matrix.source_sha }}'
+          test -z "$(git -C "$HIST" status --porcelain --untracked-files=no)"
+          echo '${{ matrix.source_sha }}' > original-evidence/historical-source-sha.txt
+          echo '${{ needs.validate.outputs.sha }}' > original-evidence/observer-source-sha.txt
+      - name: Compile original game in SHA-attested shadow source, leave vintage Git pristine
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libsqlite3-dev ninja-build
+          HIST="$(realpath ../historical-native-${{ matrix.era }})"
+          cc -std=c11 -fPIC -shared -Wall -Wextra -Werror \
+            -o original-evidence/libsg_h4_observer.so \
+            tools/history/SQLiteCommitObserver.c -ldl -lsqlite3
+          ADAPTER="$PWD/original-evidence/source-adapter"
+          python3 tools/history/Stage06H4VintageBuildAdapter.py "$HIST" "$ADAPTER" \
+            original-evidence/source-adapter-provenance.json
+          test -z "$(git -C "$HIST" status --porcelain --untracked-files=no)"
+          cmake -S "$ADAPTER" -B original-evidence/build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON \
+            2>&1 | tee original-evidence/original-cmake-configure.log
+          cmake --build original-evidence/build --parallel 3 --target ${{ matrix.targets }} \
+            2>&1 | tee original-evidence/original-native-build.log
+      - name: Exact original native tests, genuine SQLite capture or hard failure
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p original-evidence/sqlite
+          export SG_H4_CAPTURE_DIR="$PWD/original-evidence/sqlite"
+          export SG_H4_CAPTURE_VERSIONS='86-135'
+          export LD_PRELOAD="$PWD/original-evidence/libsg_h4_observer.so"
+          ctest --test-dir original-evidence/build -N -R '${{ matrix.test_regex }}' \
+            | tee original-evidence/ctest-discovery.txt
+          grep -q 'Total Tests:' original-evidence/ctest-discovery.txt
+          if grep -q 'Total Tests: 0' original-evidence/ctest-discovery.txt; then
+            echo 'Original vintage CTest was not registered' >&2; exit 1
+          fi
+          ctest --test-dir original-evidence/build --output-on-failure \
+            --output-junit "$PWD/original-evidence/original-native-tests.xml" \
+            -j 1 -R '${{ matrix.test_regex }}' 2>&1 \
+            | tee original-evidence/native-original.log
+          test "${PIPESTATUS[0]}" = 0
+      - name: Verify original producer bytes, SQLite, JUnit and clean vintage Git
+        shell: bash
+        run: |
+          set -euo pipefail
+          HIST="$(realpath ../historical-native-${{ matrix.era }})"
+          test "$(git -C "$HIST" rev-parse HEAD)" = '${{ matrix.source_sha }}'
+          test -z "$(git -C "$HIST" status --porcelain --untracked-files=no)"
+          read -ra TARGETS <<< '${{ matrix.targets }}'
+          EXE=()
+          for target in "${TARGETS[@]}"; do
+            test -x "original-evidence/build/$target"
+            EXE+=("original-evidence/build/$target")
+          done
+          python3 tests/Stage06H4HistoricalNativeCorpus.py \
+            --source-sha '${{ matrix.source_sha }}' \
+            --current-sha '${{ needs.validate.outputs.sha }}' \
+            --source-clean --capture-dir original-evidence/sqlite \
+            --adapter-manifest original-evidence/source-adapter-provenance.json \
+            --observer original-evidence/libsg_h4_observer.so \
+            --output original-evidence/historical-corpus.json \
+            --test-names '${{ matrix.test_regex }}' \
+            --producer-executables "${EXE[@]}"
+      - name: Independent current-main canonical, WAL, rollback, recovery verifier
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = '${{ needs.validate.outputs.sha }}'
+          cmake -S . -B original-evidence/current -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DBUILD_TESTING=ON 2>&1 | tee original-evidence/modern-consumer-configure.log
+          cmake --build original-evidence/current --parallel 3 --target \
+            galaxy_stage06h4_historical_recovery_tests \
+            2>&1 | tee original-evidence/modern-consumer-build.log
+          read -ra TARGETS <<< '${{ matrix.targets }}'
+          EXE=()
+          for target in "${TARGETS[@]}"; do
+            EXE+=("original-evidence/build/$target")
+          done
+          python3 tests/Stage06H4NativeCompatibility.py \
+            --manifest original-evidence/historical-corpus.json \
+            --capture-dir original-evidence/sqlite \
+            --source-sha '${{ matrix.source_sha }}' \
+            --current-sha '${{ needs.validate.outputs.sha }}' \
+            --consumer original-evidence/current/galaxy_stage06h4_historical_recovery_tests \
+            --test-junit original-evidence/original-native-tests.xml \
+            --observer original-evidence/libsg_h4_observer.so \
+            --producer-executables "${EXE[@]}" \
+            --output original-evidence/vintage-to-current-recovery.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: int03-original-${{ matrix.era }}-${{ needs.validate.outputs.sha }}
+          path: |
+            original-evidence/historical-source-sha.txt
+            original-evidence/observer-source-sha.txt
+            original-evidence/historical-corpus.json
+            original-evidence/vintage-to-current-recovery.json
+            original-evidence/sqlite/*.sqlite
+            original-evidence/native-original.log
+            original-evidence/original-native-tests.xml
+            original-evidence/ctest-discovery.txt
+            original-evidence/original-cmake-configure.log
+            original-evidence/original-native-build.log
+            original-evidence/modern-consumer-configure.log
+            original-evidence/modern-consumer-build.log
+            original-evidence/source-adapter-provenance.json
+          if-no-files-found: warn
+          retention-days: 21
