@@ -63,34 +63,152 @@ jobs:
           cc -std=c11 -fPIC -shared -Wall -Wextra -Werror \
              -o original-evidence/libsg_h4_observer.so \
              tools/history/SQLiteCommitObserver.c -ldl -lsqlite3
-          # The original WO3 source contains two CMake-invalid comment lines.
-          # Generate a CMake-only compatibility file OUTSIDE its Git worktree,
-          # retaining every original source/test/kernel byte unchanged.
-          SOURCE="$HIST"
-          if grep -q '^// WO3-A: proposal-only' "$HIST/CMakeLists.txt"; then
-            ADAPTER="$PWD/original-evidence/source-adapter"
-            python3 - "$HIST" "$ADAPTER" <<'PYADAPTER'
-          import pathlib,sys
-          historic=pathlib.Path(sys.argv[1])
-          target=pathlib.Path(sys.argv[2])
+          # Compiler adapters are ONLY in an independent shadow directory.
+          # The entire historical Git checkout remains untouched and hashed.
+          # Each isolated edit is in original-evidence/source-adapter-provenance.json.
+          ADAPTER="$PWD/original-evidence/source-adapter"
+          python3 - "$HIST" "$ADAPTER" original-evidence/source-adapter-provenance.json <<'PYADAPTER'
+          import hashlib,json,pathlib,re,subprocess,sys
+          original=pathlib.Path(sys.argv[1]).resolve(strict=True)
+          target=pathlib.Path(sys.argv[2]).resolve()
+          manifest=pathlib.Path(sys.argv[3])
+          source_sha=subprocess.check_output(['git','-C',str(original),'rev-parse','HEAD'],text=True).strip()
+          eras={
+              '23bad9be38936d61b8c29b5be5f3900bec87fa6d':'pre-v109-original-v92',
+              '44619e9b186f99fa836ae9494a88137f3f2bf3f5':'v111-planet-housing',
+              'd47e5cdb0532b615ffc99ffce23358a92ab05724':'v118-family-custody',
+              'eb448b6735a6e90b20480b3ac5065e06f30ae1ad':'v128-planetary-resource',
+              '8ccb4a37b76e6e1510ee3fa1751fc23a9cdbc685':'v135-medical-atmosphere'
+          }
+          if source_sha not in eras:raise RuntimeError('unrecognized exact historical source SHA')
+          era=eras[source_sha]
+          def pristine():
+              return not subprocess.check_output(['git','-C',str(original),'status',
+                                                  '--porcelain','--untracked-files=no'],text=True).strip()
+          if not pristine():raise RuntimeError('original historical source was modified')
           target.mkdir(parents=True,exist_ok=False)
-          original=(historic/'CMakeLists.txt').read_text()
-          wrong=['// WO3-A: proposal-only colony construction planning and original-world actual',
-                 '// facility, census, utility, immutable SQLite copies and material conservation.']
-          for line in wrong:
-              if original.count(line)!=1:raise RuntimeError('unexpected historical CMake source')
-          repaired=original
-          for line in wrong:repaired=repaired.replace(line,'#'+line[2:])
-          (target/'CMakeLists.txt').write_text(repaired)
-          for entry in historic.iterdir():
-              if entry.name!='CMakeLists.txt':
+          changes=[]
+          def digest(path):
+              return hashlib.sha256(path.read_bytes()).hexdigest()
+          def replace_one(text,from_text,to_text,label,edits):
+              count=text.count(from_text)
+              if count!=1:raise RuntimeError(f'{era} {label}: expected exactly one historical pattern; found {count}')
+              edits.append(label)
+              return text.replace(from_text,to_text,1)
+          def split_auto(text,edits):
+              output=[]; fixed=0
+              for line in text.splitlines(keepends=True):
+                  found=re.match(r'^([ \t]*)const auto (.+);([ \t]*(?://[^\n]*)?)(\n?)$',line)
+                  if not found:
+                      output.append(line);continue
+                  indent,fields,suffix,newline=found.groups()
+                  pieces=[];start=0;depth=0;quote=None;escaped=False
+                  for i,ch in enumerate(fields):
+                      if quote:
+                          if escaped:escaped=False
+                          elif ch=='\\':escaped=True
+                          elif ch==quote:quote=None
+                      elif ch in ('"',"'"):quote=ch
+                      elif ch in '([{':depth+=1
+                      elif ch in ')]}':depth-=1
+                      elif ch==',' and depth==0:
+                          pieces.append(fields[start:i].strip());start=i+1
+                  pieces.append(fields[start:].strip())
+                  if len(pieces)<=1 or not all(re.match(r'^[a-zA-Z_]\w*\s*=',p) for p in pieces):
+                      output.append(line);continue
+                  output.extend(indent+'const auto '+p+';'+(suffix if j==len(pieces)-1 else '')+newline
+                                for j,p in enumerate(pieces))
+                  fixed+=1
+              if fixed:edits.append(f'split {fixed} incompatible auto-deduced declarations')
+              return ''.join(output)
+          def patched(path):
+              text=(original/path).read_text();edits=[]
+              if path=='CMakeLists.txt' and era in ('v111-planet-housing','v118-family-custody'):
+                  for wrong in ('// WO3-A: proposal-only colony construction planning and original-world actual',
+                                '// facility, census, utility, immutable SQLite copies and material conservation.'):
+                      text=replace_one(text,wrong,'#'+wrong[2:],'CMake vintage comment grammar',edits)
+              if path=='src/Simulation.cpp':
+                  if era in ('v111-planet-housing','v118-family-custody'):
+                      text=replace_one(text,'if(!ship || !c || !l || frame==ship_frames_.end() ||',
+                                       'if(!ship || c==colony_ships_.end() || l==life_support_.end() || frame==ship_frames_.end() ||',
+                                       'typed iterator end comparison',edits)
+                      text=replace_one(text,'plan.destination_frame.anchor_body,',
+                                       'plan.destination_frame.anchor_body_id,',
+                                       'actual LocalSpaceFrame member',edits)
+                      text=replace_one(text,'namespace galaxy {\nnamespace {\n',
+                                       'namespace galaxy {\nnamespace {\nEntityId shuttle_transit_custody_id(const PlanetarySiteKey& key);\n',
+                                       'native shuttle helper forward declaration',edits)
+                      if era=='v111-planet-housing':
+                          text=replace_one(text,
+                              'if(dependent.guardian_id==npc_id ||\n           dependent.co_guardian_id==npc_id)return false;',
+                              'if(dependent.guardian_id==npc_id)return false;',
+                              'v111 only has guardian_id; no co-guardian exists in this snapshot schema',edits)
+                      text=split_auto(text,edits)
+                  if era in ('v128-planetary-resource','v135-medical-atmosphere'):
+                      marker='            const bool genuine_station_visitor=[&](){\n'
+                      end_marker='            }();\n'
+                      if text.count(marker)!=1:raise RuntimeError('unrecognized visitor predicate')
+                      start=text.index(marker);end=text.find(end_marker,start)
+                      if end<0:raise RuntimeError('unterminated original visitor predicate')
+                      end+=len(end_marker)
+                      pred=text[start:end]
+                      text=text[:start]+text[end:]
+                      anchor='            if(!result.colony_ships_.count(n.home_ship) ||\n'
+                      text=replace_one(text,anchor,pred+'\n'+anchor,
+                                       'move original visitor predicate outside Boolean expression',edits)
+                  if era=='v135-medical-atmosphere':
+                      text=replace_one(text,
+                          '        for(const auto& body:bodies)\n            out<<"celestial|"',
+                          '        for(const auto& body:bodies) {\n            out<<"celestial|"',
+                          'bracket mass/atmosphere serializer per real celestial body',edits)
+                      text=replace_one(text,
+                          "            out<<'\\n';\n    if(snapshot_version_>=127) {",
+                          "            out<<'\\n';\n        }\n    if(snapshot_version_>=127) {",
+                          'close per-body serialization loop',edits)
+              if path=='src/DockWorkforce.cpp' and era in ('v128-planetary-resource','v135-medical-atmosphere'):
+                  text=split_auto(text,edits)
+              if path=='include/galaxy/PlanetaryContinuousSurface.hpp' and era=='v135-medical-atmosphere':
+                  text=replace_one(text,
+                      '    const auto lat=lat_diff/scale,lon=lon_projected/scale,\n               limit=allowed/scale;',
+                      '    const auto lat=lat_diff/scale;\n    const auto lon=lon_projected/scale;\n    const auto limit=allowed/scale;',
+                      'separate distinct unsigned integer deduction types',edits)
+              return text,edits
+          for entry in original.iterdir():
+              if entry.name not in ('src','include','CMakeLists.txt'):
                   (target/entry.name).symlink_to(entry.resolve(),target_is_directory=entry.is_dir())
-          print('Verified unmodified original C++ with shadow-only CMake parse adapter')
+          (target/'src').mkdir();(target/'include').mkdir();(target/'include'/'galaxy').mkdir()
+          candidates={'CMakeLists.txt','src/Simulation.cpp','src/DockWorkforce.cpp',
+                      'include/galaxy/PlanetaryContinuousSurface.hpp'}
+          for parent in ('src','include'):
+              for entry in (original/parent).iterdir():
+                  if parent=='include' and entry.name=='galaxy':continue
+                  if (parent+'/'+entry.name) in candidates:continue
+                  (target/parent/entry.name).symlink_to(entry.resolve(),target_is_directory=entry.is_dir())
+          for entry in (original/'include'/'galaxy').iterdir():
+              if ('include/galaxy/'+entry.name) in candidates:continue
+              (target/'include'/'galaxy'/entry.name).symlink_to(entry.resolve(),target_is_directory=entry.is_dir())
+          for rel in sorted(candidates):
+              before=original/rel
+              if not before.is_file():continue
+              after=target/rel
+              result,edits=patched(rel)
+              if edits:
+                  after.write_text(result)
+                  changes.append(dict(path=rel,original_sha256=digest(before),
+                                      shadow_sha256=digest(after),repair_labels=edits))
+              else:after.symlink_to(before.resolve())
+          if not pristine():raise RuntimeError('compiler adapter modified original Git checkout')
+          report=dict(schema='SG-S6H4-VINTAGE-SHADOW-COMPILER-01',historical_commit=source_sha,
+                      era=era,original_git_unchanged=True,
+                      adapter_source_files=changes,compiled_using_adapter=bool(changes),
+                      original_untouched_binary=False if changes else True,
+                      no_synthetic_snapshot_versions=True,
+                      no_data_schema_rewrite=True,version_acceptance_requires_original_ctests=True)
+          manifest.write_text(json.dumps(report,sort_keys=True,indent=2)+'\n')
+          print(json.dumps(report,sort_keys=True))
           PYADAPTER
-            SOURCE="$ADAPTER"
-            sha256sum "$HIST/CMakeLists.txt" "$SOURCE/CMakeLists.txt" \
-               > original-evidence/cmake-adapter-provenance.sha256
-          fi
+          SOURCE="$ADAPTER"
+          test -z "$(git -C "$HIST" status --porcelain --untracked-files=no)"
           cmake -S "$SOURCE" -B original-evidence/build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON 2>&1 \
             | tee original-evidence/original-cmake-configure.log
