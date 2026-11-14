@@ -714,6 +714,55 @@ jobs:
             2>&1 | tee original-evidence/original-cmake-configure.log
           cmake --build original-evidence/build --parallel 3 --target ${{ matrix.targets }} \
             2>&1 | tee original-evidence/original-native-build.log
+      - name: Native original v85 SQLite predecessor for v118 housing
+        if: matrix.era == 'v118-family-custody'
+        shell: bash
+        run: |
+          set -euo pipefail
+          # A distinct authentic pre-v109 Git source at its reviewed SHA.
+          V85_SHA=23bad9be38936d61b8c29b5be5f3900bec87fa6d
+          test "$(git rev-parse HEAD)" = "$(cat original-evidence/observer-source-sha.txt)"
+          git cat-file -e "$V85_SHA^{commit}"
+          git worktree add --detach ../int04-source-produced-v85 "$V85_SHA"
+          V85="$(realpath ../int04-source-produced-v85)"
+          test "$(git -C "$V85" rev-parse HEAD)" = "$V85_SHA"
+          test -z "$(git -C "$V85" status --porcelain)"
+          python3 tests/WO3HistoricalNativeProducer.py prepare "$V85"
+          cmake -S "$V85" -B original-evidence/v85-build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON \
+            2>&1 | tee original-evidence/v85-cmake-configure.log
+          cmake --build original-evidence/v85-build --parallel 3 --target \
+            galaxy_play13d_regional_facilities_tests \
+            2>&1 | tee original-evidence/v85-native-build.log
+          ORIGINAL_BIN="$PWD/original-evidence/v85-build/galaxy_play13d_regional_facilities_tests"
+          ORIGINAL_DB="$PWD/original-evidence/native-original-v85.sqlite"
+          test -x "$ORIGINAL_BIN"
+          SG_WO3_HISTORICAL_CAPTURE_OUTPUT="$ORIGINAL_DB" "$ORIGINAL_BIN" \
+            2>&1 | tee original-evidence/v85-native-source.log
+          python3 tests/WO3HistoricalNativeProducer.py attest "$V85" \
+            --binary "$ORIGINAL_BIN" --sqlite "$ORIGINAL_DB" \
+            --manifest original-evidence/native-original-v85-attestation.json \
+            --github-env original-evidence/native-original-v85.env
+          python3 - <<'PY'
+          import hashlib,json,sqlite3,pathlib
+          evidence=pathlib.Path('original-evidence')
+          world=evidence/'native-original-v85.sqlite'
+          manifest=json.loads((evidence/'native-original-v85-attestation.json').read_text())
+          assert manifest['producer_source_commit']=='23bad9be38936d61b8c29b5be5f3900bec87fa6d'
+          assert manifest['archived_artifact'] is False
+          assert hashlib.sha256(world.read_bytes()).hexdigest()==manifest['sqlite_sha256']
+          with sqlite3.connect(f'file:{world.resolve()}?mode=ro',uri=True) as db:
+              assert db.execute('PRAGMA integrity_check').fetchone()==('ok',)
+              state=db.execute('SELECT state FROM snapshots ORDER BY generation DESC LIMIT 1').fetchone()
+              assert state and bytes(state[0]).startswith(b'galaxy-kernel-v85|')
+              assert db.execute('SELECT COUNT(*) FROM operation_log WHERE kind=1').fetchone()[0]>0
+          print('PASS: exact original native source produced actual SQLite v85')
+          PY
+          grep -q '^SG_WO3_V85_ORIGINAL_SQLITE=' original-evidence/native-original-v85.env
+          cat original-evidence/native-original-v85.env >> "$GITHUB_ENV"
+          test -z "$(git status --porcelain --untracked-files=no)"
+          test "$(git -C "$V85" rev-parse HEAD)" = "$V85_SHA"
+          test "$(git -C "$V85" diff --name-only)" = 'tests/PLAY13D_RegionalFacilitiesTests.cpp'
       - name: Exact original native tests, genuine SQLite capture or hard failure
         shell: bash
         run: |
@@ -798,5 +847,11 @@ jobs:
             original-evidence/modern-consumer-configure.log
             original-evidence/modern-consumer-build.log
             original-evidence/source-adapter-provenance.json
+            original-evidence/native-original-v85.sqlite
+            original-evidence/native-original-v85-attestation.json
+            original-evidence/native-original-v85.env
+            original-evidence/v85-native-source.log
+            original-evidence/v85-cmake-configure.log
+            original-evidence/v85-native-build.log
           if-no-files-found: warn
           retention-days: 21
