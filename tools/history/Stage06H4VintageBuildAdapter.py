@@ -151,14 +151,18 @@ def patched(path):
                 ('    act(w,ship,291,Action::AssignHabitatResidents,orbital,-2);\n'
                  '    act(w,ship,299,Action::AssignHabitatResidents,orbital,4);'),
                 'native habitat placement for independently trained workers',edits)
-            old=('n.location==ship && n.role==NpcRole::Ship &&\n'
-                 '            w.world().npc_available_for_duty(id)) {')
-            new=('n.location==orbital && n.role==NpcRole::Habitat &&\n'
-                 '            w.world().npc_available_for_duty(id)) {')
-            if text.count(old)!=2:
-                raise RuntimeError('expected precisely two original eligible novice selections')
-            text=text.replace(old,new)
-            edits.append('choose two physically present original habitat workers')
+            text=replace_one(text,
+                ('n.location==ship && n.role==NpcRole::Ship &&\n'
+                 '           w.world().npc_available_for_duty(id)) {'),
+                ('n.location==orbital && n.role==NpcRole::Habitat &&\n'
+                 '           w.world().npc_available_for_duty(id)) {'),
+                'select actual site-resident partner for original Shape training',edits)
+            text=replace_one(text,
+                ('n.home_ship==ship && n.location==ship &&\n'
+                 '           n.role==NpcRole::Ship && w.world().npc_available_for_duty(id)) {'),
+                ('n.home_ship==ship && n.location==orbital &&\n'
+                 '           n.role==NpcRole::Habitat && w.world().npc_available_for_duty(id)) {'),
+                'select actual site-resident visitor for original Shape training',edits)
             text=replace_one(text,
                 ('    CHECK(w.world().workshop_trade_certified(\n'
                  '        trained_visitor,WorkshopTrade::Shape));'),
