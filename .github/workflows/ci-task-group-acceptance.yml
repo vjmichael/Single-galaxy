@@ -645,7 +645,7 @@ jobs:
             2>&1 | tee build/int03-main-native/godot/desktop-import.log
           timeout --signal=TERM --kill-after=8s 100s "$G" --headless --path godot/stage6 --editor --quit \
             2>&1 | tee build/int03-main-native/godot/planet-import.log
-          for test in native_player_protocol_smoke.gd native_station_refinery_protocol_smoke.gd group3_mining_native_protocol_smoke.gd; do
+          for test in native_player_protocol_smoke.gd native_station_refinery_protocol_smoke.gd group3_mining_native_protocol_smoke.gd stage6f5e_terrain_renderer_smoke.gd stage6f5f_transfer_panel_smoke.gd stage6f6_recovery_probe_smoke.gd; do
             timeout --signal=TERM --kill-after=8s 110s "$G" --headless --path desktop_godot \
               --script "res://tests/$test" 2>&1 | tee "build/int03-main-native/godot/$test.log"
           done

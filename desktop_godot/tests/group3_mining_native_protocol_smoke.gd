@@ -27,10 +27,12 @@ func _run() -> void:
 	var surveys: Array[Dictionary] = []
 	var equipment: Array[Dictionary] = []
 	var contacts: Array[Dictionary] = []
+	var onboarding: Array[Dictionary] = []
 	s.asteroid_survey_received.connect(func(obs: Dictionary):surveys.append(obs))
 	s.equipment_result_received.connect(func(kind: String,req: int,outcome: int,cmd: int):
 		equipment.append({"kind":kind,"req":req,"outcome":outcome,"command":cmd}))
 	s.asteroid_contact_received.connect(func(contact: Dictionary):contacts.append(contact))
+	s.colony_onboarding_received.connect(func(obs: Dictionary):onboarding.append(obs))
 	s._accept_line("SHEAD|1|123|16|2|4|9|1|0")
 	s._accept_line("SROW|1|123|16|2|4|9|77|42000|0|0|10000|9|2|1")
 	s._accept_line("SEND|1|123|16|2|4|9")
@@ -42,11 +44,16 @@ func _run() -> void:
 	s._pending_kind = "MINE"
 	s._pending = 17
 	s._last_send_msec = Time.get_ticks_msec()
-	s._accept_line("SHIP|1|123|17|1152921504606847000|0|2|5|10|0|0|0|0|0|0|90|0")
+	# Reserved bit-60 ID is FLIGHT-only. Original owner MINE command uses
+	# its distinct nonreserved per-session request ID, low 20 bits == 17.
+	s._accept_line("SHIP|1|123|17|1099511627793|0|2|5|10|0|0|0|0|0|0|90|0")
+	s._accept_line("ONBOARD|1|123|17|2|5|10|0|0|0|0|0|0|0|0|0|0")
 	s._accept_line("ROCK|1|123|17|2|5|10|77|9|1000|0|0|2000|2|1|12|1|0|0")
 	s._accept_line("NAV|1|123|17|2|5|10|1|0|0|0")
 	if equipment.size()!=1 or equipment[0]["kind"]!="MINE" or
 			equipment[0]["outcome"]!=0 or s._pending!=0 or
+			onboarding.size()!=1 or int(onboarding[0]["gen"])!=10 or
+			int(onboarding[0]["modules"])!=0 or
 			contacts.size()!=1 or int(contacts[0]["cargo_tonnes"])!=1 or
 			int(contacts[0]["ore_tonnes"])!=9 or not contacts[0]["mining_tool_online"]:
 		_fail("exact original MINE SHIP/ROCK/NAV receipt not accepted")

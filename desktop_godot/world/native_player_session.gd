@@ -300,9 +300,19 @@ func _accept_ship(parts: PackedStringArray) -> void:
 			return
 		_initial_ship_seen = true
 	else:
+		# Cockpit flight commands use the native reserved bit-60 namespace;
+		# source-authorized owner mining/fit/FAB/power use NONRESERVED IDs.
+		# The kernel refuses a bit-60 owner command submitted without an
+		# independent cockpit seat proof. Godot must not misclassify the two
+		# genuine, distinct native submission paths or trust a cross-type ACK.
+		var flight_id := command_id >= 1152921504606846976 and \
+			command_id < 2305843009213693952
+		var owner_id := command_id > 0 and command_id < 1152921504606846976
+		var correct_namespace := flight_id if _pending_kind == "FLIGHT" else owner_id
 		if not _initial_ship_seen or _pending_kind not in ["FLIGHT","MINE","FIT","UNFIT","FAB","POWER","ONBUILD"] or request != _pending or \
-			command_id < 1152921504606846976 or tick <= _tick or generation <= _generation:
-			stop("Unrequested or stale native flight acknowledgement")
+			not correct_namespace or command_id % 1048576 != request or \
+			tick <= _tick or generation <= _generation:
+			stop("Unrequested or wrong-authority original native SHIP receipt")
 			return
 		var done_verb := _pending_flight_verb
 		var done_kind := _pending_kind
@@ -376,7 +386,7 @@ func _accept_original_asteroid(parts: PackedStringArray) -> void:
 	var ship := int(parts[4])
 	var tick := int(parts[5])
 	var generation := int(parts[6])
-	if session != _session or ship != _ship or tick != _tick or generation != _generation or request != _last_ship_telemetry_request or request <= _last_contact_request:
+	if session != _session or ship != _ship or tick != _tick or generation != _generation or request != _last_ship_telemetry_request or request != _last_onboarding_request or request <= _last_contact_request:
 		stop("Stale or unrequested asteroid contact")
 		return
 	var ore := 0
