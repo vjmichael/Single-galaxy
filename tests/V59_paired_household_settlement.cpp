@@ -28,6 +28,9 @@ int main(){
     const std::uint64_t kid1=(1ULL<<62)+8801,kid2=(1ULL<<62)+8802;
     EntityId source=0,destination=0,ferry=0;
     try{
+        {
+        // The original world, family registry and regional owner share the
+        // same SQLite file. Close ALL their handles before Windows cleanup.
         Simulation initial(8800);initial.add_system(2);
         source=initial.add_colony_ship(7,{0,0},100,6);
         ferry=initial.add_colony_ship(7,{0,0},100,6);
@@ -256,6 +259,7 @@ int main(){
         sqlite3_close(bad_db);
         reject([&]{PersistentWorld invalid(path,Simulation(8800));},
                "forged second-parent event accepted on restart");
+        } // SQLite world/family/region handles close before file deletion
         std::filesystem::remove(path);
         std::cout<<"PASS q6e4 two real parents, two children, crash-safe travel, cold/warm fences\n";
     }catch(const std::exception& e){std::cerr<<"FAIL q6e3a: "<<e.what()<<'\n';return 1;}

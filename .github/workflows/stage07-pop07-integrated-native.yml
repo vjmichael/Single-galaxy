@@ -1,0 +1,134 @@
+name: Stage 7 POP-07 integrated original households, duty, society and civic law
+
+on:
+  push:
+    branches: [sg/stage7-pop07-integrated-society-20261113]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: stage07-pop07-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  source-native:
+    name: Original Stage 7 integrated SQLite matrix (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2022]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - name: Pin the exact source and reject generated changes
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test -z "$(git status --porcelain)"
+          mkdir -p stage07-pop07-evidence
+          printf '%s\n' "$GITHUB_SHA" > stage07-pop07-evidence/source-sha.txt
+      - name: Linux native dependencies
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ninja-build libsqlite3-dev
+      - name: Windows native dependencies
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $root = $env:VCPKG_INSTALLATION_ROOT
+          if(-not $root) { $root = 'C:\vcpkg' }
+          & (Join-Path $root 'vcpkg.exe') install sqlite3:x64-windows --classic
+          if($LASTEXITCODE -ne 0) { throw 'Original SQLite toolchain failed' }
+          "SG_TOOLCHAIN=$(Join-Path $root 'scripts\buildsystems\vcpkg.cmake')" >> $env:GITHUB_ENV
+          (Join-Path $root 'installed\x64-windows\bin') >> $env:GITHUB_PATH
+      - name: Compile unchanged original execution programs
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "$RUNNER_OS" = Windows ]; then
+            cmake -S . -B build/stage07-pop07 -G 'Visual Studio 17 2022' -A x64 \
+              "-DCMAKE_TOOLCHAIN_FILE=$SG_TOOLCHAIN" -DBUILD_TESTING=ON
+          else
+            cmake -S . -B build/stage07-pop07 -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
+          fi
+          cmake --build build/stage07-pop07 --config Release --parallel 4 --target \
+            galaxy_stage07_population_household_tests \
+            galaxy_colony_auto04d4d2_physical_tests \
+            v59_paired_household_settlement \
+            galaxy_wo2_industry_workforce_tests \
+            galaxy_stage07_society_economy_tests \
+            v59_medical_recovery \
+            galaxy_dock03_physical_workforce_tests \
+            galaxy_colony_conflict01b3_governance_tests \
+            galaxy_colony_exit01d_bounded_tests
+      - name: Require full original plus additive Stage 7 acceptance
+        shell: bash
+        run: |
+          set -euo pipefail
+          ctest --test-dir build/stage07-pop07 -C Release --output-on-failure \
+            --output-junit "$PWD/stage07-pop07-evidence/native-tests.xml" \
+            -R '^(galaxy_stage07_population_households|galaxy_stage07_household_lifecycle_birth|galaxy_stage07_household_lifecycle_migration|galaxy_stage07_delegated_labor|galaxy_stage07_society_economy|galaxy_stage07_civic_policy|galaxy_stage07_duty_workshop|galaxy_stage07_duty_medical|galaxy_stage07_duty_dock|galaxy_wo2_industry_workforce|v59_medical_recovery|galaxy_dock03_physical_workforce|galaxy_colony_conflict01b3_governance|galaxy_colony_exit01d_bounded)$' \
+            --timeout 180 | tee stage07-pop07-evidence/native-ctest.log
+          python - <<'PY'
+          from pathlib import Path
+          import hashlib
+          import xml.etree.ElementTree as ET
+          evidence=Path('stage07-pop07-evidence')
+          actual=list(ET.parse(evidence/'native-tests.xml').iter('testcase'))
+          required=set('''galaxy_stage07_population_households
+          galaxy_stage07_household_lifecycle_birth
+          galaxy_stage07_household_lifecycle_migration
+          galaxy_stage07_delegated_labor
+          galaxy_stage07_society_economy
+          galaxy_stage07_civic_policy
+          galaxy_stage07_duty_workshop
+          galaxy_stage07_duty_medical
+          galaxy_stage07_duty_dock
+          galaxy_wo2_industry_workforce
+          v59_medical_recovery
+          galaxy_dock03_physical_workforce
+          galaxy_colony_conflict01b3_governance
+          galaxy_colony_exit01d_bounded'''.split())
+          assert len(actual)==len(required), (len(actual),len(required))
+          assert {c.attrib['name'] for c in actual}==required
+          assert all(c.find(x) is None for c in actual for x in ('failure','error','skipped'))
+          executables=['galaxy_stage07_population_household_tests',
+                       'galaxy_colony_auto04d4d2_physical_tests',
+                       'v59_paired_household_settlement',
+                       'galaxy_wo2_industry_workforce_tests',
+                       'galaxy_stage07_society_economy_tests',
+                       'v59_medical_recovery',
+                       'galaxy_dock03_physical_workforce_tests',
+                       'galaxy_colony_conflict01b3_governance_tests',
+                       'galaxy_colony_exit01d_bounded_tests']
+          with (evidence/'receipts.txt').open('w') as receipt:
+              receipt.write('exact_head='+ (evidence/'source-sha.txt').read_text().strip()+'\n')
+              for name in sorted(required):
+                  receipt.write('original_native_ctest_pass='+name+'\n')
+              for executable in executables:
+                  files=[p for p in Path('build/stage07-pop07').rglob(executable+'*')
+                         if p.is_file() and p.suffix in ('','.exe') and p.stem==executable]
+                  assert len(files)==1,(executable,files)
+                  receipt.write('exe_sha256:'+executable+'='+
+                      hashlib.sha256(files[0].read_bytes()).hexdigest()+'\n')
+              receipt.write('installed_physical_acceptance=not_run\n')
+          PY
+      - name: Preserve failures and independently reproducible receipts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage07-pop07-native-${{ matrix.os }}-${{ github.sha }}
+          path: |
+            stage07-pop07-evidence/
+            build/stage07-pop07/Testing/Temporary/LastTest.log
+            build/stage07-pop07/Testing/Temporary/LastTestsFailed.log
+          retention-days: 21

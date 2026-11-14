@@ -2,6 +2,7 @@
 #include "galaxy/WO2IndustryWorkforce.hpp"
 #include "galaxy/Stage07DelegatedLabor.hpp"
 #include "galaxy/Stage07SocietyEconomy.hpp"
+#include "galaxy/DockLogistics.hpp"
 #include "galaxy/Persistence.hpp"
 #include <chrono>
 #include <filesystem>
@@ -279,6 +280,34 @@ int main() {
         CHECK(stage7_approved.has_value() &&
               stage7_approved->issuer==7 &&
               stage7_approved->amount==static_cast<std::int64_t>(first_id));
+        // POP-05 hostile original-SQLite fixture: a rival domain has booked
+        // this actual named worker for a still-active dock shift. Even a
+        // correctly authenticated workshop command MUST fail at the common
+        // world commit; the original NPC and material state cannot change.
+        {
+            dock::Ledger active_dock(db);
+            sqlite3* attacker=nullptr;
+            CHECK(sqlite3_open_v2(db.c_str(),&attacker,
+                  SQLITE_OPEN_READWRITE,nullptr)==SQLITE_OK);
+            const auto sql=std::string(
+                "INSERT INTO dock_staff_v1 "
+                "(npc_id,station,owner,assigned_tick,shift_end_tick) VALUES(")+
+                std::to_string(first_id)+"," +std::to_string(site)+",7,"+
+                std::to_string(w.world().tick())+","+
+                std::to_string(w.world().tick()+128)+")";
+            const auto rc=sqlite3_exec(attacker,sql.c_str(),nullptr,nullptr,nullptr);
+            sqlite3_close(attacker);
+            CHECK(rc==SQLITE_OK);
+            const auto prior_generation=w.generation();
+            const auto prior_snapshot=w.world().canonical_state();
+            bool double_book_refused=false;
+            try{(void)w.submit(*stage7_approved);}
+            catch(const std::runtime_error&){double_book_refused=true;}
+            CHECK(double_book_refused && w.generation()==prior_generation &&
+                  w.world().canonical_state()==prior_snapshot &&
+                  !w.world().has_command_id(22));
+            CHECK(active_dock.release(site,7,first_id));
+        }
         auto proposed=workforce02::approved_original_assignment(
             w.world(),7,ship,site,false,first_id,22,true);
         CHECK(proposed.has_value());
