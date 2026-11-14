@@ -350,6 +350,79 @@ def patched(path):
             ('            genesis.provision_starter_probe_kit(ship);\n'
              '            genesis.ensure_ship_frame_registry();'),
             'register original ship frame before v100 status codec',edits)
+    if path=='tests/WO3PlanetaryHousingTests.cpp' and era=='v118-family-custody':
+        text=replace_one(text,'#include <chrono>\n',
+                         '#include <chrono>\n#include <cstdlib>\n',
+                         'require genuine native v85 source path',edits)
+        begin='    // WO3-E: reconstruct a historical v86 source *without modern housing*.\n'
+        finish='    CHECK(!w.start_planetary_housing(7,ship,key,81200));'
+        if text.count(begin)!=1 or text.find(finish,text.index(begin))<0:
+            raise RuntimeError('pinned original WO3-E housing fixture differs')
+        old=text[text.index(begin):text.find(finish,text.index(begin))]
+        if 'line.erase(prior);' not in old or 'PersistentWorld history(history_db,restored_old);' not in old:
+            raise RuntimeError('untrusted original v86 synthetic fixture not found')
+        replacement=r'''    // The pre-v109 native source did NOT persist a planetary legal HOME.
+    // Read the actual native v85 world and grant no invented authority.
+    {
+        const char* source=std::getenv("SG_WO3_V85_ORIGINAL_SQLITE");
+        CHECK(source && *source && fs::is_regular_file(source));
+        const auto historical_db=(dir/"source_produced_v85.sqlite").string();
+        CHECK(fs::copy_file(source,historical_db));
+        PersistentWorld history(historical_db,Simulation(613));
+        const auto& original_world=history.world();
+        const auto original_state=original_world.canonical_state();
+        CHECK(original_state.rfind("galaxy-kernel-v85|",0)==0);
+        CHECK(history.generation()>2 && original_world.tick()>0 &&
+              original_world.accepted_command_count()>0 &&
+              !original_world.npc_records().empty() &&
+              !original_world.planetary_sites().empty());
+        const auto original_hash=original_world.state_hash();
+        const auto original_mass=original_world.total_material_kg();
+        const auto original_ore=original_world.total_ore();
+        bool original_surface_arrival=false;
+        for(const auto& [id,n]:original_world.npc_records()){
+            (void)id;
+            CHECK(n.legal_residence()==
+                (transport::Endpoint{transport::LocationKind::ColonyShip,n.home_ship}));
+            for(const auto& [site,physical]:original_world.planetary_sites()){
+                (void)site;
+                if(n.location==physical.surface_location)original_surface_arrival=true;
+            }
+        }
+        CHECK(original_surface_arrival);
+        auto legitimate_v86=Simulation::from_snapshot(original_state);
+        legitimate_v86.upgrade_legal_residence_snapshot_format();
+        CHECK(legitimate_v86.canonical_state().rfind("galaxy-kernel-v86|",0)==0 &&
+              legitimate_v86.total_ore()==original_ore &&
+              legitimate_v86.total_material_kg()==original_mass &&
+              legitimate_v86.npc_records().size()==original_world.npc_records().size());
+        for(const auto& [id,n]:original_world.npc_records()){
+            const auto found=legitimate_v86.npc_records().find(id);
+            CHECK(found!=legitimate_v86.npc_records().end() &&
+                  found->second.legal_residence()==n.legal_residence());
+        }
+        CHECK(Simulation::from_snapshot(legitimate_v86.canonical_state()).
+              canonical_state()==legitimate_v86.canonical_state());
+        const auto hash_before=legitimate_v86.state_hash();
+        CHECK(!legitimate_v86.host_import_legacy_planetary_residences(
+            Simulation::kServerAuthority,86501));
+        CHECK(legitimate_v86.state_hash()==hash_before &&
+              !legitimate_v86.legacy_planetary_residence_import());
+        CHECK(!history.host_import_legacy_planetary_residences(7,86501));
+        CHECK(!history.host_import_legacy_planetary_residences(
+            Simulation::kServerAuthority,86501));
+        CHECK(history.world().state_hash()==original_hash);
+        const auto separate_db=(dir/"native_v85_restart.sqlite").string();
+        CHECK(fs::copy_file(historical_db,separate_db));
+        PersistentWorld reopened(separate_db,Simulation(613));
+        CHECK(reopened.world().canonical_state()==original_state &&
+              reopened.world().state_hash()==original_hash &&
+              reopened.world().total_material_kg()==original_mass &&
+              reopened.world().total_ore()==original_ore);
+    }
+'''
+        text=text[:text.index(begin)]+replacement+text[text.find(finish,text.index(begin)):]
+        edits.append('source-v85 original SQLite/real v86 migration replaces fake legal-home genesis')
     if path=='tests/WO3PlanetaryUtilityTests.cpp' and era in ('v111-planet-housing','v118-family-custody'):
         text=replace_one(text,'    seed.enable_individual_workforce();','',
             'remove late individual-workforce initialization',edits)
@@ -541,7 +614,8 @@ candidates={'CMakeLists.txt','src/Simulation.cpp','src/DockWorkforce.cpp',
             'tests/Stage06PhysicalEnvironmentTests.cpp',
             'tests/SHIPSTATUS02_AuthoritativePersistenceTests.cpp',
             'tests/PLAY13D_RegionalFacilitiesTests.cpp',
-            'tests/WO3PlanetaryUtilityTests.cpp'}
+            'tests/WO3PlanetaryUtilityTests.cpp',
+            'tests/WO3PlanetaryHousingTests.cpp'}
 for parent in ('src','include','tests'):
     for entry in (original/parent).iterdir():
         if parent=='include' and entry.name=='galaxy':continue
