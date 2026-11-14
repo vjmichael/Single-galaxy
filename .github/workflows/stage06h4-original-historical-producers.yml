@@ -135,8 +135,8 @@ jobs:
                       text=replace_one(text,'plan.destination_frame.anchor_body,',
                                        'plan.destination_frame.anchor_body_id,',
                                        'actual LocalSpaceFrame member',edits)
-                      text=replace_one(text,'namespace galaxy {\nnamespace {\n',
-                                       'namespace galaxy {\nnamespace {\nEntityId shuttle_transit_custody_id(const PlanetarySiteKey& key);\n',
+                      text=replace_one(text,'namespace galaxy {\nnamespace {\nconstexpr int kPlacementBound',
+                                       'namespace galaxy {\nnamespace {\nEntityId shuttle_transit_custody_id(const PlanetarySiteKey& key);\nconstexpr int kPlacementBound',
                                        'native shuttle helper forward declaration',edits)
                       if era=='v111-planet-housing':
                           text=replace_one(text,
@@ -167,6 +167,47 @@ jobs:
                           'close per-body serialization loop',edits)
               if path=='src/DockWorkforce.cpp' and era in ('v128-planetary-resource','v135-medical-atmosphere'):
                   text=split_auto(text,edits)
+              if path=='tests/Stage06FinitePlanetaryGenesisTests.cpp' and era in ('v128-planetary-resource','v135-medical-atmosphere'):
+                  wrong=('        CHECK(!seed.scan_planetary_region_source(\n'
+                         '            7,ship,body,first.first,second.second==first.second?\n'
+                         '            second.second+1:second.second));')
+                  correct=('        // One canonical cell that is neither of the two real funded cells.\n'
+                           '        std::uint16_t absent=0;\n'
+                           '        while(absent==first.first*72+first.second ||\n'
+                           '              absent==second.first*72+second.second)++absent;\n'
+                           '        CHECK(absent<36*72);\n'
+                           '        CHECK(!seed.scan_planetary_region_source(\n'
+                           '            7,ship,body,absent/72,absent%72));')
+                  text=replace_one(text,wrong,correct,
+                      'negative planetary source probe uses truly unallocated canonical cell',edits)
+                  if era=='v135-medical-atmosphere':
+                      text=replace_one(text,
+                          '        seed.ensure_physical_celestial_systems();',
+                          ('        seed.enable_native_galactic_physics({{1,galactic::Point{{0,0},{0,0},{0,0}}}});\n'
+                           '        seed.ensure_physical_celestial_systems();'),
+                          'source-derived galactic v120 pose before v127 terrain genesis',edits)
+              if path=='tests/Stage06PhysicalEnvironmentTests.cpp' and era=='v135-medical-atmosphere':
+                  text=replace_one(text,
+                      '    sim.ensure_planetary_genesis_manifest();',
+                      ('    sim.enable_native_galactic_physics({{1,galactic::Point{{0,0},{0,0},{0,0}}}});\n'
+                       '    sim.ensure_planetary_genesis_manifest();'),
+                      'seed original v120 physical pose before v128 process codec',edits)
+                  text=replace_one(text,
+                      '    historical.ensure_planetary_genesis_manifest();',
+                      ('    historical.enable_native_galactic_physics({{1,galactic::Point{{0,0},{0,0},{0,0}}}});\n'
+                       '    historical.ensure_planetary_genesis_manifest();'),
+                      'explicit native v120 identity for historical genesis fixture',edits)
+              if path=='tests/Stage06EcologyIndustryTests.cpp' and era=='v135-medical-atmosphere':
+                  text=replace_one(text,
+                      '    seed.ensure_physical_celestial_systems();',
+                      ('    seed.enable_native_galactic_physics({{1,galactic::Point{{0,0},{0,0},{0,0}}}});\n'
+                       '    seed.ensure_physical_celestial_systems();'),
+                      'authoritative world pose before ecological snapshot upgrade',edits)
+                  text=replace_one(text,
+                      '    new_world.ensure_physical_celestial_systems();',
+                      ('    new_world.enable_native_galactic_physics({{1,galactic::Point{{0,0},{0,0},{0,0}}}});\n'
+                       '    new_world.ensure_physical_celestial_systems();'),
+                      'galactic pose for distinct regional ecology producer',edits)
               if path=='include/galaxy/PlanetaryContinuousSurface.hpp' and era=='v135-medical-atmosphere':
                   text=replace_one(text,
                       '    const auto lat=lat_diff/scale,lon=lon_projected/scale,\n               limit=allowed/scale;',
@@ -174,12 +215,16 @@ jobs:
                       'separate distinct unsigned integer deduction types',edits)
               return text,edits
           for entry in original.iterdir():
-              if entry.name not in ('src','include','CMakeLists.txt'):
+              if entry.name not in ('src','include','tests','CMakeLists.txt'):
                   (target/entry.name).symlink_to(entry.resolve(),target_is_directory=entry.is_dir())
           (target/'src').mkdir();(target/'include').mkdir();(target/'include'/'galaxy').mkdir()
+          (target/'tests').mkdir()
           candidates={'CMakeLists.txt','src/Simulation.cpp','src/DockWorkforce.cpp',
-                      'include/galaxy/PlanetaryContinuousSurface.hpp'}
-          for parent in ('src','include'):
+                      'include/galaxy/PlanetaryContinuousSurface.hpp',
+                      'tests/Stage06FinitePlanetaryGenesisTests.cpp',
+                      'tests/Stage06EcologyIndustryTests.cpp',
+                      'tests/Stage06PhysicalEnvironmentTests.cpp'}
+          for parent in ('src','include','tests'):
               for entry in (original/parent).iterdir():
                   if parent=='include' and entry.name=='galaxy':continue
                   if (parent+'/'+entry.name) in candidates:continue
