@@ -113,6 +113,17 @@ def patched(path):
                 "            out<<'\\n';\n    if(snapshot_version_>=127) {",
                 "            out<<'\\n';\n        }\n    if(snapshot_version_>=127) {",
                 'close per-body serialization loop',edits)
+    if path=='src/Persistence.cpp' and era=='pre-v109-original-v92':
+        # Preserve the original rejection. A historical operator now sees
+        # which genuine operation_log generation/tick/kind first collided.
+        # This is diagnostic-only in the attested shadow executable.
+        text=replace_one(text,
+            'throw std::runtime_error("SQLite: duplicate historical step generation");',
+            ('throw std::runtime_error('
+             '"SQLite: duplicate historical step generation tick="+'
+             'std::to_string(tick)+" generation="+std::to_string(g)+'
+             '" kind="+std::to_string(kind));'),
+            'retain duplicate tick rejection with original operation ID diagnostics',edits)
     if path=='src/DockWorkforce.cpp' and era in ('v128-planetary-resource','v135-medical-atmosphere'):
         text=split_auto(text,edits)
     if path=='src/CyberIncidentJournal.cpp' and era in ('v111-planet-housing','v118-family-custody'):
@@ -316,6 +327,7 @@ for entry in original.iterdir():
 (target/'tests').mkdir()
 candidates={'CMakeLists.txt','src/Simulation.cpp','src/DockWorkforce.cpp',
             'src/CyberIncidentJournal.cpp',
+            'src/Persistence.cpp',
             'include/galaxy/PlanetaryContinuousSurface.hpp',
             'include/galaxy/Simulation.hpp',
             'tests/Stage06FinitePlanetaryGenesisTests.cpp',
