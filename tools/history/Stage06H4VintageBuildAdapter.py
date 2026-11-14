@@ -141,6 +141,16 @@ def patched(path):
             ('    seed.enable_individual_workforce();\n'
              '    seed.provision_starter_exploration_scanner(ship);'),
             'original crew identity before versioned scanner',edits)
+        # These historical scenarios begin with exactly 20 fabricated hull modules.
+        # The original station, workshop, habitat, utility, finisher and shuttle
+        # consume those finite modules before the original housing rack loads.
+        # Manufacture extra modules through the ORIGINAL native action from
+        # independently refined, finite ore; do not change the asserted racks.
+        text=replace_one(text,
+            '    CHECK(w.begin_celestial_transit(7,ship,chosen.body,90001));',
+            ('    act(w,ship,298,Action::FabricateModule,0,8);\n'
+             '    CHECK(w.begin_celestial_transit(7,ship,chosen.body,90001));'),
+            'source-funded extra fabricated modules for original planetary rack',edits)
         if era=='v118-family-custody':
             # The native trade-training API requires a real Habitat worker
             # assigned at the powered site, not an available ship crewmember.
