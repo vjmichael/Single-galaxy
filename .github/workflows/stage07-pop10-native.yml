@@ -81,7 +81,7 @@ jobs:
           set -euo pipefail
           ctest --test-dir build/stage07-pop10 -C Release --output-on-failure \
             --output-junit "$PWD/stage07-pop10-evidence/native-tests.xml" \
-            -R '^(galaxy_stage07_population_households|galaxy_stage07_household_lifecycle_birth|galaxy_stage07_household_lifecycle_migration|galaxy_stage07_delegated_labor|galaxy_stage07_society_economy|galaxy_stage07_civic_policy|galaxy_stage07_duty_workshop|galaxy_stage07_duty_medical|galaxy_stage07_duty_dock|galaxy_wo2_industry_workforce|v59_medical_recovery|galaxy_dock03_physical_workforce|galaxy_colony_conflict01b3_governance|galaxy_colony_exit01d_bounded|galaxy_wo4_resource_demand|galaxy_wo5_physical_logistics|galaxy_stage07_resident_economy|galaxy_stage07_resident_legal_consequence|v59_third_party_custody|galaxy_ship_status07j_law_agency) \
+            -R '^(galaxy_stage07_population_households|galaxy_stage07_household_lifecycle_birth|galaxy_stage07_household_lifecycle_migration|galaxy_stage07_delegated_labor|galaxy_stage07_society_economy|galaxy_stage07_civic_policy|galaxy_stage07_duty_workshop|galaxy_stage07_duty_medical|galaxy_stage07_duty_dock|galaxy_wo2_industry_workforce|v59_medical_recovery|galaxy_dock03_physical_workforce|galaxy_colony_conflict01b3_governance|galaxy_colony_exit01d_bounded|galaxy_wo4_resource_demand|galaxy_wo5_physical_logistics|galaxy_stage07_resident_economy|galaxy_stage07_resident_legal_consequence|v59_third_party_custody|galaxy_ship_status07j_law_agency)$' \
             --timeout 180 | tee stage07-pop10-evidence/native-ctest.log
           python - <<'PY'
           from pathlib import Path
@@ -126,71 +126,6 @@ jobs:
                        'galaxy_stage07_resident_economy_tests',
                        'v59_third_party_custody',
                        'galaxy_ship_status07j_law_agency_tests']
-          with (evidence/'receipts.txt').open('w') as receipt:
-              receipt.write('exact_head='+ (evidence/'source-sha.txt').read_text().strip()+'\n')
-              for name in sorted(required):
-                  receipt.write('original_native_ctest_pass='+name+'\n')
-              for executable in executables:
-                  files=[p for p in Path('build/stage07-pop10').rglob(executable+'*')
-                         if p.is_file() and p.suffix in ('','.exe') and p.stem==executable]
-                  assert len(files)==1,(executable,files)
-                  receipt.write('exe_sha256:'+executable+'='+
-                      hashlib.sha256(files[0].read_bytes()).hexdigest()+'\n')
-              receipt.write('installed_physical_acceptance=not_run\n')
-          PY
-      - name: Preserve failures and independently reproducible receipts
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: stage07-pop10-native-${{ matrix.os }}-${{ github.sha }}
-          path: |
-            stage07-pop10-evidence/
-            build/stage07-pop10/Testing/Temporary/LastTest.log
-            build/stage07-pop10/Testing/Temporary/LastTestsFailed.log
-          retention-days: 21
- \
-            --timeout 180 | tee stage07-pop10-evidence/native-ctest.log
-          python - <<'PY'
-          from pathlib import Path
-          import hashlib
-          import xml.etree.ElementTree as ET
-          evidence=Path('stage07-pop10-evidence')
-          actual=list(ET.parse(evidence/'native-tests.xml').iter('testcase'))
-          required=set('''galaxy_stage07_population_households
-          galaxy_stage07_household_lifecycle_birth
-          galaxy_stage07_household_lifecycle_migration
-          galaxy_stage07_delegated_labor
-          galaxy_stage07_society_economy
-          galaxy_stage07_civic_policy
-          galaxy_stage07_duty_workshop
-          galaxy_stage07_duty_medical
-          galaxy_stage07_duty_dock
-          galaxy_wo2_industry_workforce
-          v59_medical_recovery
-          galaxy_dock03_physical_workforce
-          galaxy_colony_conflict01b3_governance
-          galaxy_colony_exit01d_bounded
-          galaxy_wo4_resource_demand
-          galaxy_wo5_physical_logistics
-          galaxy_stage07_resident_economy
-          galaxy_stage07_resident_legal_consequence
-          v59_third_party_custody'''.split())
-          assert len(actual)==len(required), (len(actual),len(required))
-          assert {c.attrib['name'] for c in actual}==required
-          assert all(c.find(x) is None for c in actual for x in ('failure','error','skipped'))
-          executables=['galaxy_stage07_population_household_tests',
-                       'galaxy_colony_auto04d4d2_physical_tests',
-                       'v59_paired_household_settlement',
-                       'galaxy_wo2_industry_workforce_tests',
-                       'galaxy_stage07_society_economy_tests',
-                       'v59_medical_recovery',
-                       'galaxy_dock03_physical_workforce_tests',
-                       'galaxy_colony_conflict01b3_governance_tests',
-                       'galaxy_colony_exit01d_bounded_tests',
-                       'galaxy_wo4_resource_demand_tests',
-                       'galaxy_wo5_physical_logistics_tests',
-                       'galaxy_stage07_resident_economy_tests',
-                       'v59_third_party_custody']
           with (evidence/'receipts.txt').open('w') as receipt:
               receipt.write('exact_head='+ (evidence/'source-sha.txt').read_text().strip()+'\n')
               for name in sorted(required):
