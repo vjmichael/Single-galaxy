@@ -192,11 +192,8 @@ jobs:
               if path=='src/CyberIncidentJournal.cpp' and era in ('v111-planet-housing','v118-family-custody'):
                   text=split_auto(text,edits)
               if path=='tests/SHIPSTATUS02_AuthoritativePersistenceTests.cpp' and era=='pre-v109-original-v92':
-                  text=replace_one(text,
-                      '            genesis.provision_starter_probe_kit(ship);',
-                      ('            genesis.provision_starter_probe_kit(ship);\n'
-                       '            genesis.ensure_ship_frame_registry();'),
-                      'register original ship frame before v100 status codec',edits)
+                  # First repair original pre-v109 genesis ordering, then
+                  # register an authentic native frame on that same ship.
                   text=replace_one(text,
                       ('            genesis.provision_starter_exploration_scanner(ship);\n'
                        '            genesis.provision_starter_probe_kit(ship);\n'
@@ -205,6 +202,11 @@ jobs:
                        '            genesis.provision_starter_exploration_scanner(ship);\n'
                        '            genesis.provision_starter_probe_kit(ship);'),
                       'move original workforce genesis before versioned scanner/probe kit',edits)
+                  text=replace_one(text,
+                      '            genesis.provision_starter_probe_kit(ship);',
+                      ('            genesis.provision_starter_probe_kit(ship);\n'
+                       '            genesis.ensure_ship_frame_registry();'),
+                      'register original ship frame before v100 status codec',edits)
               if path=='tests/WO3PlanetaryUtilityTests.cpp' and era in ('v111-planet-housing','v118-family-custody'):
                   text=replace_one(text,'    seed.enable_individual_workforce();','',
                       'remove late individual-workforce initialization',edits)
@@ -253,7 +255,7 @@ jobs:
                   # from the unmodified original negative checks. The snapshot
                   # version changes only through real source migration APIs.
                   version='135' if era=='v135-medical-atmosphere' else '128'
-                  promotion=('CHECK(certified.establish_original_surface_atmosphere());'
+                  promotion=('CHECK(certified.s6h4_attest_original_atmosphere());'
                              if version=='135' else
                              'certified.enable_physical_planetary_environment();')
                   proof=(
@@ -320,6 +322,21 @@ jobs:
                       ('    new_world.enable_native_galactic_physics({{1,galactic::Point{{0,0},{0,0},{0,0}}}});\n'
                        '    (void)stage6::provision_first_planet_seed(new_world);'),
                       'galactic pose for distinct regional ecology producer',edits)
+              if path=='include/galaxy/Simulation.hpp' and era=='v135-medical-atmosphere':
+                  # Only this SHA-pinned historical test binary receives the
+                  # observer entry point. The real source's private validator
+                  # executes unchanged; no state/header/atmosphere is invented.
+                  text=replace_one(text,
+                      ('private:\n'
+                       '    // S6-F5-C: original deterministic generated mass is sealed into v134.'),
+                      ('public:\n'
+                       '    // S6-H4 shadow-only observer of this original sealed generator.\n'
+                       '    bool s6h4_attest_original_atmosphere() {\n'
+                       '        return establish_original_surface_atmosphere();\n'
+                       '    }\n'
+                       'private:\n'
+                       '    // S6-F5-C: original deterministic generated mass is sealed into v134.'),
+                      'test-only native access to original private v135 atmosphere audit',edits)
               if path=='include/galaxy/PlanetaryContinuousSurface.hpp' and era=='v135-medical-atmosphere':
                   text=replace_one(text,
                       '    const auto lat=lat_diff/scale,lon=lon_projected/scale,\n               limit=allowed/scale;',
@@ -334,6 +351,7 @@ jobs:
           candidates={'CMakeLists.txt','src/Simulation.cpp','src/DockWorkforce.cpp',
                       'src/CyberIncidentJournal.cpp',
                       'include/galaxy/PlanetaryContinuousSurface.hpp',
+                      'include/galaxy/Simulation.hpp',
                       'tests/Stage06FinitePlanetaryGenesisTests.cpp',
                       'tests/Stage06EcologyIndustryTests.cpp',
                       'tests/Stage06PhysicalEnvironmentTests.cpp',
